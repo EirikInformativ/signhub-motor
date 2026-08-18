@@ -34,8 +34,8 @@ erstatt innholdet i `signhub-motor.js` i rot.
 
 ## Etter rollback
 
-Pages bygger på nytt automatisk (typisk under ett minutt). Verifiser at
-riktig fil er ute:
+Pages bygger på nytt automatisk. Bygget tar erfaringsmessig to til
+fire minutter i dette repoet. Verifiser deretter at riktig fil er ute:
 
     curl -s https://eirikinformativ.github.io/signhub-motor/signhub-motor.js | md5sum
     md5sum versjoner/signhub-motor-2026-08-18.js
