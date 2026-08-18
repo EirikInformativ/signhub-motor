@@ -1,0 +1,95 @@
+name: Bygg motoren
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/bygg.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bygg-${{ github.ref }}
+
+jobs:
+  bygg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Bygg bundlen
+        run: |
+          npx esbuild src/motor.ts \
+            --bundle \
+            --format=esm \
+            --platform=browser \
+            --minify \
+            --outfile=ny-signhub-motor.js
+
+      - name: Sammenlign med fila i rot
+        id: sammenlign
+        run: |
+          ny=$(md5sum ny-signhub-motor.js | cut -d' ' -f1)
+          na=$(md5sum signhub-motor.js    | cut -d' ' -f1)
+          echo "ny=$ny" >> "$GITHUB_OUTPUT"
+          {
+            echo "| | byte | md5 |"
+            echo "| --- | ---: | --- |"
+            echo "| bygget fra src/ | $(stat -c%s ny-signhub-motor.js) | \`$ny\` |"
+            echo "| i rot na        | $(stat -c%s signhub-motor.js)    | \`$na\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ny" = "$na" ]; then
+            echo "endret=nei" >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Bundlen i rot er allerede lik bygget. Ingenting a gjore." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "endret=ja" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bytt inn og commit
+        if: steps.sammenlign.outputs.endret == 'ja' && vars.AUTOBYGG == 'ja'
+        run: |
+          dato=$(date -u +%Y-%m-%d)
+          arkiv="versjoner/signhub-motor-$dato.js"
+          if [ ! -e "$arkiv" ]; then
+            cp signhub-motor.js "$arkiv"
+            echo "Arkiverte forrige bundle som $arkiv" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$arkiv finnes fra for, arkiverte ikke pa nytt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          mv ny-signhub-motor.js signhub-motor.js
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add signhub-motor.js versjoner/
+          git commit -m "Bygg motoren fra ${GITHUB_SHA::7} [skip ci]"
+          git push
+          echo "Publiserte ny bundle. GitHub Pages bygger pa nytt." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Rapporter at innbyttet star av
+        if: steps.sammenlign.outputs.endret == 'ja' && vars.AUTOBYGG != 'ja'
+        run: |
+          {
+            echo ""
+            echo "Bygget avviker fra fila i rot, men **AUTOBYGG er ikke satt til \`ja\`**,"
+            echo "sa \`signhub-motor.js\` er ikke rort. Sett variabelen under"
+            echo "Settings -> Secrets and variables -> Actions -> Variables"
+            echo "for a la denne workflowen publisere bundlen selv."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.sammenlign.outputs.endret == 'ja'
+        with:
+          name: signhub-motor-${{ steps.sammenlign.outputs.ny }}
+          path: ny-signhub-motor.js

@@ -1,0 +1,6 @@
+node_modules/
+
+# byggeprodukter fra testskriptene i test/
+test/mfL_*.pdf
+test/fv_*.png
+test/senter.pdf
