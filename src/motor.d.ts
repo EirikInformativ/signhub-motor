@@ -180,3 +180,12 @@ export const VANNMERKE: string;
 export const STD_GEO: Geo;
 export const MIN_DETALJ: number;
 export const ADVAR_DETALJ: number;
+
+/**
+ * Hvilken bundle som kjorer, pa formen "<kort-sha> <tidspunkt>",
+ * f.eks. "8068736 2026-08-19T07:40Z". Settes ved bygg.
+ * Er bundlen bygget utenom GitHub Action-en, staar plassholderen igjen
+ * og USTEMPLET er true.
+ */
+export const VERSJON: string;
+export const USTEMPLET: boolean;

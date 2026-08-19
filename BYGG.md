@@ -39,9 +39,30 @@ ligger inne i filen. Ingen CDN, ingen WASM, ingen pdf.js.
 
 Bygget er reproduserbart så lenge esbuild-versjonen er den samme.
 `package-lock.json` låser esbuild til 0.28.2, som kommer inn via `tsx`.
-Med den versjonen gir kilden 660 512 byte, md5 `26fca65941599b281c4401d0895e9591`.
-(Fram til innmat- og restfiksen var tallet 660 125 byte, md5
-`1318cb4c46473c2682e8b80e41e4f39e`.)
+Med den versjonen gir kilden 660 666 byte, md5 `d51b3dfb38126ae1df19a73b450dd048`
+— **ustemplet**, altså bygget slik kommandoen over gjør det.
+
+## Versjonsstempling
+
+`src/motor.ts` eksporterer `VERSJON`, satt til plassholderen `__VERSJON__`.
+Workflowen bytter den ut med kort commit-SHA og byggetidspunkt rett før
+esbuild kjører, så en publisert bundle vet hvor den kommer fra:
+
+    export const VERSJON = "8068736 2026-08-19T07:54Z";
+
+Motoren logger dette til konsollen når den lastes. Er bundlen bygget utenom
+workflowen, står plassholderen igjen, `USTEMPLET` er `true`, og loggen sier
+`SignHub-motor: ustemplet bygg (lokal kilde)` i stedet. En ustemplet bundle
+skal ikke se ut som en stemplet.
+
+Konsekvensen for md5: stempelet endrer seg ved hvert bygg, så to bygg av
+samme kode får ulik md5. Workflowen sammenligner derfor med stempelet nullet
+ut, og rapporterer begge summene. Skal du sammenligne selv:
+
+    sed -E -e 's/[0-9a-f]{7} [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z/__V__/g' \
+           -e 's/__VERSJON__/__V__/g' signhub-motor.js | md5sum
+
+Den summen er stabil på tvers av stempler. Er den lik, er koden lik.
 En annen esbuild-versjon gir samme oppførsel, men andre minifikatornavn og
 dermed en annen md5.
 

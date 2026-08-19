@@ -33,8 +33,21 @@ brekker appen, og da må Lovable-siden endres i samme slengen.
     forhandsvis(pdf, farger?, valg?): Promise<Forhandsvisning>
     lastBilder(): Promise<{ disclaimer, vannmerke }>
 
-I tillegg eksporteres `STD_GEO`, `MIN_DETALJ`, `ADVAR_DETALJ`, `DISCLAIMER`
-og `VANNMERKE`. Full typedefinisjon i `src/motor.d.ts`.
+I tillegg eksporteres `STD_GEO`, `MIN_DETALJ`, `ADVAR_DETALJ`, `DISCLAIMER`,
+`VANNMERKE`, `VERSJON` og `USTEMPLET`. Full typedefinisjon i
+`src/motor.d.ts`.
+
+`VERSJON` sier hvilken bundle appen faktisk kjører, på formen
+`"8068736 2026-08-19T07:54Z"` — kort commit-SHA og byggetidspunkt. Den settes
+av `.github/workflows/bygg.yml`, som bytter ut plassholderen `__VERSJON__` i
+`src/motor.ts` rett før esbuild kjører. Motoren logger den til konsollen ved
+lasting. Er bundlen bygget utenom workflowen, står plassholderen igjen og
+`USTEMPLET` er `true`. Appen skal lese `VERSJON` i stedet for å gjette på hva
+som kjører.
+
+Fordi stempelet endrer seg ved hvert bygg, er md5 på bundlen ikke lenger
+stabil mellom to bygg av samme kode. `BYGG.md` viser hvordan man
+sammenligner med stempelet nullet ut.
 
 ## Kildefiler
 

@@ -33,6 +33,25 @@ export const MIN_DETALJ = 1.5;
 /** Under denne blir det krevende, men mulig. */
 export const ADVAR_DETALJ = 3.0;
 
+/**
+ * Hvilken bundle appen faktisk kjorer, pa formen "<kort-sha> <tidspunkt>".
+ *
+ * Plassholderen under byttes ut av .github/workflows/bygg.yml rett foer
+ * esbuild kjorer. Bygger du lokalt uten det steget, staar den urort, og
+ * VERSJON forteller da at bundlen ikke er stemplet. Det er med vilje: en
+ * ustemplet bundle skal ikke se ut som en stemplet.
+ */
+export const VERSJON = "__VERSJON__";
+
+/** true nar bundlen er bygget utenom Action-en, og altsa ikke er stemplet. */
+export const USTEMPLET = VERSJON.startsWith("__");
+
+console.log(
+  USTEMPLET
+    ? "SignHub-motor: ustemplet bygg (lokal kilde)"
+    : `SignHub-motor ${VERSJON}`,
+);
+
 export interface Linje {
   navn: string;
   /** logoen som PDF eller som .ai lagret PDF-kompatibelt */
