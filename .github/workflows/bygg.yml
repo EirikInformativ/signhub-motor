@@ -87,13 +87,19 @@ jobs:
       - name: Bytt inn og commit
         if: steps.sammenlign.outputs.endret == 'ja' && vars.AUTOBYGG == 'ja'
         run: |
+          # Arkivnavnet tar med stempelet til fila som byttes ut. Bare dato
+          # holdt ikke: ved andre publisering samme dag fantes filnavnet
+          # allerede, og da ble den forrige versjonen ikke arkivert i det
+          # hele tatt. Det er nettopp da man trenger den.
           dato=$(date -u +%Y-%m-%d)
-          arkiv="versjoner/signhub-motor-$dato.js"
+          gammel=$(grep -o -E '"[0-9a-f]{7} [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z"' \
+                     signhub-motor.js | head -1 | cut -c2-8)
+          arkiv="versjoner/signhub-motor-$dato${gammel:+-$gammel}.js"
           if [ ! -e "$arkiv" ]; then
             cp signhub-motor.js "$arkiv"
-            echo "Arkiverte forrige bundle som $arkiv" >> "$GITHUB_STEP_SUMMARY"
+            echo "Arkiverte forrige bundle som \`$arkiv\`" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "$arkiv finnes fra for, arkiverte ikke pa nytt" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`$arkiv\` finnes fra for, arkiverte ikke pa nytt" >> "$GITHUB_STEP_SUMMARY"
           fi
           # cp, ikke mv: upload-artifact lenger ned leser ny-signhub-motor.js.
           cp ny-signhub-motor.js signhub-motor.js

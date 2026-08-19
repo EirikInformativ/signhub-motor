@@ -35,8 +35,15 @@ Arkivet nå:
 | --- | --- |
 | `signhub-motor-2026-08-18.js` | første arkiverte bundle |
 | `signhub-motor-2026-08-19-for-innmatfiks.js` | siste versjon før innmat- og restfiksen, uten versjonsstempel. Samme innhold som 2026-08-18-kopien. |
+| `signhub-motor-2026-08-19.js` | `6cf05b8`, innmat- og restfiksen |
+| `signhub-motor-2026-08-19-df791ea.js` | `df791ea`, spotfarger gjennom tintTransform |
 
-Den første publiserte bundlen med versjonsstempel er `6cf05b8`.
+Arkivfilene navngis `signhub-motor-ÅÅÅÅ-MM-DD-<sha>.js`, der `<sha>` er
+stempelet til bundlen som ble byttet ut. Navnet var tidligere bare datoen.
+Det holdt ikke: ved andre publisering samme dag fantes filnavnet allerede,
+og workflowen hoppet over arkiveringen. `df791ea` gikk tapt på den måten og
+ble hentet tilbake fra git-historikken. En bundle er aldri virkelig borte
+så lenge commiten står, men `versjoner/` skal være stedet man leter.
 
 Det kan også gjøres i GitHub-web: åpne arkivfila, kopier innholdet, og
 erstatt innholdet i `signhub-motor.js` i rot.
