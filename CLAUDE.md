@@ -178,6 +178,18 @@ smalt gap mellom to atskilte flater i samme lag. Regel 12 i samme dokument.
 **Feilsignatur:** en farge som ligger i en renne blir borte fra det
 underliggende laget i stedet for å legges oppå.
 
+**En unødvendig skjærelinje midt i et helt element er en nullbred pigg fra
+unionen.** Når to flater deler en kant nøyaktig, kan `polygon-clipping`
+legge igjen en bane som går ut og rett tilbake langs samme linje. Den har
+null areal, men den skjæres. På Nytveit sto den midt i den blå stripen:
+subbanen gikk `(118.9284, 99.6053) → (52.1789, 99.4038)` og rett tilbake.
+`ryddFlate()` i `src/pdfbaner.ts` kjører `SimplifyPolygons` og
+`CleanPolygons` på hvert lag etter den lagvise oppbyggingen.
+
+**Piggen er skalaavhengig, så den må prøves ved flere bredder.** Den samme
+logoen gav pigg ved 500 mm elementbredde, men ikke ved 200, 300, 400, 460
+eller 560. Én bredde er ikke en test.
+
 `test/kirke.pdf`, `test/hb.ai` og `test/bm.pdf` er med fordi de avdekket
 hver sin egen feil: en clipping-path som ble tolket som hvit bakgrunn, en
 logo som ble vist sort før folie var valgt, og to Pantone-farger som ble

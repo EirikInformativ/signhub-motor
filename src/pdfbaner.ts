@@ -620,6 +620,48 @@ function lukkRing(r: Ring): Ring {
  * tas inn igjen med samme delta, sa formen brer seg ikke ut til noe som
  * ligger ved siden av.
  */
+/**
+ * Rydder bort nullbrede pigger og kollineare spor fra en flate.
+ *
+ * Nar to flater deler en kant noyaktig, kan polygon-clipping legge igjen
+ * en bane som gar ut og rett tilbake langs samme linje. Den har null
+ * areal, men den tegnes som skjaerelinje, og da star det en unodvendig
+ * strek midt i et helt element. Pa Nytveit sto piggen midt i den blaa
+ * stripen: subbanen gikk (118.9284, 99.6053) -> (52.1789, 99.4038) og
+ * rett tilbake igjen.
+ *
+ * Piggen er skalaavhengig. Den samme logoen gav pigg ved 500 mm
+ * elementbredde, men ikke ved 200, 300, 400, 460 eller 560. Slikt maa
+ * derfor proves ved flere bredder, ikke bare en.
+ *
+ * SimplifyPolygons loser opp selvkryssinger og kollineare spor,
+ * CleanPolygons fjerner punkter som ligger naermere enn en rutenettsenhet.
+ */
+export function ryddFlate(mp: MultiPoly): MultiPoly {
+  if (!mp.length) return mp;
+  const S = 1e4;
+  try {
+    const baner: any[] = [];
+    for (const poly of mp) for (const r of poly) {
+      if (r.length < 3) continue;
+      baner.push(lukkRing(r).map(([x, y]) => ({ X: Math.round(x * S), Y: Math.round(y * S) })));
+    }
+    if (!baner.length) return mp;
+    const enkel = ClipperLib.Clipper.SimplifyPolygons(
+      baner, ClipperLib.PolyFillType.pftNonZero);
+    if (!enkel || !enkel.length) return mp;
+    const rent = ClipperLib.Clipper.CleanPolygons(enkel, 1);
+    if (!rent || !rent.length) return mp;
+    const ringer: Ring[] = rent
+      .map((b: any[]) => lukkRing(b.map((q) => [q.X / S, q.Y / S] as [number, number])))
+      .filter((r: Ring) => r.length > 2);
+    if (!ringer.length) return mp;
+    return nestRinger(ringer);
+  } catch {
+    return mp;   // clipper klarte det ikke; da star flaten som den er
+  }
+}
+
 export function lukkGlipper(mp: MultiPoly, delta: number): MultiPoly {
   if (!(delta > 0) || !mp.length) return mp;
   const S = 1e4;

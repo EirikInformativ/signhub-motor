@@ -8,7 +8,7 @@
  * Grensesnittet er med vilje smalt. Appen skal bare kalle kjorJobb().
  */
 import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
-         lukkGlipper } from "./pdfbaner.ts";
+         lukkGlipper, ryddFlate } from "./pdfbaner.ts";
 import type { MultiPoly } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
@@ -384,7 +384,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           if (somHull.length) {
             ny = pc.difference(ny as any, somHull as any) as MultiPoly;
           }
-          deler[i].flate = ny;
+          // rydd bort nullbrede pigger unionen kan ha lagt igjen
+          deler[i].flate = ryddFlate(ny);
         }
         /**
          * Nederste lag fylles ikke blankt ut lenger.
