@@ -192,6 +192,49 @@ Regel 9 og 10 hører sammen. Regel 9 alene gir 0,85 mm og `kritisk`, fordi
 det er den nye negative spacen som etterlater resten. Begge sammen gir
 3,14 mm og `ok`.
 
+### 11. Spotfarger tolkes gjennom tintTransform, aldri som sort med styrke
+
+En logo med to Pantone-farger bruker `cs` og `scn` med navngitte fargerom,
+ikke `rg` eller `k`. Fargerommet er typisk `Separation` med `Lab` som
+alternativ og en `tintTransform` av `FunctionType 2`.
+
+Tolker man en spotfarge som «sort med denne styrken», blir **begge**
+Pantone-fargene `#000000`, og fargesepareringen slår dem sammen til ett
+lag. Da forsvinner et helt folielag uten at noe feiler.
+
+Fargerom representeres derfor som `{ n, tilRgb(v) }` — antall komponenter
+`scn` tar, og hvordan de blir rgb — ikke som en fast liste med typeord.
+`csFraObj` håndterer `Separation`, `DeviceN`, `ICCBased` (`N` gir
+gray/rgb/cmyk), `Lab`, `CalRGB` og `CalGray`. Tinten går gjennom
+`tintTransform` og deretter gjennom alternativfargerommet.
+
+`lagFn` tolker PDF-funksjoner: type 2 (`C0 + t^N * (C1-C0)`), type 3
+(stitching) og type 0 (samplet, én inngang, `BitsPerSample` biter, lineær
+interpolasjon, `Decode`). Merk at en `PDFDict` har `lookup` selv, mens en
+strøm har den på `.dict`:
+
+```ts
+const d = typeof obj.lookup === "function" ? obj : obj.dict;
+```
+
+Lar `tintTransform` seg ikke tolke — `FunctionType 4` er PostScript-
+kalkulator og tolkes ikke — skal separasjonen få en **egen stabil farge
+utledet av navnet**, ikke sort. Poenget er ikke at fargen blir riktig, men
+at to spotfarger ikke faller sammen til ett lag. Tint 0 gir hvit.
+
+Hvitt avgjøres av rgb, alle komponenter ≥ 0,99, ikke av fargeromtypen.
+
+Alt dette må være nettleservennlig. Ingen node-API.
+
+Kontroll: `test/bm.pdf` (Bergen Mekaniske) har PANTONE 7685 C og
+PANTONE 294 C. Riktig svar er to lag:
+
+    #2C5697  53,2 %      #002F6D  46,8 %
+
+Det er (44, 86, 151) og (0, 47, 109), som er nøyaktig det Acrobat rendrer
+fila til. Kommer den inn som **ett sort lag**, er spotfargetolkningen
+borte.
+
 ## Fallgruver vi allerede har gått i
 
 * `pushOperators({ toString })` gjør ingenting. pdf-lib serialiserer via
