@@ -82,24 +82,70 @@ Bare når jobben har **én** folie kan du falle tilbake på lyshet.
 Det finnes ingen regel om at mørkeste farge blir primær. På denne logoen er
 sort mørkest og lilla øverst, og **lilla skal være primær**.
 
-### 4. Lagvis oppbygging er standard
+### 4. Lagvis oppbygging fyller hull innenfor egen form
 
-Hvert lag skal være unionen av seg selv og alt som ligger over det. Da får
-underliggende folie full dekning under de øvre, og registeret trenger ikke å
-treffe på hundredelen.
+Et lag fyller igjen hullene som fargene over har stanset ut av det, men
+**bare de hullene som ligger innenfor lagets egen form**. Da får
+underliggende folie full dekning der den trengs, og registeret trenger ikke
+å treffe på hundredelen.
+
+Regelen var tidligere at hvert lag var unionen av seg selv og alt som lå
+over. Det tok med det som lå **ved siden av**, ikke bare det som lå oppå.
+På ASKO-logoen fikk den nesten hvite teksten hele ASKO under seg, og den
+grønne snakkeboblen fikk hele logoen. **Vi legger ikke folie oppå folie
+uten grunn.** Ligger en farge inni laget, skal hullet fylles. Ligger den
+ved siden av, skal laget ikke røres.
 
 ```ts
 const lagvis = l.lagvis ?? true;   // standard er true
 if (lagvis && deler.length > 1) {
-  let akk: MultiPoly = [];
-  for (const d of deler) {                 // øverst først
-    akk = akk.length ? pc.union(akk, d.flate) : d.flate;
-    d.flate = somHull.length ? pc.difference(akk, somHull) : akk;
+  // nedenfra og opp, slik at `over` alltid er de uendrede lagene
+  for (let i = deler.length - 1; i >= 1; i--) {
+    const over = i === 1 ? deler[0].flate
+      : pc.union(...deler.slice(0, i).map((d) => d.flate));
+    const fylt = deler[i].flate.map((p) => [p[0]]);
+    const innenfor = pc.intersection(fylt, over);
+    let ny = innenfor.length ? pc.union(deler[i].flate, innenfor) : deler[i].flate;
+    if (somHull.length) ny = pc.difference(ny, somHull);
+    deler[i].flate = ny;
   }
   const bunn = deler[deler.length - 1];
   bunn.flate = bunn.flate.map((p) => [p[0]]);   // helt fylt, ingen hull
 }
 ```
+
+Retningen på løkken er ikke tilfeldig. Den går nedenfra og opp fordi `over`
+skal være lagene slik de var, ikke slik de nettopp ble utvidet.
+
+På ASKO gir regelen: vinrød hele ASKO, hvit bare ordet «reklame», grønn en
+solid snakkeboble med teksten fylt igjen. Det er riktig, fordi teksten
+ligger inni boblen mens ASKO ligger ved siden av. Skal teksten heller stå
+åpen, setter brukeren fargelinjen til hull.
+
+Kontroll: på Martine Finsås er den nye regelen identisk med den gamle. Xor
+mellom gammel og ny på alle tre lagene gir 0 områder og 0 areal.
+
+### 4b. Fargelinjer med samme folie er ett lag
+
+Setter brukeren samme folie på to fargelinjer, skal de slås sammen til
+**ett** lag før lagvis oppbygging, med `pc.union`. Laget beholder plassen
+til den øverste.
+
+```ts
+for (let i = 0; i < deler.length; i++)
+  for (let j = deler.length - 1; j > i; j--)
+    if (deler[j].folie.kode === deler[i].folie.kode) {
+      deler[i].flate = pc.union(deler[i].flate, deler[j].flate);
+      deler.splice(j, 1);
+    }
+```
+
+Dette må rettes ved kilden, ikke ved oppslaget. Produksjonsdelen finner
+laget sitt med `e.deler.find((d) => d.folie.kode === folie.kode)`, og
+`find` stopper ved første treff. Sto to fargelinjer på samme folie, kom
+bare den øverste med i skjærefila, og den andre forsvant stille. På
+ASKO-logoen er de to vinrøde nyansene `a` og `sko` nettopp et slikt
+tilfelle: uten sammenslåingen ble bare `a` skåret.
 
 ### 5. Nederste lag skjæres helt fylt, uten hull
 

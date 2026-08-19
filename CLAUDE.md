@@ -136,6 +136,26 @@ gir hvit, og hvitt avgjøres av rgb, ikke av fargeromtypen. Regel 11 i
 **Feilsignatur:** en flerfarget logo som kommer inn som **ett sort lag**
 betyr at spotfargetolkningen er borte.
 
+**Lagvis oppbygging fyller hull innenfor egen form, ikke unionen av alt
+som ligger over.** Et lag fyller igjen hullene fargene over har stanset ut
+av det, men bare de som ligger innenfor lagets egen form. Tidligere tok
+laget med seg alt som lå over, også det som lå ved siden av, og da la vi
+folie oppå folie uten grunn: på ASKO-logoen fikk den nesten hvite teksten
+hele ASKO under seg, og snakkeboblen fikk hele logoen. Ligger en farge
+inni laget, skal hullet fylles; ligger den ved siden av, skal laget ikke
+røres. Regel 4 i `prompt-claude-code-martine.md`. Regelen om at nederste
+lag skjæres helt fylt står uendret.
+
+**Fargelinjer med samme folie er ett lag.** Setter brukeren samme folie på
+to fargelinjer, slås de sammen med `pc.union` før lagvis oppbygging, og
+laget beholder plassen til den øverste. Dette må rettes ved kilden:
+produksjonsdelen slår opp laget sitt med `find` på foliekode, og `find`
+stopper ved første treff, så uten sammenslåingen forsvinner det nederste
+laget stille ut av skjærefila. Regel 4b i samme dokument.
+
+**Feilsignatur:** to fargelinjer på samme folie der bare den øverste
+kommer med i skjærefila.
+
 `test/kirke.pdf`, `test/hb.ai` og `test/bm.pdf` er med fordi de avdekket
 hver sin egen feil: en clipping-path som ble tolket som hvit bakgrunn, en
 logo som ble vist sort før folie var valgt, og to Pantone-farger som ble

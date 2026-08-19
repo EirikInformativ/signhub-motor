@@ -308,6 +308,25 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       if (venter.length) {
         deler[0].flate = pc.union(deler[0].flate as any, venter as any) as MultiPoly;
       }
+      /**
+       * Fargelinjer som peker pa samme folie er ett lag, ikke flere.
+       *
+       * Produksjonsdelen finner laget sitt med find() pa foliekode, og
+       * find stopper ved forste treff. Sto to fargelinjer pa samme folie,
+       * kom bare den oyverste med i skjaerefila og den andre forsvant
+       * stille. Det rettes her ved kilden, ikke ved find: lagene slas
+       * sammen for lagvis oppbygging, og beholder plassen til den
+       * oyverste.
+       */
+      for (let i = 0; i < deler.length; i++) {
+        for (let j = deler.length - 1; j > i; j--) {
+          if (deler[j].folie.kode !== deler[i].folie.kode) continue;
+          deler[i].flate =
+            pc.union(deler[i].flate as any, deler[j].flate as any) as MultiPoly;
+          deler.splice(j, 1);
+        }
+      }
+
       // malene og tallene skal gjelde det som faktisk skjaeres
       kuttet = deler.length === 1 ? deler[0].flate
         : (pc.union(...deler.map((d) => d.flate as any)) as MultiPoly);
@@ -321,12 +340,30 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           ? (hull.length === 1 ? hull[0]
              : (pc.union(...hull.map((h) => h as any)) as MultiPoly))
           : [];
-        let akk: MultiPoly = [];
-        for (const d of deler) {                 // oyverst forst
-          akk = akk.length
-            ? (pc.union(akk as any, d.flate as any) as MultiPoly) : d.flate;
-          d.flate = somHull.length
-            ? (pc.difference(akk as any, somHull as any) as MultiPoly) : akk;
+        /**
+         * Et lag fyller igjen hullene som fargene over har stanset ut av
+         * det, men bare de hullene som ligger innenfor lagets egen form.
+         *
+         * For tok laget med seg alt som la over, ogsa det som la ved
+         * siden av. Da fikk et lite tekstlag hele logoen under seg, og vi
+         * la folie oppa folie uten grunn. Ligger en farge inni laget,
+         * skal hullet fylles; ligger den ved siden av, skal den ikke rores.
+         *
+         * Lokken gar nedenfra og opp, slik at `over` alltid er de
+         * uendrede lagene.
+         */
+        for (let i = deler.length - 1; i >= 1; i--) {
+          const over: MultiPoly = i === 1 ? deler[0].flate
+            : (pc.union(...deler.slice(0, i).map((d) => d.flate as any)) as MultiPoly);
+          const fylt = deler[i].flate.map((p) => [p[0]]) as MultiPoly;
+          const innenfor = pc.intersection(fylt as any, over as any) as MultiPoly;
+          let ny: MultiPoly = innenfor.length
+            ? (pc.union(deler[i].flate as any, innenfor as any) as MultiPoly)
+            : deler[i].flate;
+          if (somHull.length) {
+            ny = pc.difference(ny as any, somHull as any) as MultiPoly;
+          }
+          deler[i].flate = ny;
         }
         /**
          * Nederste lag skjaeres helt fylt, uten hull. Det ligger under alt
