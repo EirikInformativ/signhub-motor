@@ -607,6 +607,55 @@ function lukkRing(r: Ring): Ring {
   return a[0] === b[0] && a[1] === b[1] ? r : [...r, a];
 }
 
+/**
+ * Morfologisk lukking: blaas formen ut med delta, og trekk den inn igjen.
+ *
+ * En farge som ligger i en apen renne i fargen under, ligger ikke i et
+ * hull. Regelen om at et lag fyller igjen hullene innenfor egen form ser
+ * derfor ingenting, og det smale sporet blir skaret bort fra det
+ * underliggende laget i stedet for a bli lagt oppa. Lukkingen lukker igjen
+ * renner som er smalere enn delta, sa de teller som innenfor formen.
+ *
+ * Lukking kan bare fylle renner som allerede finnes i formen. Utblasingen
+ * tas inn igjen med samme delta, sa formen brer seg ikke ut til noe som
+ * ligger ved siden av.
+ */
+export function lukkGlipper(mp: MultiPoly, delta: number): MultiPoly {
+  if (!(delta > 0) || !mp.length) return mp;
+  const S = 1e4;
+  const tilClipper = (ringer: Ring[]) =>
+    ringer.filter((r) => r.length > 2).map((r) =>
+      lukkRing(r).map(([x, y]) => ({ X: Math.round(x * S), Y: Math.round(y * S) })));
+
+  const alle: Ring[] = [];
+  for (const poly of mp) for (const r of poly) alle.push(r);
+  const inn = tilClipper(alle);
+  if (!inn.length) return mp;
+
+  const ut = (baner: any[], d: number): any[] => {
+    const co = new ClipperLib.ClipperOffset(2, 0.25);
+    co.AddPaths(baner, ClipperLib.JoinType.jtMiter,
+                ClipperLib.EndType.etClosedPolygon);
+    const res: any[] = [];
+    co.Execute(res, d * S);
+    return res;
+  };
+
+  try {
+    const blast = ut(inn, delta);
+    if (!blast.length) return mp;
+    const krympet = ut(blast, -delta);
+    if (!krympet.length) return mp;
+    const ringer: Ring[] = krympet
+      .map((b: any[]) => lukkRing(b.map((q) => [q.X / S, q.Y / S] as [number, number])))
+      .filter((r: Ring) => r.length > 2);
+    if (!ringer.length) return mp;
+    return nestRinger(ringer);
+  } catch {
+    return mp;   // clipper klarte det ikke; da star formen som den er
+  }
+}
+
 export interface Geometri {
   flate: MultiPoly;
   baner: number;

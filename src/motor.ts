@@ -7,7 +7,8 @@
  *
  * Grensesnittet er med vilje smalt. Appen skal bare kalle kjorJobb().
  */
-import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull } from "./pdfbaner.ts";
+import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
+         lukkGlipper } from "./pdfbaner.ts";
 import type { MultiPoly } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
@@ -30,6 +31,24 @@ export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
 export const MIN_DETALJ = 1.5;
+/**
+ * Renner smalere enn dette regnes som en del av formen, ikke som luft
+ * mellom to former. Brukes som delta til morfologisk lukking i den lagvise
+ * oppbyggingen, sa en farge som ligger i en apen renne blir lagt oppa det
+ * underliggende laget i stedet for a bli skaret bort fra det.
+ *
+ * Merk at lukking tetter igjen apninger opp til *to ganger* delta, siden
+ * formen blases ut med delta fra begge sider. SPOR_MM = 4 lukker altsa
+ * renner opp til 8 mm. Malt pa Nytveit-logoen, der sporet er 2,5 mm:
+ * 1 mm fanger ingenting, 2 mm fanger 99,9 prosent, 3 og 4 mm alt. Malt pa
+ * en konstruert 2,5 mm renne slar det inn ved noyaktig 1,25 mm.
+ *
+ * Lukking skiller ikke mellom en renne inne i en form og et smalt gap
+ * mellom to atskilte flater i samme lag: begge tettes nar de er smalere
+ * enn to ganger delta. Virkningen er avgrenset, fordi den lukkede formen
+ * bare brukes til a finne hva som ligger *under* fargene over.
+ */
+const SPOR_MM = 4;
 /** Under denne blir det krevende, men mulig. */
 export const ADVAR_DETALJ = 3.0;
 
@@ -355,7 +374,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         for (let i = deler.length - 1; i >= 1; i--) {
           const over: MultiPoly = i === 1 ? deler[0].flate
             : (pc.union(...deler.slice(0, i).map((d) => d.flate as any)) as MultiPoly);
-          const fylt = deler[i].flate.map((p) => [p[0]]) as MultiPoly;
+          // renner smalere enn SPOR_MM teller som innenfor formen
+          const lukket = lukkGlipper(deler[i].flate, (SPOR_MM * MM) / skala);
+          const fylt = lukket.map((p) => [p[0]]) as MultiPoly;
           const innenfor = pc.intersection(fylt as any, over as any) as MultiPoly;
           let ny: MultiPoly = innenfor.length
             ? (pc.union(deler[i].flate as any, innenfor as any) as MultiPoly)
@@ -366,13 +387,17 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           deler[i].flate = ny;
         }
         /**
-         * Nederste lag skjaeres helt fylt, uten hull. Det ligger under alt
-         * det andre, sa hullene ville uansett blitt dekket. Fylt slipper
-         * man a treffe hundre prosent mellom lagene, og laget blir langt
-         * lettere a luke.
+         * Nederste lag fylles ikke blankt ut lenger.
+         *
+         * Regelen sto sa lenge bunnlaget faktisk la under alt annet, som
+         * pa Finsas. Ligger det stort sett apent, som blaa i Nytveit, ble
+         * DIN TRANSPORTOR skaret som klumper uten innmat i D, R, A, O og P.
+         *
+         * Lokken over fyller allerede igjen de hullene fargene over
+         * dekker, og den gjelder ogsa nederste lag siden i gar fra
+         * deler.length - 1. Innmat som ingen farge ligger oppa, skal
+         * fortsatt skjaeres.
          */
-        const bunn = deler[deler.length - 1];
-        bunn.flate = bunn.flate.map((p) => [p[0]]);
       }
       if (per.lag.length > l.folier.length) {
         advarsler.push(`${l.navn}: filen har ${per.lag.length} farger, men bare ` +

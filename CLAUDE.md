@@ -156,6 +156,28 @@ laget stille ut av skjærefila. Regel 4b i samme dokument.
 **Feilsignatur:** to fargelinjer på samme folie der bare den øverste
 kommer med i skjærefila.
 
+**Nederste lag fyller igjen de hullene fargene over dekker, ikke alle
+hull.** Bunnlaget behandles som alle andre lag. Den gamle regelen fylte det
+blankt ut, og det holdt så lenge bunnlaget faktisk lå under alt annet, som
+på Finsås. Ligger det stort sett åpent, som blå på Nytveit-logoen, ble «DIN
+TRANSPORTØR» skåret som klumper uten innmat i D, R, A, O og P. Innmat som
+ingen farge ligger oppå, skal skjæres. Regel 5 i
+`prompt-claude-code-martine.md`.
+
+**Feilsignatur:** bokstaver som kommer ut som klumper uten innmat.
+
+**Smale spor er renner i formen, ikke luft mellom former.** En farge som
+ligger i en åpen renne i fargen under, ligger ikke i et hull, så regel 4
+ser den ikke og sporet blir skåret bort fra det underliggende laget.
+`lukkGlipper()` i `src/pdfbaner.ts` gjør morfologisk lukking før
+utfyllingen finner hva som er innenfor. `SPOR_MM = 4` står ved siden av
+`MIN_DETALJ` i `src/motor.ts`. Merk at lukking tetter åpninger opp til
+**to ganger** delta, altså 8 mm, og at den ikke skiller en renne fra et
+smalt gap mellom to atskilte flater i samme lag. Regel 12 i samme dokument.
+
+**Feilsignatur:** en farge som ligger i en renne blir borte fra det
+underliggende laget i stedet for å legges oppå.
+
 `test/kirke.pdf`, `test/hb.ai` og `test/bm.pdf` er med fordi de avdekket
 hver sin egen feil: en clipping-path som ble tolket som hvit bakgrunn, en
 logo som ble vist sort før folie var valgt, og to Pantone-farger som ble

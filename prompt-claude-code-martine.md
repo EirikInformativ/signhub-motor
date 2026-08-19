@@ -147,18 +147,27 @@ bare den øverste med i skjærefila, og den andre forsvant stille. På
 ASKO-logoen er de to vinrøde nyansene `a` og `sko` nettopp et slikt
 tilfelle: uten sammenslåingen ble bare `a` skåret.
 
-### 5. Nederste lag skjæres helt fylt, uten hull
+### 5. Nederste lag fyller igjen de hullene fargene over dekker
 
-Siste linjen over er ikke pynt. Uten den blir innmaten i `a` og `å` hvit,
-fordi hvit folie ikke tar høyde for at sort skal få skinne gjennom i kanten.
-Med et solid bunnlag slipper man å treffe hundre prosent mellom hvit og sort.
+Ikke alle hull. Bunnlaget behandles som alle andre lag: løkken i regel 4
+går fra `deler.length - 1`, så nederste lag fyller igjen de hullene som
+fargene over faktisk dekker, og lar resten stå.
 
-Kontroll: tynneste detalj på Martine Finsås skal gå fra ca. 2,44 mm til ca.
-3,14 mm, og status fra `tynn` til `ok`.
+Regelen het tidligere «nederste lag skjæres helt fylt, uten hull», med
+`bunn.flate = bunn.flate.map((p) => [p[0]])` som siste linje. Den holdt så
+lenge bunnlaget faktisk lå under alt annet, som på Finsås. Ligger det stort
+sett åpent, som blå gjør på Nytveit-logoen, blir resultatet feil: «DIN
+TRANSPORTØR» ble skåret som klumper uten innmat i D, R, A, O og P. Den
+blanke utfyllingen er derfor fjernet. **Innmat som ingen farge ligger oppå,
+skal skjæres.**
 
-Merk at 3,14 mm ikke lenger måler det samme som da tallet ble satt. Etter
-regel 9 er det innmaten i `A` som er tynneste detalj, ikke bunnlaget.
-Tallet er det samme; begrunnelsen er en annen.
+På Finsås endrer dette ingenting, fordi innmaten i `a` og `å` er dekket av
+hvit folie og fylles av løkken uansett. Xor mellom gammel og ny regel gir
+0 områder og 0 areal på alle tre lagene, bunnlaget inkludert.
+
+Kontroll: tynneste detalj på Martine Finsås er ca. 3,14 mm med status `ok`.
+Det er innmaten i `A` som måles, ikke bunnlaget. Faller det til 2,44 mm, er
+hullene ikke fylt.
 
 ### 6. Hvit er en egen farge, ikke et hull
 
@@ -280,6 +289,41 @@ PANTONE 294 C. Riktig svar er to lag:
 Det er (44, 86, 151) og (0, 47, 109), som er nøyaktig det Acrobat rendrer
 fila til. Kommer den inn som **ett sort lag**, er spotfargetolkningen
 borte.
+
+### 12. Smale spor er renner i formen, ikke luft mellom former
+
+En farge som ligger i en **åpen renne** i fargen under, ligger ikke i et
+hull. Regel 4 fyller bare hull innenfor egen form, og ser derfor ingenting.
+Resultatet er at det smale sporet blir skåret bort fra det underliggende
+laget i stedet for å bli lagt oppå. På Nytveit-logoen lå 0 prosent av det
+røde båndet innenfor blåfargens ytre form, selv om båndet ligger midt i
+den. Sporet er 2,5 mm.
+
+`lukkGlipper(mp, delta)` i `pdfbaner.ts` gjør morfologisk lukking med
+`ClipperOffset`, `jtMiter` og `etClosedPolygon`: `Execute` med `+delta`,
+så `Execute` med `-delta` på resultatet, deretter `lukkRing` og
+`nestRinger`. I den lagvise løkken brukes den til å finne hva som er
+«innenfor»:
+
+```ts
+const lukket = lukkGlipper(deler[i].flate, (SPOR_MM * MM) / skala);
+const fylt = lukket.map((p) => [p[0]]);
+```
+
+`SPOR_MM = 4` står ved siden av `MIN_DETALJ` i `motor.ts`.
+
+**Lukking tetter åpninger opp til to ganger delta**, siden formen blåses ut
+med delta fra begge sider. `SPOR_MM = 4` lukker altså renner opp til 8 mm.
+Målt trinnvis på Nytveit, der sporet er 2,5 mm: 1 mm fanger ingenting, 2 mm
+fanger 99,9 prosent, 3 og 4 mm alt. På en konstruert 2,5 mm renne slår det
+inn ved nøyaktig 1,25 mm, altså halve bredden.
+
+Vær klar over at lukking **ikke** skiller mellom en renne inne i én form og
+et smalt gap mellom to atskilte flater i samme lag. Begge tettes når de er
+smalere enn to ganger delta. To kvadrater med 4 mm mellomrom blir én flate
+ved `delta = 4`. Virkningen er avgrenset, fordi den lukkede formen bare
+brukes til å finne hva som ligger under fargene over: den legger aldri folie
+et sted ingen farge over dekker.
 
 ## Fallgruver vi allerede har gått i
 
