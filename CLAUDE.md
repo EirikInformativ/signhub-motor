@@ -34,9 +34,11 @@ brekker appen, og da må Lovable-siden endres i samme slengen.
     lastBilder(): Promise<{ disclaimer, vannmerke }>
 
 I tillegg eksporteres `STD_GEO`, `MIN_DETALJ`, `ADVAR_DETALJ`, `DISCLAIMER`
-og `VANNMERKE`. Full typedefinisjon i `motor.d.ts`.
+og `VANNMERKE`. Full typedefinisjon i `src/motor.d.ts`.
 
 ## Kildefiler
+
+Kilden ligger i `src/`, testene i `test/`. Stiene under er relative til `src/`.
 
 | fil | ansvar |
 | --- | --- |
@@ -52,12 +54,12 @@ og `VANNMERKE`. Full typedefinisjon i `motor.d.ts`.
 
 `prompt-claude-code-martine.md` er fasiten for hvordan separeringen og den
 lagvise oppbyggingen skal virke, med begrunnelser. Les den før du endrer
-`pdfbaner.ts` eller `motor.ts`.
+`src/pdfbaner.ts` eller `src/motor.ts`.
 
 ## Bygg
 
     npm install
-    npx esbuild motor.ts --bundle --format=esm --platform=browser \
+    npx esbuild src/motor.ts --bundle --format=esm --platform=browser \
       --minify --outfile=signhub-motor.js
 
 Resultatet er rundt 660 kB og inneholder alt: pdf-lib, polygon-clipping,
@@ -66,9 +68,13 @@ Detaljer i `BYGG.md`.
 
 ## Kjør testene før du pusher
 
-Dette er ikke valgfritt. Motoren har ingen CI, så disse testene er den
+Dette er ikke valgfritt. `.github/workflows/bygg.yml` bygger bundlen, men
+kjører ingen tester og stopper ingen push. Disse testene er fortsatt den
 eneste sikringen mellom en endring og produksjonsgulvet.
 
+Testene leser testfilene med relative stier og må kjøres fra `test/`:
+
+    cd test
     npx tsx mftest.ts     # farger og areal i Martine Finsås
     npx tsx mflag.ts      # lagene, øverst først
     npx tsx mfjobb.ts     # hele jobben
@@ -76,25 +82,46 @@ eneste sikringen mellom en endring og produksjonsgulvet.
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
-    mftest    lilla 36,4 %   hvit 21,4 %   sort 42,2 %
+    mftest    lilla 35,9 %   hvit 21,1 %   sort 43,0 %
     mflag     lag 0 lilla, lag 1 hvit, lag 2 sort   (øverst først)
     mfjobb    primær 751-040 (lilla), tynneste detalj 3,14 mm, ok
+              tre ark, 660 x 551 mm
     stabel    ok
 
-Sort på 42,2 % beviser at stroke-ekspansjonen virker. Faller tallet til
-rundt 23 %, er streken ikke fanget opp. Tynneste detalj på 3,14 mm beviser
-at bunnlaget skjæres solid. Faller det til 2,44 mm, er hullene ikke fjernet.
+Sort på 43,0 % beviser at stroke-ekspansjonen virker. Faller tallet til
+rundt 23 %, er streken ikke fanget opp. Faller det til 42,2 %, er nestingen
+tilbake på ett nivå og konturen rundt innmaten er borte.
+
+Tynneste detalj på 3,14 mm er innmaten i `A`, ikke bunnlaget. Faller det til
+2,44 mm, er hullene i bunnlaget ikke fjernet. Faller det til 0,85 mm og
+`kritisk`, er restfjerningen borte.
 
 Lilla skal være primær, ikke sort. Det finnes ingen regel om at mørkeste
 farge blir primær; øverste farge er primær.
 
-`kirke.pdf` og `hb.ai` er med fordi de avdekket hver sin egen feil:
+**Konturen rundt innmaten skal aldri skjæres i svart.** Svart er ett helt
+stykke i bunn. Konturen oppstår som negative space i hvitt. Nestingen i
+`src/pdfbaner.ts` regnes med dybde, ikke ett nivå: like dybde er flate, odde
+dybde er hull. Begrunnelsen står i `prompt-claude-code-martine.md`, regel 9.
+
+Hårfine rester fra subtraksjonen mellom lagene fjernes fra skjærefilene når
+de er **både** tynnere enn 1,0 mm og mindre enn 10 mm², og det legges en
+advarsel. Et ekte element som er tynt skal fortsatt meldes som kritisk.
+Regel 10 i samme dokument.
+
+`test/kirke.pdf` og `test/hb.ai` er med fordi de avdekket hver sin egen feil:
 en clipping-path som ble tolket som hvit bakgrunn, og en logo som ble vist
-sort før folie var valgt. Kjør dem ved endringer i `pdfbaner.ts`.
+sort før folie var valgt. Kjør dem ved endringer i `src/pdfbaner.ts`.
+
+Flere skript i `test/` peker på kundefiler under `/home/claude/` som ikke
+ligger i repoet: `sepatest.ts`, `fargetest.ts`, `wildgrense.ts`,
+`breddetest.ts`, `smaltest.ts`, `blandet.ts`, `enfil.ts`, `farge2.ts`,
+`fvtest.ts`, `fvfarge.ts`, `prikk.ts`, `senter.ts` og `test_motor.ts`.
+De feiler på manglende fil, ikke på kode.
 
 ## Ikke endre
 
-`STD_GEO` i `produksjonsfil.ts` er målt mot maskinene og skal stå:
+`STD_GEO` i `src/produksjonsfil.ts` er målt mot maskinene og skal stå:
 
     foliebredde 1200, rullKant 40, wildMaksRull 1260, wildMaksSkjaer 1215,
     summaMaksSkjaer 1600, bleed 5, gap 7.5, regmarkD 5, kissInset 5,

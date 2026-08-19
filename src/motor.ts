@@ -338,6 +338,33 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const omkretsMm = (omkrets(kuttet) * skala) / MM;
     const arealCm2 = (areal(kuttet) * skala * skala) / (MM * MM) / 100;
 
+    /**
+     * Subtraksjonen mellom lagene etterlater av og til rester: harfine
+     * stykker som verken lar seg luke eller lime. De skal ikke skjaeres, og
+     * de skal ikke dra tynneste detalj ned og utlose falsk alarm.
+     *
+     * Kravet er bade tynt og lite. Et ekte element som er tynt skal fortsatt
+     * meldes som kritisk, ikke fjernes i det stille.
+     */
+    const REST_MM = 1.0;
+    const REST_MM2 = 10;
+    const mmPerPt = (skala * 25.4) / 72;
+    let rester = 0;
+    for (const d of deler) {
+      const beholdt: MultiPoly = [];
+      for (const p of d.flate) {
+        const t = (await tynnesteDetalj([p], skala)).tynnesteMm;
+        const a2 = areal([p]) * mmPerPt * mmPerPt;
+        if (t > 0 && t < REST_MM && a2 < REST_MM2) { rester++; continue; }
+        beholdt.push(p);
+      }
+      d.flate = beholdt;
+    }
+    if (rester) {
+      advarsler.push(`${l.navn}: ${rester} harfine rester ble fjernet fra ` +
+        `skjaerefilene. De lot seg ikke luke.`);
+    }
+
     // males pa hver folie for seg, sa en tynn sekundaerfarge ikke gar under radaren
     let tynn = (await tynnesteDetalj(kuttet, skala)).tynnesteMm;
     for (const d of deler) {

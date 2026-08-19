@@ -342,21 +342,24 @@ function punktInni(p: [number, number], r: Ring): boolean {
  * i stedet for 22 med den varianten.
  */
 function nestRinger(ringer: Ring[]): MultiPoly {
-  const sortert = ringer.map((r) => ({ r, a: ringAreal(r) })).sort((x, y) => y.a - x.a);
-  const brukt = new Array(sortert.length).fill(false);
+  // Ringer kan ligge dypere enn ett niva: en kontur rundt innmaten i A ligger
+  // inni hullet i bokstaven. Dybde bestemmer om ringen er flate eller hull.
+  const R = ringer.map((r) => ({ r, a: Math.abs(ringAreal(r)) }));
+  R.sort((x, y) => y.a - x.a);
+  const dybde = R.map((_, i) => {
+    let d = 0;
+    for (let j = 0; j < R.length; j++) if (j !== i && R[j].a > R[i].a && punktInni(R[i].r[0], R[j].r)) d++;
+    return d;
+  });
   const deler: MultiPoly = [];
-  for (let i = 0; i < sortert.length; i++) {
-    if (brukt[i]) continue;
-    brukt[i] = true;
-    let g: MultiPoly = [[sortert[i].r]];
-    for (let j = i + 1; j < sortert.length; j++) {
-      if (brukt[j]) continue;
-      if (punktInni(sortert[j].r[0], sortert[i].r)) {
-        g = pc.difference(g as any, [[sortert[j].r]] as any) as MultiPoly;
-        brukt[j] = true;
-      }
+  for (let i = 0; i < R.length; i++) {
+    if (dybde[i] % 2 !== 0) continue;                 // odde dybde = hull
+    const hull: Ring[] = [];
+    for (let j = 0; j < R.length; j++) {
+      if (dybde[j] !== dybde[i] + 1) continue;
+      if (punktInni(R[j].r[0], R[i].r)) hull.push(R[j].r);
     }
-    deler.push(...g);
+    deler.push([R[i].r, ...hull]);
   }
   return deler;
 }

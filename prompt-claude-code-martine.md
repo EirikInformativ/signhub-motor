@@ -49,9 +49,12 @@ Konkret i `pdfbaner.ts`:
   Join: `jtMiter` (0), `jtRound` (1), `jtSquare` (2). Offset er `bredde / 2`.
 * En `B`-operator gir **to** bidrag: fyllet og den ekspanderte streken.
 
-Kontroll: på Martine Finsås skal sort gå fra ca. 23,0 % til ca. 42,2 % av
+Kontroll: på Martine Finsås skal sort gå fra ca. 23,0 % til ca. 43,0 % av
 motivets areal når stroke-ekspansjonen virker. Blir tallet stående på 23 %,
 er streken ikke fanget opp.
+
+Tallet var 42,2 % fram til nestingen ble regnet med dybde (regel 9). De
+manglende 0,8 prosentpoengene var konturen rundt innmaten, som forsvant.
 
 ### 2. Malerrekkefølgen skal bevares
 
@@ -107,6 +110,10 @@ Med et solid bunnlag slipper man å treffe hundre prosent mellom hvit og sort.
 Kontroll: tynneste detalj på Martine Finsås skal gå fra ca. 2,44 mm til ca.
 3,14 mm, og status fra `tynn` til `ok`.
 
+Merk at 3,14 mm ikke lenger måler det samme som da tallet ble satt. Etter
+regel 9 er det innmaten i `A` som er tynneste detalj, ikke bunnlaget.
+Tallet er det samme; begrunnelsen er en annen.
+
 ### 6. Hvit er en egen farge, ikke et hull
 
 Hvit skal rapporteres som eget lag med `hvit: true`. Brukeren velger selv om
@@ -139,6 +146,51 @@ const arkbredde = Math.min(skjaere, Math.ceil(brukt + 2 * reservert));
 ```
 
 `Math.ceil` er viktig. Uten den kommer arkbredden ut som 1144,1562872116856.
+
+### 9. Nesting regnes med dybde, ikke ett nivå
+
+Ringer kan ligge dypere enn ett nivå. Konturen rundt innmaten i `A` ligger
+inne i hullet i bokstaven, altså to nivåer ned. En `nestRinger()` som tar
+største ring og trekker fra alt som ligger inni, trekker den konturen fra et
+område som allerede er hull. Da forsvinner den sporløst.
+
+Regn nestedybde per ring: like dybde er flate, odde dybde er hull. Hull
+knyttes til nærmeste forelder.
+
+```ts
+const dybde = R.map((_, i) => {
+  let d = 0;
+  for (let j = 0; j < R.length; j++)
+    if (j !== i && R[j].a > R[i].a && punktInni(R[i].r[0], R[j].r)) d++;
+  return d;
+});
+```
+
+Følgen er at det hvite laget får negative space rundt innmaten, slik at den
+svarte konturen skinner opp fra bunnarket.
+
+**Konturen rundt innmaten skal aldri skjæres i svart.** Svart er ett helt
+stykke i bunn. Konturen oppstår som negative space i hvitt. Det svarte arket
+er urørt av denne regelen: det skjæres fortsatt som to hele stykker.
+
+Kontroll, målt langs `y=365` gjennom innmaten i `A`: før fiksen sluttet lilla
+på 332,25 og hvit begynte på 332,50, uten noe svart imellom.
+
+### 10. Hårfine rester skal ikke skjæres
+
+Subtraksjonen mellom lagene etterlater av og til rester som verken lar seg
+luke eller lime. På Martine Finsås ble det ett stykke på 6,2 x 0,5 mm i det
+hvite laget. Det dro tynneste detalj ned til 0,85 mm og utløste falsk
+kritisk-alarm.
+
+Stykker som er **både** tynnere enn 1,0 mm **og** mindre enn 10 mm² fjernes
+fra skjærefilene, og det legges en advarsel. Begge kravene gjelder med vilje:
+et ekte element som er tynt skal fortsatt meldes som kritisk, ikke fjernes i
+det stille.
+
+Regel 9 og 10 hører sammen. Regel 9 alene gir 0,85 mm og `kritisk`, fordi
+det er den nye negative spacen som etterlater resten. Begge sammen gir
+3,14 mm og `ok`.
 
 ## Fallgruver vi allerede har gått i
 

@@ -39,7 +39,9 @@ ligger inne i filen. Ingen CDN, ingen WASM, ingen pdf.js.
 
 Bygget er reproduserbart så lenge esbuild-versjonen er den samme.
 `package-lock.json` låser esbuild til 0.28.2, som kommer inn via `tsx`.
-Med den versjonen gir kilden 660 125 byte, md5 `1318cb4c46473c2682e8b80e41e4f39e`.
+Med den versjonen gir kilden 660 512 byte, md5 `26fca65941599b281c4401d0895e9591`.
+(Fram til innmat- og restfiksen var tallet 660 125 byte, md5
+`1318cb4c46473c2682e8b80e41e4f39e`.)
 En annen esbuild-versjon gir samme oppførsel, men andre minifikatornavn og
 dermed en annen md5.
 
