@@ -92,6 +92,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx mflag.ts      # lagene, øverst først
     npx tsx mfjobb.ts     # hele jobben
     npx tsx stabel.ts     # register: arkene lagt oppå hverandre
+    npx tsx bmtest.ts     # spotfarger: to Pantone i Bergen Mekaniske
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -122,9 +123,29 @@ de er **både** tynnere enn 1,0 mm og mindre enn 10 mm², og det legges en
 advarsel. Et ekte element som er tynt skal fortsatt meldes som kritisk.
 Regel 10 i samme dokument.
 
-`test/kirke.pdf` og `test/hb.ai` er med fordi de avdekket hver sin egen feil:
-en clipping-path som ble tolket som hvit bakgrunn, og en logo som ble vist
-sort før folie var valgt. Kjør dem ved endringer i `src/pdfbaner.ts`.
+**Spotfarger skal tolkes gjennom `tintTransform`, aldri som sort med en
+styrke.** En Pantone-logo bruker `cs` og `scn` med navngitte fargerom, ikke
+`rg` eller `k`. Tolker man tinten som «sort med denne styrken», blir alle
+spotfargene `#000000`, og separeringen slår dem sammen. Fargerom er
+representert som `{ n, tilRgb(v) }` i `src/pdfbaner.ts`. Lar
+`tintTransform` seg ikke tolke, for eksempel `FunctionType 4`, får
+separasjonen en egen stabil farge utledet av navnet — aldri sort. Tint 0
+gir hvit, og hvitt avgjøres av rgb, ikke av fargeromtypen. Regel 11 i
+`prompt-claude-code-martine.md`.
+
+**Feilsignatur:** en flerfarget logo som kommer inn som **ett sort lag**
+betyr at spotfargetolkningen er borte.
+
+`test/kirke.pdf`, `test/hb.ai` og `test/bm.pdf` er med fordi de avdekket
+hver sin egen feil: en clipping-path som ble tolket som hvit bakgrunn, en
+logo som ble vist sort før folie var valgt, og to Pantone-farger som ble
+slått sammen til ett sort lag. Kjør dem ved endringer i `src/pdfbaner.ts`.
+
+Fasit på `bm.pdf` (Bergen Mekaniske, PANTONE 7685 C og PANTONE 294 C):
+
+    bmtest    #2C5697 53,2 %   #002F6D 46,8 %   (to lag)
+
+Det er (44, 86, 151) og (0, 47, 109), nøyaktig det Acrobat rendrer fila til.
 
 Flere skript i `test/` peker på kundefiler under `/home/claude/` som ikke
 ligger i repoet: `sepatest.ts`, `fargetest.ts`, `wildgrense.ts`,
