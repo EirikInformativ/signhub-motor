@@ -25,9 +25,18 @@ Kopier ønsket versjon over fila i rot og push til `main`:
 
     git checkout main
     git pull origin main
-    cp versjoner/signhub-motor-2026-08-18.js signhub-motor.js
-    git commit -am "Rull tilbake motor til 2026-08-18"
+    cp versjoner/signhub-motor-2026-08-19-for-innmatfiks.js signhub-motor.js
+    git commit -am "Rull tilbake motor til for innmatfiksen"
     git push origin main
+
+Arkivet nå:
+
+| fil | hva det er |
+| --- | --- |
+| `signhub-motor-2026-08-18.js` | forste arkiverte bundle |
+| `signhub-motor-2026-08-19-for-innmatfiks.js` | siste versjon for innmat- og restfiksen, uten versjonsstempel. Samme innhold som 2026-08-18-kopien. |
+
+Den forste publiserte bundlen med versjonsstempel er `6cf05b8`.
 
 Det kan også gjøres i GitHub-web: åpne arkivfila, kopier innholdet, og
 erstatt innholdet i `signhub-motor.js` i rot.
