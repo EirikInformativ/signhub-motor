@@ -189,6 +189,85 @@ export const STD_GEO: Geo;
 export const MIN_DETALJ: number;
 export const ADVAR_DETALJ: number;
 
+/* ---------- bilskisse ---------- */
+
+/** HTMLImageElement i nettleseren, Image fra @napi-rs/canvas i node. */
+export type Bilde = any;
+/** HTMLCanvasElement i nettleseren, Canvas fra @napi-rs/canvas i node. */
+export type Lerret = any;
+export type LerretFabrikk = (b: number, h: number) => Lerret;
+
+export interface BilFarge {
+  /** slik den skal skjaeres, oyverst forst */
+  hex: string;
+  /** andel av elementets flate, til hjelp naar folie skal velges */
+  andel: number;
+}
+
+export interface BilElement {
+  /** stabil nokkel innenfor denne skissen */
+  id: string;
+  /** hvilken visning elementet ble funnet i, f.eks. "side ovre" */
+  vis: string;
+  navn: string;
+  /** elementet alene, som PDF. Kan sendes rett inn i kjorJobb som linje. */
+  pdf: Uint8Array;
+  /** ekte mal paa kjoretoyet */
+  breddeMm: number;
+  hoydeMm: number;
+  /** samme element funnet flere steder telles her, ikke som egne elementer */
+  antall: number;
+  farger: BilFarge[];
+}
+
+export interface BilSkisseLest {
+  /** malestokken motoren faktisk regner med */
+  malestokk: number;
+  /** malestokken som staar skrevet paa arket, hvis den staar der */
+  malestokkTekst: number | null;
+  /** hvor mye de to spriker, i prosent */
+  avvikProsent: number | null;
+  lengdeM: number | null;
+  breddeM: number | null;
+  hoydeM: number | null;
+  visninger: { navn: string; breddeEkteMm: number; hoydeEkteMm: number }[];
+  elementer: BilElement[];
+  /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
+  forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
+  merknader: string[];
+}
+
+export interface BilValg {
+  jobb: string;
+  bilder: { disclaimer: Bilde; vannmerke: Bilde };
+  lerret: LerretFabrikk;
+  /** bredden paa bilskissen i piksler. 1400 gir god lesbarhet paa A4. */
+  bredde?: number;
+}
+
+/**
+ * Leser en bilskisse: gir malestokk, visninger, hvert dekorelement som ren
+ * PDF med ekte millimetermal, og bilskissen som jpeg til forsiden paa
+ * kundeskissen.
+ *
+ * Elementene kan sendes rett videre som linjer til kjorJobb. Merk at
+ * bilskisseflyten er den eneste som skal snu noe: settes elementene inn i
+ * en jobb, maa `snuOpp: true` settes selv. Vanlige skiltjobber skal ikke
+ * ha den.
+ */
+export function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSkisseLest>;
+
+/**
+ * Foreslar folie per farge i ett element, mot en katalog.
+ *
+ * Hvitt nederst i bunken er skissens egen bakgrunn og foreslas som
+ * "negativt": fargen skjaeres ikke i egen folie, den skjaeres negativt ut
+ * av fargen under, og ligger den nederst faller den bort helt. Resten gaar
+ * til naermeste folie i katalogen. Forslaget kan settes rett inn i
+ * Linje.folier.
+ */
+export function foreslaFolier(farger: BilFarge[], katalog: Folie[]): (Folie | "negativt")[];
+
 /**
  * Hvilken bundle som kjorer, pa formen "<kort-sha> <tidspunkt>",
  * f.eks. "8068736 2026-08-19T07:40Z". Settes ved bygg.
