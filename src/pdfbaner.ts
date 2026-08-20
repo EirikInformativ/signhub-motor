@@ -101,293 +101,225 @@ function flat(p0: [number, number], p1: [number, number], p2: [number, number],
   flat(mid, p123, p23, p3, tol, ut, dybde + 1);
 }
 
-/* ---------- fargerom ---------- */
-
 /**
  * Et fargerom, redusert til det motoren trenger: hvor mange komponenter
- * scn tar inn, og hvordan de blir rgb.
+ * operatoren tar, og hvordan de blir til rgb.
  *
- * Spotfarger skal aldri tolkes som sort med en styrke. Gjor man det,
- * faller to Pantone-farger sammen til ett sort lag, og separeringen
- * mister et helt folielag. Tinten skal gjennom tintTransform og
- * alternativfargerommet.
+ * Spotfarger er ikke sort med en styrke. Separation og DeviceN har en
+ * tintTransform som gjor tinten om til en faktisk farge i et alternativt
+ * fargerom. Uten den blir to ulike Pantone-farger like, og en tofarget
+ * logo kommer inn som ett lag i stedet for to.
  */
 interface Cs {
-  /** antall komponenter scn tar */
   n: number;
   tilRgb(v: number[]): [number, number, number] | null;
 }
-
-const klem = (v: number, lo: number, hi: number) =>
-  Math.min(Math.max(v, Math.min(lo, hi)), Math.max(lo, hi));
-
-const interp = (x: number, a0: number, a1: number, b0: number, b1: number) =>
-  a1 === a0 ? b0 : b0 + ((x - a0) * (b1 - b0)) / (a1 - a0);
+type CsKind = Cs | null;
 
 const CS_GRAY: Cs = { n: 1, tilRgb: (v) => [v[0], v[0], v[0]] };
 const CS_RGB: Cs = { n: 3, tilRgb: (v) => [v[0], v[1], v[2]] };
 const CS_CMYK: Cs = { n: 4, tilRgb: (v) => cmykTilRgb(v[0], v[1], v[2], v[3]) };
 
-/** D50, slik Lab-fargerom i PDF nesten alltid er stilt inn. */
-const D50: [number, number, number] = [0.964203, 1, 0.824905];
-
-/** XYZ under D50 til lineaer sRGB, Bradford-tilpasset. */
-const XYZ_SRGB: number[][] = [
-  [3.1338561, -1.6168667, -0.4906146],
-  [-0.9787684, 1.9161415, 0.0334540],
-  [0.0719453, -0.2289914, 1.4052427],
-];
-
-function srgbGamma(c: number): number {
-  const x = klem(c, 0, 1);
-  return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
-}
-
-/**
- * Lab til rgb. Hvitpunktet leses av fila naar det staar der; ellers D50.
- * Uten dette blir en Pantone med Lab-alternativ feil farge, og to Pantoner
- * kan havne saa naer hverandre at de slaas sammen.
- */
+/** Lab til sRGB. Hvitpunktet star i filen; Illustrator bruker D50. */
 function labTilRgb(L: number, a: number, b: number,
-                   wp: [number, number, number] = D50): [number, number, number] {
-  const fy = (L + 16) / 116;
-  const fx = fy + a / 500;
-  const fz = fy - b / 200;
-  const d = 6 / 29;
-  const g = (t: number) => (t > d ? t * t * t : 3 * d * d * (t - 4 / 29));
-  const X = wp[0] * g(fx), Y = wp[1] * g(fy), Z = wp[2] * g(fz);
-  const m = XYZ_SRGB;
-  return [
-    srgbGamma(m[0][0] * X + m[0][1] * Y + m[0][2] * Z),
-    srgbGamma(m[1][0] * X + m[1][1] * Y + m[1][2] * Z),
-    srgbGamma(m[2][0] * X + m[2][1] * Y + m[2][2] * Z),
+                   wp: number[] = [0.964203, 1, 0.824905]): [number, number, number] {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200;
+  const f = (t: number) => (t * t * t > 0.008856 ? t * t * t : (t - 16 / 116) / 7.787);
+  const X = wp[0] * f(fx), Y = wp[1] * f(fy), Z = wp[2] * f(fz);
+  const lin = [
+    3.1338561 * X - 1.6168667 * Y - 0.4906146 * Z,
+    -0.9787684 * X + 1.9161415 * Y + 0.0334540 * Z,
+    0.0719453 * X - 0.2289914 * Y + 1.4052427 * Z,
   ];
+  const s = (u: number) => {
+    const c = Math.min(1, Math.max(0, u));
+    return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  };
+  return [s(lin[0]), s(lin[1]), s(lin[2])];
 }
 
-/** En PDFDict har lookup selv; en strom har den paa .dict. */
-function dictAv(obj: any): any {
-  return obj && typeof obj.lookup === "function" ? obj : obj?.dict;
+function tallArr(o: any): number[] | null {
+  const a = o?.asArray ? o.asArray() : null;
+  if (!a) return null;
+  return a.map((x: any) => (typeof x?.asNumber === "function" ? x.asNumber() : Number(String(x))));
 }
 
-function tallAv(d: any, navn: string): number | null {
-  const v: any = d?.lookup?.(PDFName.of(navn));
-  const n = v?.asNumber?.();
-  return typeof n === "number" && !Number.isNaN(n) ? n : null;
-}
-
-function tallListe(d: any, navn: string): number[] | null {
-  const a: any = d?.lookup?.(PDFName.of(navn));
-  if (!(a instanceof PDFArray)) return null;
-  const ut: number[] = [];
-  for (let i = 0; i < a.size(); i++) {
-    const n = (a.lookup(i) as any)?.asNumber?.();
-    if (typeof n !== "number" || Number.isNaN(n)) return null;
-    ut.push(n);
-  }
-  return ut;
-}
-
-function navnListe(a: any): string[] {
-  if (!(a instanceof PDFArray)) return [];
-  const ut: string[] = [];
-  for (let i = 0; i < a.size(); i++) ut.push(String(a.lookup(i)).replace(/^\//, ""));
-  return ut;
-}
+type TintFn = (inn: number[]) => number[] | null;
 
 /**
- * Tolker en PDF-funksjon til (t) => utverdier.
- *
- * Type 2 er eksponentiell interpolasjon, type 3 syr sammen flere, type 0
- * er en samplet tabell med en inngang. Type 4 er PostScript-kalkulator og
- * tolkes ikke; da gis null, og den som spor faller tilbake paa
- * reserveFarge.
+ * PDF-funksjoner, nok av dem til a dekke det Illustrator og InDesign
+ * legger igjen: type 2 eksponentiell, type 3 sammensatt, type 0 samplet.
+ * Type 4 (PostScript) er ikke tolket; da faller vi tilbake pa reservefarge.
  */
-function lagFn(obj: any): ((t: number) => number[]) | null {
-  const d = dictAv(obj);
-  if (!d) return null;
-  const typ = tallAv(d, "FunctionType");
-  const dom = tallListe(d, "Domain") ?? [0, 1];
+function lagFn(ctx: any, obj: any): TintFn | null {
+  try {
+    // En PDFDict har selv lookup; en strom har den pa .dict.
+    const d: any = typeof obj?.lookup === "function" ? obj : obj?.dict;
+    if (typeof d?.lookup !== "function") return null;
+    const type = d.lookup(PDFName.of("FunctionType"))?.asNumber?.();
+    const domain = tallArr(d.lookup(PDFName.of("Domain"))) ?? [0, 1];
 
-  if (typ === 2) {
-    const c0 = tallListe(d, "C0") ?? [0];
-    const c1 = tallListe(d, "C1") ?? [1];
-    const N = tallAv(d, "N") ?? 1;
-    const m = Math.min(c0.length, c1.length);
-    if (m < 1) return null;
-    return (t) => {
-      const p = Math.pow(klem(t, dom[0], dom[1]), N);
-      const ut: number[] = [];
-      for (let i = 0; i < m; i++) ut.push(c0[i] + p * (c1[i] - c0[i]));
-      return ut;
-    };
-  }
-
-  if (typ === 3) {
-    const arr: any = d.lookup(PDFName.of("Functions"));
-    if (!(arr instanceof PDFArray) || arr.size() < 1) return null;
-    const under: ((t: number) => number[])[] = [];
-    for (let i = 0; i < arr.size(); i++) {
-      const f = lagFn(arr.lookup(i));
-      if (!f) return null;
-      under.push(f);
+    if (type === 2) {
+      const c0 = tallArr(d.lookup(PDFName.of("C0"))) ?? [0];
+      const c1 = tallArr(d.lookup(PDFName.of("C1"))) ?? [1];
+      const n = d.lookup(PDFName.of("N"))?.asNumber?.() ?? 1;
+      return (inn) => {
+        const x = Math.min(domain[1], Math.max(domain[0], inn[0] ?? 0));
+        const p = Math.pow(x, n);
+        return c0.map((v, i) => v + p * ((c1[i] ?? 0) - v));
+      };
     }
-    const grenser = tallListe(d, "Bounds") ?? [];
-    const enc = tallListe(d, "Encode") ?? [];
-    return (t) => {
-      const x = klem(t, dom[0], dom[1]);
-      let i = 0;
-      while (i < grenser.length && x >= grenser[i]) i++;
-      if (i > under.length - 1) i = under.length - 1;
-      const lav = i === 0 ? dom[0] : grenser[i - 1];
-      const hoy = i === under.length - 1 ? dom[1] : grenser[i];
-      const e0 = enc.length > 2 * i ? enc[2 * i] : 0;
-      const e1 = enc.length > 2 * i + 1 ? enc[2 * i + 1] : 1;
-      return under[i](interp(x, lav, hoy, e0, e1));
-    };
-  }
 
-  if (typ === 0 && obj instanceof PDFRawStream) {
-    const stor = tallListe(d, "Size");
-    const bps = tallAv(d, "BitsPerSample");
-    const omraade = tallListe(d, "Range");
-    if (!stor || stor.length !== 1 || !bps || bps < 1 || bps > 32 || !omraade) return null;
-    const m = omraade.length >> 1;
-    if (m < 1) return null;
-    const antall = Math.max(2, Math.floor(stor[0]));
-    let raa: Uint8Array;
-    try { raa = decodePDFRawStream(obj).decode(); } catch { return null; }
-    const maks = Math.pow(2, bps) - 1;
-    const les = (i: number, j: number): number => {
-      let bit = (i * m + j) * bps;
-      let v = 0;
-      for (let k = 0; k < bps; k++, bit++) {
-        const byte = raa[bit >> 3];
-        if (byte === undefined) return 0;
-        v = v * 2 + ((byte >> (7 - (bit & 7))) & 1);
-      }
-      return v;
-    };
-    const enc = tallListe(d, "Encode") ?? [0, antall - 1];
-    const dec = tallListe(d, "Decode") ?? omraade;
-    return (t) => {
-      const x = klem(t, dom[0], dom[1]);
-      const e = klem(interp(x, dom[0], dom[1], enc[0], enc[1]), 0, antall - 1);
-      const i0 = Math.floor(e);
-      const i1 = Math.min(antall - 1, i0 + 1);
-      const brok = e - i0;
-      const ut: number[] = [];
-      for (let j = 0; j < m; j++) {
-        const s = les(i0, j) * (1 - brok) + les(i1, j) * brok;
-        const d0 = dec[2 * j] ?? 0, d1 = dec[2 * j + 1] ?? 1;
-        ut.push(d0 + (s / maks) * (d1 - d0));
-      }
-      return ut;
-    };
-  }
+    if (type === 3) {
+      const fnArr: any = d.lookup(PDFName.of("Functions"));
+      const raa = fnArr?.asArray ? fnArr.asArray() : null;
+      if (!raa) return null;
+      const fns = raa.map((r: any) => lagFn(ctx, ctx?.lookup ? ctx.lookup(r) ?? r : r));
+      if (fns.some((f: any) => !f)) return null;
+      const bounds = tallArr(d.lookup(PDFName.of("Bounds"))) ?? [];
+      const enc = tallArr(d.lookup(PDFName.of("Encode"))) ?? [];
+      return (inn) => {
+        const x = Math.min(domain[1], Math.max(domain[0], inn[0] ?? 0));
+        let k = 0;
+        while (k < bounds.length && x >= bounds[k]) k++;
+        const lo = k === 0 ? domain[0] : bounds[k - 1];
+        const hi = k === bounds.length ? domain[1] : bounds[k];
+        const e0 = enc[2 * k] ?? 0, e1 = enc[2 * k + 1] ?? 1;
+        const xx = hi === lo ? e0 : e0 + ((x - lo) / (hi - lo)) * (e1 - e0);
+        return fns[k]([xx]);
+      };
+    }
 
+    if (type === 0) {
+      const size = tallArr(d.lookup(PDFName.of("Size"))) ?? [];
+      const range = tallArr(d.lookup(PDFName.of("Range"))) ?? [];
+      if (size.length !== 1 || !range.length) return null;   // bare en inngang
+      const bps = d.lookup(PDFName.of("BitsPerSample"))?.asNumber?.() ?? 8;
+      const m = size[0], nOut = range.length / 2;
+      const enc = tallArr(d.lookup(PDFName.of("Encode"))) ?? [0, m - 1];
+      const dec = tallArr(d.lookup(PDFName.of("Decode"))) ?? range;
+      const bytes: Uint8Array | null = obj instanceof PDFRawStream
+        ? decodePDFRawStream(obj).decode()
+        : (obj?.getContents ? obj.getContents() : null);
+      if (!bytes) return null;
+      const maks = Math.pow(2, bps) - 1;
+      const les = (i: number) => {
+        let v = 0;
+        for (let k = 0; k < bps; k++) {
+          const b = i * bps + k;
+          v = v * 2 + ((bytes[b >> 3] >> (7 - (b & 7))) & 1);
+        }
+        return v;
+      };
+      return (inn) => {
+        const x = Math.min(domain[1], Math.max(domain[0], inn[0] ?? 0));
+        const spenn = domain[1] - domain[0] || 1;
+        let e = enc[0] + ((x - domain[0]) / spenn) * (enc[1] - enc[0]);
+        e = Math.min(m - 1, Math.max(0, e));
+        const i0 = Math.floor(e), i1 = Math.min(m - 1, i0 + 1), fr = e - i0;
+        const ut: number[] = [];
+        for (let j = 0; j < nOut; j++) {
+          const a = les(i0 * nOut + j) / maks, b = les(i1 * nOut + j) / maks;
+          const s = a + (b - a) * fr;
+          ut.push(dec[2 * j] + s * (dec[2 * j + 1] - dec[2 * j]));
+        }
+        return ut;
+      };
+    }
+  } catch { /* ukjent funksjon */ }
   return null;
 }
 
 /**
- * Naar tintTransform ikke lar seg tolke, for eksempel FunctionType 4,
- * skal separasjonen likevel fa sin egen farge. Sort ville gjort at to
- * spotfarger falt sammen til ett lag. Fargen utledes av navnet, saa den er
- * stabil mellom kjoringer, og er lys nok til ikke aa forveksles med sort.
+ * Siste utvei nar tintTransform ikke lar seg tolke. Fargen blir ikke riktig,
+ * men den blir egen, og da separeres logoen fortsatt i riktig antall lag.
+ * Brukeren velger folie selv, sa lagdelingen er det viktige.
  */
-function reserveFarge(navn: string): [number, number, number] {
-  let h = 2166136261;
-  for (let i = 0; i < navn.length; i++) {
-    h ^= navn.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const seks = ((h >>> 0) % 360) / 60;
-  const s = 0.62, l = 0.46;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs((seks % 2) - 1));
-  const m = l - c / 2;
-  const t: [number, number, number] =
-    seks < 1 ? [c, x, 0] : seks < 2 ? [x, c, 0] : seks < 3 ? [0, c, x] :
-    seks < 4 ? [0, x, c] : seks < 5 ? [x, 0, c] : [c, 0, x];
-  return [t[0] + m, t[1] + m, t[2] + m];
+function reserveFarge(navn: string, tint: number): [number, number, number] {
+  if (tint <= 0.01) return [1, 1, 1];
+  let h = 0;
+  for (let i = 0; i < navn.length; i++) h = (h * 31 + navn.charCodeAt(i)) >>> 0;
+  const seks = (h % 360) / 60;
+  const c = 0.7 * tint, x = c * (1 - Math.abs((seks % 2) - 1)), m = 0.15;
+  const bord: [number, number, number][] =
+    [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]];
+  const [r, g, b] = bord[Math.floor(seks) % 6];
+  return [r + m, g + m, b + m];
 }
 
-function csFraObj(res: PDFDict | undefined, navn: string): Cs | null {
-  if (navn === "DeviceCMYK") return CS_CMYK;
-  if (navn === "DeviceRGB") return CS_RGB;
-  if (navn === "DeviceGray") return CS_GRAY;
-  const csres = res?.lookup(PDFName.of("ColorSpace"), PDFDict);
-  return csFraVerdi(csres?.lookup(PDFName.of(navn)), res);
-}
-
-function csFraVerdi(obj: any, res: PDFDict | undefined): Cs | null {
+function csFraObj(ctx: any, obj: any): CsKind {
   if (!obj) return null;
+  const opp = (x: any) => (ctx?.lookup ? ctx.lookup(x) ?? x : x);
   try {
-    if (obj instanceof PDFName) return csFraObj(res, String(obj).slice(1));
-    if (!(obj instanceof PDFArray) || obj.size() < 1) return null;
-    const fam = String(obj.lookup(0)).slice(1);
+    if (obj instanceof PDFName) {
+      const nv = String(obj).slice(1);
+      return nv === "DeviceCMYK" ? CS_CMYK
+           : nv === "DeviceRGB" ? CS_RGB
+           : nv === "DeviceGray" ? CS_GRAY : null;
+    }
+    const arr = obj.asArray ? obj.asArray() : null;
+    if (!arr || !arr.length) return null;
+    const fam = String(opp(arr[0])).slice(1);
 
+    if (fam === "ICCBased") {
+      const st: any = opp(arr[1]);
+      const n = st?.dict?.lookup(PDFName.of("N"))?.asNumber?.() ?? 3;
+      return n === 1 ? CS_GRAY : n === 4 ? CS_CMYK : CS_RGB;
+    }
+    if (fam === "CalRGB") return CS_RGB;
+    if (fam === "CalGray") return CS_GRAY;
     if (fam === "DeviceCMYK") return CS_CMYK;
     if (fam === "DeviceRGB") return CS_RGB;
     if (fam === "DeviceGray") return CS_GRAY;
-    if (fam === "CalRGB") return CS_RGB;
-    if (fam === "CalGray") return CS_GRAY;
-
-    if (fam === "ICCBased") {
-      const n = tallAv(dictAv(obj.lookup(1)), "N") ?? 3;
-      return n === 1 ? CS_GRAY : n === 4 ? CS_CMYK : CS_RGB;
-    }
-
     if (fam === "Lab") {
-      const wp = tallListe(dictAv(obj.lookup(1)), "WhitePoint");
-      const w: [number, number, number] =
-        wp && wp.length === 3 && wp[1] > 0 ? [wp[0], wp[1], wp[2]] : D50;
-      return { n: 3, tilRgb: (v) => labTilRgb(v[0], v[1], v[2], w) };
+      const d: any = opp(arr[1]);
+      const wp = tallArr(d?.lookup?.(PDFName.of("WhitePoint"))) ?? undefined;
+      return { n: 3, tilRgb: (v) => labTilRgb(v[0], v[1], v[2], wp) };
     }
-
     if (fam === "Separation" || fam === "DeviceN") {
-      const del = obj.lookup(1);
-      const antall = fam === "Separation" ? 1
-        : del instanceof PDFArray ? Math.max(1, del.size()) : 1;
-      const alt = csFraVerdi(obj.lookup(2), res);
-      const fn = lagFn(obj.lookup(3));
-      const merke = fam === "Separation"
-        ? String(del ?? "").replace(/^\//, "")
-        : navnListe(del).join("+");
-
-      if (alt && fn && antall === 1) {
-        return { n: 1, tilRgb: (v) => {
-          const u = fn(klem(v[0], 0, 1));
-          return u.length >= alt.n ? alt.tilRgb(u.slice(0, alt.n)) : null;
-        } };
-      }
-
-      // tintTransform lar seg ikke tolke: gi separasjonen sin egen farge,
-      // interpolert fra hvitt ved tint 0.
-      const base = reserveFarge(merke);
-      return { n: antall, tilRgb: (v) => {
-        const t = klem(Math.max(...v.slice(0, antall)), 0, 1);
-        return [1 - t * (1 - base[0]), 1 - t * (1 - base[1]), 1 - t * (1 - base[2])];
-      } };
+      const navnObj: any = opp(arr[1]);
+      const antall = fam === "Separation"
+        ? 1 : (navnObj?.asArray ? navnObj.asArray().length : 1);
+      const navnStr = fam === "Separation"
+        ? String(navnObj)
+        : (navnObj?.asArray ? navnObj.asArray().map(String).join(",") : "DeviceN");
+      const alt = csFraObj(ctx, opp(arr[2]));
+      const fn = lagFn(ctx, opp(arr[3]));
+      return {
+        n: antall,
+        tilRgb: (v) => {
+          const tint = v.slice(-antall);
+          if (alt && fn) {
+            const ut = fn(tint);
+            if (ut && ut.length >= alt.n) {
+              const r = alt.tilRgb(ut.slice(0, alt.n));
+              if (r) return r;
+            }
+          }
+          return reserveFarge(navnStr, tint[tint.length - 1] ?? 1);
+        },
+      };
     }
   } catch { /* ukjent fargerom */ }
   return null;
 }
 
-/** Fargen som rgb 0..1, saa fargeseparering vet hva som er hva. */
-function rgbScn(cs: Cs | null, tall: number[]): [number, number, number] | null {
+function csType(res: PDFDict | undefined, navn: string): CsKind {
+  if (navn === "DeviceCMYK") return CS_CMYK;
+  if (navn === "DeviceRGB") return CS_RGB;
+  if (navn === "DeviceGray") return CS_GRAY;
+  const csres = res?.lookup(PDFName.of("ColorSpace"), PDFDict);
+  const obj: any = csres?.lookup(PDFName.of(navn));
+  if (!obj) return null;
+  return csFraObj((csres as any)?.context ?? (obj as any)?.context, obj);
+}
+
+/** Fargen som rgb 0..1, sa fargeseparering vet hva som er hva. */
+function rgbScn(cs: CsKind, tall: number[]): [number, number, number] | null {
   if (!cs || !tall.length) return null;
   const v = tall.slice(-cs.n);
   if (v.length < cs.n) return null;
-  try {
-    const f = cs.tilRgb(v);
-    if (!f || f.some((x) => typeof x !== "number" || Number.isNaN(x))) return null;
-    return [klem(f[0], 0, 1), klem(f[1], 0, 1), klem(f[2], 0, 1)];
-  } catch { return null; }
-}
-
-/** Hvitt avgjores av fargen, ikke av fargeromtypen. */
-function hvitFraRgb(rgb: [number, number, number]): boolean {
-  return rgb[0] >= 0.99 && rgb[1] >= 0.99 && rgb[2] >= 0.99;
+  return cs.tilRgb(v);
 }
 
 function rgbOp(op: string, tall: number[]): [number, number, number] | null {
@@ -410,6 +342,12 @@ export function tilHex(rgb: [number, number, number]): string {
   return `#${b(rgb[0])}${b(rgb[1])}${b(rgb[2])}`.toUpperCase();
 }
 
+function hvitScn(cs: CsKind, tall: number[]): boolean | null {
+  const rgb = rgbScn(cs, tall);
+  if (!rgb) return null;
+  return rgb.every((v) => v >= 0.99);
+}
+
 function hvitOp(op: string, tall: number[]): boolean | null {
   const o = op.toLowerCase();
   if (o === "g" && tall.length) return tall[tall.length - 1] >= 0.99;
@@ -426,7 +364,7 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, tol: number,
              dybde: number, ut: Malt[]) {
   const stabel: Mat[] = [];
   const hvitStabel: boolean[] = [];
-  const csStabel: (Cs | null)[] = [];
+  const csStabel: CsKind[] = [];
   let cur = ctm;
   let sub: Ring = [];
   let pending: Ring[] = [];
@@ -435,15 +373,15 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, tol: number,
   let tall: number[] = [];
   let navn: string | null = null;
   let hvit = false;
-  let fillCs: Cs | null = null;
+  let fillCs: CsKind = null;
   let farge: [number, number, number] = [0, 0, 0];
   const fargeStabel: [number, number, number][] = [];
   // strektilstand
   let sHvit = false;
-  let sCs: Cs | null = null;
+  let sCs: CsKind = null;
   let sFarge: [number, number, number] = [0, 0, 0];
   let bredde = 1, cap = 0, join = 0, miter = 10;
-  const sStabel: { h: boolean; c: Cs | null; f: [number, number, number];
+  const sStabel: { h: boolean; c: CsKind; f: [number, number, number];
                    b: number; ca: number; j: number; m: number }[] = [];
   let lukket: boolean[] = [];
   let naLukket = false;
@@ -478,14 +416,18 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, tol: number,
     else if (op === "J" && tall.length) { cap = tall[tall.length - 1]; }
     else if (op === "j" && tall.length) { join = tall[tall.length - 1]; }
     else if (op === "M" && tall.length) { miter = tall[tall.length - 1]; }
-    else if (op === "CS" && navn) { sCs = csFraObj(res, navn); }
+    else if (op === "CS" && navn) { sCs = csType(res, navn); }
     else if (op === "SCN" || op === "SC") {
+      const h = hvitScn(sCs, tall);
+      if (h !== null) sHvit = h;
       const f = rgbScn(sCs, tall);
-      if (f) { sFarge = f; sHvit = hvitFraRgb(f); }
-    } else if (op === "cs" && navn) { fillCs = csFraObj(res, navn); }
+      if (f) sFarge = f;
+    } else if (op === "cs" && navn) { fillCs = csType(res, navn); }
     else if (op === "scn" || op === "sc") {
+      const h = hvitScn(fillCs, tall);
+      if (h !== null) hvit = h;
       const f = rgbScn(fillCs, tall);
-      if (f) { farge = f; hvit = hvitFraRgb(f); }
+      if (f) farge = f;
     } else if (op === "cm" && tall.length >= 6) {
       cur = mul(tall.slice(-6) as Mat, cur);
     } else if (op === "m" && tall.length >= 2) {
@@ -607,97 +549,6 @@ function lukkRing(r: Ring): Ring {
   return a[0] === b[0] && a[1] === b[1] ? r : [...r, a];
 }
 
-/**
- * Morfologisk lukking: blaas formen ut med delta, og trekk den inn igjen.
- *
- * En farge som ligger i en apen renne i fargen under, ligger ikke i et
- * hull. Regelen om at et lag fyller igjen hullene innenfor egen form ser
- * derfor ingenting, og det smale sporet blir skaret bort fra det
- * underliggende laget i stedet for a bli lagt oppa. Lukkingen lukker igjen
- * renner som er smalere enn delta, sa de teller som innenfor formen.
- *
- * Lukking kan bare fylle renner som allerede finnes i formen. Utblasingen
- * tas inn igjen med samme delta, sa formen brer seg ikke ut til noe som
- * ligger ved siden av.
- */
-/**
- * Rydder bort nullbrede pigger og kollineare spor fra en flate.
- *
- * Nar to flater deler en kant noyaktig, kan polygon-clipping legge igjen
- * en bane som gar ut og rett tilbake langs samme linje. Den har null
- * areal, men den tegnes som skjaerelinje, og da star det en unodvendig
- * strek midt i et helt element. Pa Nytveit sto piggen midt i den blaa
- * stripen: subbanen gikk (118.9284, 99.6053) -> (52.1789, 99.4038) og
- * rett tilbake igjen.
- *
- * Piggen er skalaavhengig. Den samme logoen gav pigg ved 500 mm
- * elementbredde, men ikke ved 200, 300, 400, 460 eller 560. Slikt maa
- * derfor proves ved flere bredder, ikke bare en.
- *
- * SimplifyPolygons loser opp selvkryssinger og kollineare spor,
- * CleanPolygons fjerner punkter som ligger naermere enn en rutenettsenhet.
- */
-export function ryddFlate(mp: MultiPoly): MultiPoly {
-  if (!mp.length) return mp;
-  const S = 1e4;
-  try {
-    const baner: any[] = [];
-    for (const poly of mp) for (const r of poly) {
-      if (r.length < 3) continue;
-      baner.push(lukkRing(r).map(([x, y]) => ({ X: Math.round(x * S), Y: Math.round(y * S) })));
-    }
-    if (!baner.length) return mp;
-    const enkel = ClipperLib.Clipper.SimplifyPolygons(
-      baner, ClipperLib.PolyFillType.pftNonZero);
-    if (!enkel || !enkel.length) return mp;
-    const rent = ClipperLib.Clipper.CleanPolygons(enkel, 1);
-    if (!rent || !rent.length) return mp;
-    const ringer: Ring[] = rent
-      .map((b: any[]) => lukkRing(b.map((q) => [q.X / S, q.Y / S] as [number, number])))
-      .filter((r: Ring) => r.length > 2);
-    if (!ringer.length) return mp;
-    return nestRinger(ringer);
-  } catch {
-    return mp;   // clipper klarte det ikke; da star flaten som den er
-  }
-}
-
-export function lukkGlipper(mp: MultiPoly, delta: number): MultiPoly {
-  if (!(delta > 0) || !mp.length) return mp;
-  const S = 1e4;
-  const tilClipper = (ringer: Ring[]) =>
-    ringer.filter((r) => r.length > 2).map((r) =>
-      lukkRing(r).map(([x, y]) => ({ X: Math.round(x * S), Y: Math.round(y * S) })));
-
-  const alle: Ring[] = [];
-  for (const poly of mp) for (const r of poly) alle.push(r);
-  const inn = tilClipper(alle);
-  if (!inn.length) return mp;
-
-  const ut = (baner: any[], d: number): any[] => {
-    const co = new ClipperLib.ClipperOffset(2, 0.25);
-    co.AddPaths(baner, ClipperLib.JoinType.jtMiter,
-                ClipperLib.EndType.etClosedPolygon);
-    const res: any[] = [];
-    co.Execute(res, d * S);
-    return res;
-  };
-
-  try {
-    const blast = ut(inn, delta);
-    if (!blast.length) return mp;
-    const krympet = ut(blast, -delta);
-    if (!krympet.length) return mp;
-    const ringer: Ring[] = krympet
-      .map((b: any[]) => lukkRing(b.map((q) => [q.X / S, q.Y / S] as [number, number])))
-      .filter((r: Ring) => r.length > 2);
-    if (!ringer.length) return mp;
-    return nestRinger(ringer);
-  } catch {
-    return mp;   // clipper klarte det ikke; da star formen som den er
-  }
-}
-
 export interface Geometri {
   flate: MultiPoly;
   baner: number;
@@ -705,13 +556,31 @@ export interface Geometri {
   bbox: [number, number, number, number];
 }
 
+/**
+ * Sann bare naar siden faktisk viser tekst. En ubrukt fontressurs i
+ * ordboken teller ikke, for da er det ingenting a konvertere til baner.
+ */
+function harTekst(data: string, res: PDFDict | undefined, dybde: number): boolean {
+  let d = data.replace(/\\./g, " ");
+  let f = d;
+  do { d = f; f = d.replace(/\([^()]*\)/g, " "); } while (f !== d);
+  d = d.replace(/<[0-9A-Fa-f\s]*>/g, " ");
+  if (/(^|[\s\]])(Tj|TJ|'|")(?=\s|$)/.test(d)) return true;
+  if (dybde >= 6) return false;
+  const xo: any = res?.lookup(PDFName.of("XObject"));
+  if (!(xo instanceof PDFDict)) return false;
+  for (const n of xo.keys()) {
+    const form: any = xo.lookup(n);
+    const dict: PDFDict | undefined = form?.dict ?? form;
+    if (!dict || String(dict.lookup(PDFName.of("Subtype"))) !== "/Form") continue;
+    const r2: any = dict.lookup(PDFName.of("Resources"));
+    if (harTekst(streamText(form), r2 instanceof PDFDict ? r2 : res, dybde + 1)) return true;
+  }
+  return false;
+}
+
 async function lesMalt(pdf: Uint8Array, skala: number, sagMm: number) {
   const doc = await PDFDocument.load(pdf, { ignoreEncryption: true });
-  const levendeTekst = doc.getPages().some((p) => {
-    const r: any = (p.node as any).Resources?.();
-    return !!r?.lookup(PDFName.of("Font"));
-  });
-
   const page: any = doc.getPage(0);
   let innhold = "";
   const c = page.node.Contents();
@@ -720,6 +589,8 @@ async function lesMalt(pdf: Uint8Array, skala: number, sagMm: number) {
       for (const r of c.asArray()) innhold += streamText(doc.context.lookup(r)) + "\n";
     } else innhold += streamText(c);
   }
+
+  const levendeTekst = harTekst(innhold, page.node.Resources(), 0);
 
   const tolPt = ((sagMm / 25.4) * 72) / Math.max(skala, 1e-9);
   const tol = (4 * tolPt) ** 2;
@@ -887,4 +758,31 @@ export function omkrets(mp: MultiPoly): number {
 
 export function antallHull(mp: MultiPoly): number {
   return mp.reduce((n, poly) => n + Math.max(0, poly.length - 1), 0);
+}
+
+/**
+ * Lukker smale glipper i en flate: blaser den ut og krymper den tilbake.
+ * Brukes til a finne ut om en farge over ligger i et spor i fargen under,
+ * og ikke bare ved siden av den. Miter holder hjornene skarpe, sa formen
+ * kommer tilbake som den var utenom glippene.
+ */
+export function lukkGlipper(mp: MultiPoly, delta: number): MultiPoly {
+  if (!(delta > 0) || !mp.length) return mp;
+  const S = 1e4;
+  const tilC = (m: MultiPoly) => m.flatMap((p) =>
+    p.map((r) => r.map(([x, y]) => ({ X: Math.round(x * S), Y: Math.round(y * S) }))));
+  const kjor = (baner: any[], d: number) => {
+    const co = new ClipperLib.ClipperOffset(2, 0.25);
+    co.AddPaths(baner, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
+    const ut: any[] = [];
+    co.Execute(ut, d * S);
+    return ut;
+  };
+  const ut = kjor(kjor(tilC(mp), delta), -delta);
+  if (!ut.length) return mp;
+  const ringer: Ring[] = ut
+    .map((p: any[]) => p.map((q: any) => [q.X / S, q.Y / S] as [number, number]))
+    .filter((r: Ring) => r.length > 2)
+    .map(lukkRing);
+  return ringer.length ? nestRinger(ringer) : mp;
 }

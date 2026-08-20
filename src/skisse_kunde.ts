@@ -42,6 +42,11 @@ export interface KundeValg {
   kolonner?: number;   // hvor mange logobredder det er plass til pa bredden
   kvalitet?: number;   // jpeg
   skrift?: string;     // fontfamilie pa lerretet
+  /**
+   * Bilde som skal ligge foran elementskissen, f.eks. bilskissen.
+   * Legges inn som forste side, sentrert paa A4, i sin egen storrelse.
+   */
+  forside?: { jpeg: Uint8Array; bredde: number; hoyde: number };
 }
 
 export interface KundeSkisse {
@@ -175,6 +180,13 @@ export async function byggKundeskisse(
   const jpeg = await tilJpeg(c, kvalitet);
 
   const doc = await PDFDocument.create();
+  if (valg.forside) {
+    const f = doc.addPage([A4.b * MM, A4.h * MM]);
+    const bi = await doc.embedJpg(valg.forside.jpeg);
+    const s = Math.min((A4.b * MM) / valg.forside.bredde, (A4.h * MM) / valg.forside.hoyde);
+    const b = valg.forside.bredde * s, h = valg.forside.hoyde * s;
+    f.drawImage(bi, { x: (A4.b * MM - b) / 2, y: (A4.h * MM - h) / 2, width: b, height: h });
+  }
   const side = doc.addPage([A4.b * MM, A4.h * MM]);
   const bilde = await doc.embedJpg(jpeg);
   side.drawImage(bilde, { x: 0, y: 0, width: A4.b * MM, height: A4.h * MM });

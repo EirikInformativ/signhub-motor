@@ -171,6 +171,11 @@ export async function byggProduksjonsfil(
   // Thru-cut
   if (valg.thruCut) {
     ops.push(`/OC /L1 BDC\nq\n/CS0 CS\n1 SCN\n${f4(geo.strek)} w\n`);
+    /**
+     * Thru-cut deler arket i ett stykke per element. Stykket ma vaere der
+     * ogsa naar elementet ikke har noe i denne folien, for de andre
+     * fargene legges oppa nettopp dette stykket.
+     */
     for (const p of ark.plasseringer) {
       ops.push(`${f4(p.x * MM)} ${f4(ytop(p.y + p.h))} ${f4(p.w * MM)} ${f4(p.h * MM)} re\nS\n`);
     }
@@ -193,7 +198,15 @@ export async function byggProduksjonsfil(
       ops.push(`${f4(bx * MM)} ${f4(ytop(by + bh))} ${f4(bw * MM)} ${f4(bh * MM)} re\nS\n`);
     }
   }
+  /**
+   * Ruta rundt hvert element er et hjelpekutt, sa lukeren kan ta en logo
+   * om gangen i stedet for a skjaere mellom dem for hand. Har elementet
+   * ingenting i denne folien, er det ingenting a luke, og da skal ruta
+   * ikke vaere der. Plassen blir staaende, for alle foliene ma ha samme
+   * oppsett for a ligge i register.
+   */
   for (const p of ark.plasseringer) {
+    if (!harForm[p.id]) continue;
     const k = geo.boksKiss;
     ops.push(`${f4((p.x - k) * MM)} ${f4(ytop(p.y + p.h + k))} ` +
              `${f4((p.w + 2 * k) * MM)} ${f4((p.h + 2 * k) * MM)} re\nS\n`);
