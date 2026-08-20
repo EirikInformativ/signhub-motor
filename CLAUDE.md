@@ -271,6 +271,21 @@ Legg alltid en kopi i `versjoner/` før du bytter ut bundlen i rot.
   En heuristikk som sletter det, sletter ekte innhold.
 * `String.normalize("NFD")` dekomponerer ikke æ, ø og å. Filnavn må
   erstatte dem eksplisitt.
+* `src/motor.d.ts` blir **ikke** typesjekket av prosjektets egen
+  tsconfig. `tsc --listFiles` laster bare `src/motor.ts`; TypeScript ser
+  d.ts-en som deklarasjonsfil for ts-en og henter den aldri inn. Den kan
+  derfor drive fritt fra implementasjonen, slik `folier` gjorde da den sto
+  som `(Folie | null)[]` lenge etter at `"hull"` var innført, og slik
+  `lesBilskisse` og `foreslaFolier` gjorde da de manglet helt. Skal den
+  sjekkes, må det gjøres med et eget tsconfig-oppsett **utenfor**
+  prosjektet: kopier d.ts-en til et annet navn, importer typene derfra, og
+  tilordne de ekte funksjonene og returverdiene til dem.
+* En slik sjekk må negativt kontrolleres før den kan stoles på. To forsøk
+  ga «null feil» uten å sjekke noe: først fordi importen traff `motor.ts`
+  i stedet for d.ts-en, så implementasjonen ble sammenlignet med seg selv,
+  og deretter fordi tsconfig-en brukte `baseUrl`, som er fjernet i
+  TypeScript 7, så `tsc` avbrøt på konfigurasjonen. Brekk noe med vilje,
+  se sjekken feile på riktig sted, og sett det tilbake.
 * Bygget er ikke byte-stabilt mellom esbuild-versjoner. Små forskjeller i
   filstørrelse skyldes navnetildeling i minifikatoren, ikke endret logikk.
   Sammenlign oppførsel gjennom testene, ikke md5.
