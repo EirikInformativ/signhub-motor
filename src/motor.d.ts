@@ -28,8 +28,16 @@ export interface Linje {
    * analyserFil() ga dem. Settes en oppforing til null, smelter den fargen
    * sammen med den storste fargen som star igjen, sa logoen kan produseres
    * med faerre farger enn filen har.
+   *
+   * "negativt" betyr at fargen ikke skjaeres i egen folie. Den skjaeres
+   * negativt ut av fargen under, sa underlaget star fram der den ligger.
+   * Ligger den nederst, er det ingen farge under a skjaere den ut av, og
+   * da faller den bort helt.
+   *
+   * "hull" er det gamle navnet pa det samme valget og er utgatt. Det
+   * behandles likt saa lenge appen ennaa kan sende det.
    */
-  folier?: (Folie | null)[];
+  folier?: (Folie | "negativt" | "hull" | null)[];
 }
 
 export interface Folie {

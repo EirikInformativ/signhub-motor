@@ -133,13 +133,15 @@ const rgbAv = (h: string): [number, number, number] =>
 /**
  * Foreslar folie per farge i ett element.
  *
- * Hvitt nederst i bunken er logoens egen bakgrunn og skal ikke skjaeres.
- * Hvitt som ligger oppa en annen farge er et ekte element, og skjaeres i
- * hvit folie og monteres oppa. Resten gaar til naermeste folie i katalogen.
+ * Hvitt nederst i bunken er logoens egen bakgrunn og skal ikke skjaeres i
+ * egen folie. Den gaar til "negativt": fargen skjaeres negativt ut av
+ * fargen under, og ligger den nederst faller den bort helt. Hvitt som
+ * ligger oppa en annen farge er et ekte element, og skjaeres i hvit folie
+ * og monteres oppa. Resten gaar til naermeste folie i katalogen.
  */
-export function foreslaFolier(farger: BilFarge[], katalog: Folie[]): (Folie | "hull")[] {
+export function foreslaFolier(farger: BilFarge[], katalog: Folie[]): (Folie | "negativt")[] {
   return farger.map((f, i) => {
-    if (f.hex === "#FFFFFF" && i === farger.length - 1) return "hull";
+    if (f.hex === "#FFFFFF" && i === farger.length - 1) return "negativt";
     const a = rgbAv(f.hex);
     let beste = katalog[0], minst = Infinity;
     for (const k of katalog) {

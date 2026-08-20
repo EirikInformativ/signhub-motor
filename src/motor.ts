@@ -95,8 +95,16 @@ export interface Linje {
    * analyserFil() ga dem. Settes en oppforing til null, smelter den fargen
    * sammen med fargen over, sa logoen kan produseres med faerre farger.
    * Er listen utelatt, skjaeres hele motivet i én folie som for.
+   *
+   * "negativt" betyr at fargen ikke skjaeres i egen folie. Den skjaeres
+   * negativt ut av fargen under, sa underlaget star fram der den ligger.
+   * Ligger den nederst, er det ingen farge under a skjaere den ut av, og
+   * da faller den bort helt.
+   *
+   * "hull" er det gamle navnet pa det samme valget og er utgatt. Det
+   * behandles likt saa lenge appen ennaa kan sende det.
    */
-  folier?: (Folie | null)[];
+  folier?: (Folie | "negativt" | "hull" | null)[];
 }
 
 export interface Folie {
@@ -145,14 +153,27 @@ export interface Bestilling {
   lerret?: LerretFabrikk;
 }
 
+/**
+ * Er dette valget "skjaer ikke fargen i egen folie"?
+ *
+ * Verkstedet kaller det negativt: fargen skjaeres negativt ut av fargen
+ * under. "hull" er det gamle navnet og er utgatt, men behandles likt saa
+ * lenge appen ennaa kan sende det. Ett sted, saa de to aldri kan komme i
+ * utakt.
+ */
+function erNegativt(v: unknown): v is "negativt" | "hull" {
+  return v === "negativt" || v === "hull";
+}
+
 export interface FilFarge {
   hex: string;
   /** andel av motivets areal, 0 til 1 */
   andel: number;
   /**
    * Hvitt er tvetydig: det kan vaere hvit folie, og det kan vaere et utsnitt
-   * der underlaget skal vises. Skjemaet bor sette hvite rader til "hull" som
-   * utgangspunkt, og la brukeren velge folie hvis det faktisk skal skjaeres.
+   * der underlaget skal vises. Skjemaet bor sette hvite rader til
+   * "negativt" som utgangspunkt, og la brukeren velge folie hvis fargen
+   * faktisk skal skjaeres.
    */
   hvit: boolean;
 }
@@ -335,7 +356,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       let venter: MultiPoly = [];
       per.lag.forEach((lag, i) => {
         const v = l.folier![i];
-        if (v === "hull") return;              // skjaeres ikke, star apent
+        if (erNegativt(v)) return;   // skjaeres ikke i egen folie
         if (!v) {                              // smelter inn i den storste
           venter = venter.length
             ? (pc.union(venter as any, lag.flate as any) as MultiPoly) : lag.flate;
@@ -374,7 +395,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       const lagvis = l.lagvis ?? true;
       if (lagvis && deler.length > 1) {
         const hull = per.lag
-          .filter((_, i) => l.folier![i] === "hull")
+          .filter((_, i) => erNegativt(l.folier![i]))
           .map((x) => x.flate);
         const somHull = hull.length
           ? (hull.length === 1 ? hull[0]

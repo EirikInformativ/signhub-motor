@@ -37,6 +37,22 @@ I tillegg eksporteres `STD_GEO`, `MIN_DETALJ`, `ADVAR_DETALJ`, `DISCLAIMER`,
 `VANNMERKE`, `VERSJON` og `USTEMPLET`. Full typedefinisjon i
 `src/motor.d.ts`.
 
+**Valget i `folier`-tabellen heter `negativt`, ikke `hull`.** Det er ordet
+verkstedet bruker: fargen skjæres ikke i egen folie, den skjæres negativt ut
+av fargen under, så underlaget står fram der den ligger. Ligger den nederst,
+er det ingen farge under å skjære den ut av, og da faller den bort helt.
+`foreslaFolier` returnerer `negativt`.
+
+`hull` er det gamle navnet på samme valg og er **utgått**, men behandles
+likt så lenge appen ennå kan sende det. Begge går gjennom `erNegativt()` i
+`src/motor.ts`, ett sted, så de aldri kan komme i utakt. `kirkejobb.ts`
+beviser aliaset ved å kjøre samme jobb med begge ordene og sammenligne
+banene i alle filene.
+
+Merk at `hull` som **geometrisk** begrep — antall hull i en flate, hullene
+et lag fyller igjen — er riktig norsk og står uendret. Det er bare valget i
+folier-tabellen som har byttet navn.
+
 `VERSJON` sier hvilken bundle appen faktisk kjører, på formen
 `"8068736 2026-08-19T07:54Z"` — kort commit-SHA og byggetidspunkt. Den settes
 av `.github/workflows/bygg.yml`, som bytter ut plassholderen `__VERSJON__` i

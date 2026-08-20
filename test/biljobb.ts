@@ -32,7 +32,7 @@ const KATALOG = [
   const linjer = lest.elementer.map((e) => {
     const folier = foreslaFolier(e.farger, KATALOG as any);
     console.log(`   ${e.navn.padEnd(34)} ${e.breddeMm} x ${e.hoydeMm} mm  ${e.antall} stk  ` +
-      e.farger.map((f, i) => `${f.hex}->${typeof folier[i] === "string" ? "hull" : (folier[i] as any).kode}`).join(" "));
+      e.farger.map((f, i) => `${f.hex}->${typeof folier[i] === "string" ? folier[i] : (folier[i] as any).kode}`).join(" "));
     return { navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall, folier };
   });
 
