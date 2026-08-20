@@ -7,7 +7,8 @@
  *
  * Grensesnittet er med vilje smalt. Appen skal bare kalle kjorJobb().
  */
-import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull } from "./pdfbaner.ts";
+import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
+         lukkGlipper, ryddFlate } from "./pdfbaner.ts";
 import type { MultiPoly } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
@@ -17,10 +18,9 @@ import { byggProduksjonsfil, STD_GEO, MM } from "./produksjonsfil.ts";
 import type { ArkValg } from "./produksjonsfil.ts";
 import type { Geo, Motiv } from "./produksjonsfil.ts";
 import { byggSkisse } from "./skisse.ts";
-import { snuOpp } from "./snu.ts";
-import { lukkGlipper } from "./pdfbaner.ts";
 import { DISCLAIMER as DISCLAIMER_BILDE } from "./assets.ts";
 import { byggKundeskisse } from "./skisse_kunde.ts";
+import { snuOpp } from "./snu.ts";
 import type { Bilde, KundeValg, LerretFabrikk } from "./skisse_kunde.ts";
 import type { Felt, SkisseMotiv } from "./skisselayout.ts";
 
@@ -34,8 +34,28 @@ export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
 export const MIN_DETALJ = 1.5;
+/**
+ * Renner smalere enn dette regnes som en del av formen, ikke som luft
+ * mellom to former. Brukes som delta til morfologisk lukking i den lagvise
+ * oppbyggingen, sa en farge som ligger i en apen renne blir lagt oppa det
+ * underliggende laget i stedet for a bli skaret bort fra det.
+ *
+ * Merk at lukking tetter igjen apninger opp til *to ganger* delta, siden
+ * formen blases ut med delta fra begge sider. SPOR_MM = 4 lukker altsa
+ * renner opp til 8 mm. Malt pa Nytveit-logoen, der sporet er 2,5 mm:
+ * 1 mm fanger ingenting, 2 mm fanger 99,9 prosent, 3 og 4 mm alt. Malt pa
+ * en konstruert 2,5 mm renne slar det inn ved noyaktig 1,25 mm.
+ *
+ * Lukking skiller ikke mellom en renne inne i en form og et smalt gap
+ * mellom to atskilte flater i samme lag: begge tettes nar de er smalere
+ * enn to ganger delta. Virkningen er avgrenset, fordi den lukkede formen
+ * bare brukes til a finne hva som ligger *under* fargene over.
+ */
+const SPOR_MM = 4;
 /** Under denne blir det krevende, men mulig. */
 export const ADVAR_DETALJ = 3.0;
+/** Hva en oppspenning og en kjoring er verdt, malt i meter rull. */
+const OPPSPENNING_M = 0.5;
 
 /**
  * Hvilken bundle appen faktisk kjorer, pa formen "<kort-sha> <tidspunkt>".
@@ -55,10 +75,6 @@ console.log(
     ? "SignHub-motor: ustemplet bygg (lokal kilde)"
     : `SignHub-motor ${VERSJON}`,
 );
-/** Spor smalere enn dette regnes som noe en farge over ligger nedi. */
-const SPOR_MM = 4;
-/** Hva en oppspenning og en kjoring er verdt, malt i meter rull. */
-const OPPSPENNING_M = 0.5;
 
 export interface Linje {
   navn: string;
@@ -321,41 +337,33 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         deler.push({ folie: v, flate: lag.flate });
       });
       if (!deler.length) throw new Error(`${l.navn}: alle farger er slatt av.`);
-      /**
-       * Far to fargelinjer samme folie, er de ett lag, ikke to. Filer har
-       * ofte to nesten like nyanser av samme farge, og da setter brukeren
-       * samme folie pa begge. Uten sammenslaingen blir bare den oyverste
-       * med i skjaerefila, og lagvis oppbygging teller et lag som ikke
-       * finnes. Laget beholder plassen til den oyverste av dem.
-       */
-      for (let i = 0; i < deler.length; i++) {
-        for (let j = deler.length - 1; j > i; j--) {
-          if (deler[j].folie.kode !== deler[i].folie.kode) continue;
-          deler[i].flate = pc.union(deler[i].flate as any, deler[j].flate as any) as MultiPoly;
-          deler.splice(j, 1);
-        }
-      }
       // fargene som er slatt av smelter inn i den storste som star igjen
       if (venter.length) {
         deler[0].flate = pc.union(deler[0].flate as any, venter as any) as MultiPoly;
       }
+      /**
+       * Fargelinjer som peker pa samme folie er ett lag, ikke flere.
+       *
+       * Produksjonsdelen finner laget sitt med find() pa foliekode, og
+       * find stopper ved forste treff. Sto to fargelinjer pa samme folie,
+       * kom bare den oyverste med i skjaerefila og den andre forsvant
+       * stille. Det rettes her ved kilden, ikke ved find: lagene slas
+       * sammen for lagvis oppbygging, og beholder plassen til den
+       * oyverste.
+       */
+      for (let i = 0; i < deler.length; i++) {
+        for (let j = deler.length - 1; j > i; j--) {
+          if (deler[j].folie.kode !== deler[i].folie.kode) continue;
+          deler[i].flate =
+            pc.union(deler[i].flate as any, deler[j].flate as any) as MultiPoly;
+          deler.splice(j, 1);
+        }
+      }
+
       // malene og tallene skal gjelde det som faktisk skjaeres
       kuttet = deler.length === 1 ? deler[0].flate
         : (pc.union(...deler.map((d) => d.flate as any)) as MultiPoly);
-      /**
-       * Lagvis oppbygging: et lag fyller igjen hullene som fargene over har
-       * stanset ut av det, men bare de hullene som ligger innenfor lagets
-       * egen form. Da far en farge som ligger oppa en annen full dekning
-       * under seg, og registeret trenger ikke a treffe pa hundredelen.
-       *
-       * Det som ligger ved siden av, og ikke oppa, blir ikke med. En logo
-       * der fargene star side om side skal ikke skjaeres flere ganger i
-       * hver folie. Vi legger ikke folie oppa folie uten grunn.
-       *
-       * Skal en farge heller staa apen, for eksempel hvit tekst som skal
-       * monteres pa en hvit flate, settes fargelinjen til hull. Da skjaeres
-       * den ikke i egen folie, og hullet blir staaende.
-       */
+      // lagvis: hvert lag tar med seg alt som ligger over
       const lagvis = l.lagvis ?? true;
       if (lagvis && deler.length > 1) {
         const hull = per.lag
@@ -365,27 +373,45 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           ? (hull.length === 1 ? hull[0]
              : (pc.union(...hull.map((h) => h as any)) as MultiPoly))
           : [];
+        /**
+         * Et lag fyller igjen hullene som fargene over har stanset ut av
+         * det, men bare de hullene som ligger innenfor lagets egen form.
+         *
+         * For tok laget med seg alt som la over, ogsa det som la ved
+         * siden av. Da fikk et lite tekstlag hele logoen under seg, og vi
+         * la folie oppa folie uten grunn. Ligger en farge inni laget,
+         * skal hullet fylles; ligger den ved siden av, skal den ikke rores.
+         *
+         * Lokken gar nedenfra og opp, slik at `over` alltid er de
+         * uendrede lagene.
+         */
         for (let i = deler.length - 1; i >= 1; i--) {
-          const over = i === 1 ? deler[0].flate
+          const over: MultiPoly = i === 1 ? deler[0].flate
             : (pc.union(...deler.slice(0, i).map((d) => d.flate as any)) as MultiPoly);
-          // egen form uten hull: alt som ligger innenfor denne, skal fylles
-          // egen form uten hull, og med smale spor lukket. Et element som
-          // ligger i et spor i laget under, skal legges oppa, ikke buttes
-          // inntil. En glipe pa en millimeter er verre enn litt folie ekstra.
+          // renner smalere enn SPOR_MM teller som innenfor formen
           const lukket = lukkGlipper(deler[i].flate, (SPOR_MM * MM) / skala);
-          const fylt = lukket.map((p) => [p[0]]);
+          const fylt = lukket.map((p) => [p[0]]) as MultiPoly;
           const innenfor = pc.intersection(fylt as any, over as any) as MultiPoly;
-          let ny = innenfor.length
+          let ny: MultiPoly = innenfor.length
             ? (pc.union(deler[i].flate as any, innenfor as any) as MultiPoly)
             : deler[i].flate;
-          if (somHull.length) ny = pc.difference(ny as any, somHull as any) as MultiPoly;
-          deler[i].flate = ny;
+          if (somHull.length) {
+            ny = pc.difference(ny as any, somHull as any) as MultiPoly;
+          }
+          // rydd bort nullbrede pigger unionen kan ha lagt igjen
+          deler[i].flate = ryddFlate(ny);
         }
         /**
-         * Nederste lag fyller igjen de hullene som fargene over dekker, men
-         * beholder de andre. Innmaten i en bokstav som ingen farge ligger
-         * oppa, skal fortsatt skjaeres, ellers blir teksten en klump.
-         * Sammenfyllingen skjer i lokken over, sammen med de andre lagene.
+         * Nederste lag fylles ikke blankt ut lenger.
+         *
+         * Regelen sto sa lenge bunnlaget faktisk la under alt annet, som
+         * pa Finsas. Ligger det stort sett apent, som blaa i Nytveit, ble
+         * DIN TRANSPORTOR skaret som klumper uten innmat i D, R, A, O og P.
+         *
+         * Lokken over fyller allerede igjen de hullene fargene over
+         * dekker, og den gjelder ogsa nederste lag siden i gar fra
+         * deler.length - 1. Innmat som ingen farge ligger oppa, skal
+         * fortsatt skjaeres.
          */
       }
       if (per.lag.length > l.folier.length) {
@@ -549,7 +575,6 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * oppspenning er verdt malt i folie.
          */
         const merForbruk = (samlet - hver) / 1000;   // meter rull
-        if (process.env.DBGG) console.log(`  DBGG merforbruk ${merForbruk.toFixed(3)} m rull`);
         if (merForbruk <= (b.oppspenningM ?? OPPSPENNING_M)) {
           grupper.set(stor, [...grupper.get(stor)!, ...grupper.get(liten)!]);
           grupper.delete(liten);

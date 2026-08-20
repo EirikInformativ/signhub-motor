@@ -93,6 +93,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx mfjobb.ts     # hele jobben
     npx tsx stabel.ts     # register: arkene lagt oppå hverandre
     npx tsx bmtest.ts     # spotfarger: to Pantone i Bergen Mekaniske
+    npx tsx piggtest.ts   # nullbrede pigger, Nytveit ved seks bredder
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -189,6 +190,13 @@ subbanen gikk `(118.9284, 99.6053) → (52.1789, 99.4038)` og rett tilbake.
 **Piggen er skalaavhengig, så den må prøves ved flere bredder.** Den samme
 logoen gav pigg ved 500 mm elementbredde, men ikke ved 200, 300, 400, 460
 eller 560. Én bredde er ikke en test.
+
+`test/piggtest.ts` kjører `nytveit.ai` ved alle seks breddene og feiler med
+exit 1 hvis den finner en bane som går ut og rett tilbake. Målt før
+`ryddFlate` ble lagt inn: én pigg ved 500 mm, subbane 2 i
+`N_sekundaer_751-086.pdf`, mellom `(118.9284, 99.6053)` og
+`(52.1789, 99.4038)`. Testen er verifisert ved å slå av `ryddFlate` og se
+den feile på nøyaktig det punktet.
 
 `test/kirke.pdf`, `test/hb.ai` og `test/bm.pdf` er med fordi de avdekket
 hver sin egen feil: en clipping-path som ble tolket som hvit bakgrunn, en
