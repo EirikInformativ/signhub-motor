@@ -37,7 +37,7 @@ const KATALOG = [
   });
 
   const r = await kjorJobb({
-    jobb, linjer, bilder, lerret, egenSkisse: false,
+    jobb, linjer, bilder, lerret, egenSkisse: false, snuOpp: true,
     kundeValg: { forside: lest.forside },
   } as any);
 

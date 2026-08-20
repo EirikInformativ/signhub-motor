@@ -94,6 +94,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx stabel.ts     # register: arkene lagt oppå hverandre
     npx tsx bmtest.ts     # spotfarger: to Pantone i Bergen Mekaniske
     npx tsx piggtest.ts   # nullbrede pigger, Nytveit ved seks bredder
+    npx tsx askotest.ts   # lagreglene: fire farger i ASKO reklame
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -156,6 +157,14 @@ laget stille ut av skjærefila. Regel 4b i samme dokument.
 
 **Feilsignatur:** to fargelinjer på samme folie der bare den øverste
 kommer med i skjærefila.
+
+`test/askotest.ts` dekker lagreglene på `asko.ai`: fire farger, at de to
+nesten like vinrøde ikke slås sammen, at den nesten hvite teksten skjæres
+positivt i hvit folie, at ingen farge skjæres både positivt og negativt, og
+at ingen lag svelger logoen. Alt måles på de ferdige skjærefilene, ikke på
+en kopi av regelen inne i testen. Verifisert ved å reversere regel 4: den
+nesten hvite teksten gikk fra 456 til 4292 i areal, snakkeboblen fra 5992
+til 9829, og testen feilet med exit 1.
 
 **Nederste lag fyller igjen de hullene fargene over dekker, ikke alle
 hull.** Bunnlaget behandles som alle andre lag. Den gamle regelen fylte det

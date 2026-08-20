@@ -123,7 +123,14 @@ export interface Bestilling {
    * ikke naar kundeskissen er det eneste som skal ut. Standard er pa.
    */
   egenSkisse?: boolean;
-  /** staaende elementer snus opp i skissen. Standard er pa. */
+  /**
+   * Snur staaende elementer opp i skissen. **Standard er av.**
+   *
+   * Paa en bilskisse er rotasjon riktig: takelementet ligger paa siden bare
+   * fordi visningen ser bilen ovenfra. Paa en vanlig skiltjobb er et
+   * staaende motiv staaende med vilje, og kunden skal se det slik det skal
+   * henge. Bare lesBilskisse-flyten skal snu noe, og den setter dette selv.
+   */
   snuOpp?: boolean;
   /** standardfolie for linjer som ikke har sin egen */
   folie?: Folie;
@@ -707,8 +714,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   }
 
   const felt: Felt = { korrekturdato: idag(), ...(b.felt ?? {}) };
-  // Staaende elementer snus opp for skissen. Produksjonsfilene rores ikke.
-  const skisseKlar = b.snuOpp === false ? skisseMotiv : snuOpp(skisseMotiv);
+  // Staaende elementer snus opp for skissen naar den som bestiller ber om
+  // det. Produksjonsfilene rores ikke.
+  const skisseKlar = b.snuOpp === true ? snuOpp(skisseMotiv) : skisseMotiv;
   if (b.egenSkisse !== false) {
     const sk = await byggSkisse(skisseKlar, b.jobb, felt, graaBunn, DISCLAIMER_BILDE);
     filer.push({ slag: "skisse", navn: `${s}_skisse.pdf`, bytes: sk.bytes });
