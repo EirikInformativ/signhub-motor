@@ -217,7 +217,19 @@ export interface BilElement {
   hoydeMm: number;
   /** samme element funnet flere steder telles her, ikke som egne elementer */
   antall: number;
+  /**
+   * fargene som skal skjaeres, oyverst forst. En bakgrunnsplate er tatt ut
+   * og ligger i `bakgrunn` i stedet; den skal ikke tilbys som valg.
+   */
   farger: BilFarge[];
+  /**
+   * bakgrunnsplaten, hvis elementet er tegnet paa en. Den er ikke dekor,
+   * den er mellomrommet, og paa bilen er det lakken. Motoren trenger den i
+   * PDF-en for aa bygge lagene, men den skal aldri skjaeres. Bygger du
+   * folier til kjorJobb, legg til "negativt" bakerst naar denne er satt,
+   * slik at listen holder folge med lagene i PDF-en.
+   */
+  bakgrunn?: BilFarge;
 }
 
 export interface BilSkisseLest {

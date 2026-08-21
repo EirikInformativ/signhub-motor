@@ -12,12 +12,43 @@
 import { lesLett, tolk } from "./bilskisse.ts";
 import { finnDekor } from "./dekorfinn.ts";
 import { hentBaner, skrivPdf } from "./uttrekk.ts";
-import { hentGeometriPerFarge } from "./pdfbaner.ts";
+import { hentGeometriPerFarge, areal } from "./pdfbaner.ts";
+import * as pcModul from "polygon-clipping";
+const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
 import type { Folie } from "./motor.ts";
 
 const MM = 72 / 25.4;
+/**
+ * Hvor mye av motivets ramme formen ma fylle for at bunnen regnes som en
+ * bakgrunnsplate og ikke som et formet element. Malt: rektangulaer plate
+ * 1,0000, ellipseformet badge 0,7847. Terskelen ligger hoyt med vilje, sa
+ * bare en tilnaermet full firkant faller inn under den. En plate med lett
+ * avrundede hjorner er fortsatt en plate; en badge er det ikke.
+ */
+const PLATE_FYLL = 0.995;
+
+/**
+ * Er nederste lag en bakgrunnsplate og ikke et formet element?
+ *
+ * En plate fyller motivets ramme: formen for den skjaeres av lagene over
+ * er et rektangel som dekker hele bboksen. En badge eller et skilt er
+ * formet og fyller mindre. Malt: rektangulaer plate 1,0000, ellipseformet
+ * badge 0,7847.
+ *
+ * Eksportert for aa kunne proves direkte, uten a matte bygge en hel
+ * bilskisse rundt tilfellet.
+ */
+export function erBakgrunnsplate(
+  lag: any[], bbox: [number, number, number, number],
+): boolean {
+  if (lag.length < 2) return false;
+  const ramme = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
+  if (!(ramme > 0)) return false;
+  const samlet = pc.union(...lag.map((f) => f as any));
+  return areal(samlet) / ramme >= PLATE_FYLL;
+}
 const A4_FORHOLD = 297 / 210;
 
 export interface BilFarge {
@@ -40,7 +71,19 @@ export interface BilElement {
   hoydeMm: number;
   /** samme element funnet flere steder telles her, ikke som egne elementer */
   antall: number;
+  /**
+   * fargene som skal skjaeres, oyverst forst. En bakgrunnsplate er tatt ut
+   * og ligger i `bakgrunn` i stedet; den skal ikke tilbys som valg.
+   */
   farger: BilFarge[];
+  /**
+   * bakgrunnsplaten, hvis elementet er tegnet paa en. Den er ikke dekor,
+   * den er mellomrommet, og paa bilen er det lakken. Motoren trenger den i
+   * PDF-en for aa bygge lagene, men den skal aldri skjaeres. Bygger du
+   * folier til kjorJobb, legg til "negativt" bakerst naar denne er satt,
+   * slik at listen holder folge med lagene i PDF-en.
+   */
+  bakgrunn?: BilFarge;
 }
 
 export interface BilSkisseLest {
@@ -102,12 +145,37 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const nokkel = `${valgte.length}|${tegnetB.toFixed(2)}`;
     const finnes = elementer.find((e) => e.id === nokkel);
     if (finnes) { finnes.antall++; finnes.navn += ` + ${o.vis} ${o.navn}`; continue; }
+    /**
+     * En bakgrunnsplate er ikke dekor, den er mellomrommet. Rosen-logoen
+     * er tegnet paa en hvit plate som utgjor 73 prosent av motivet i 13
+     * biter etter at bokstavene er skaaret fra. Meldes den som en farge
+     * blant de andre, blir den foreslatt som folie, og appen tilbyr klar
+     * folie over tre firedeler av logoen.
+     *
+     * Kjennetegn: nederste lag, og formen for den skjaeres av lagene over
+     * fyller motivets ramme. Malt paa proace2 gir alle fire elementene
+     * 1,0000; en ellipseformet badge gir 0,7847. Er bunnen formet, er den
+     * et ekte element og blir staaende.
+     */
+    const alleFarger = per.lag.map((l) => ({ hex: l.hex, andel: l.andel }));
+    let bakgrunn: BilFarge | undefined;
+    {
+      if (erBakgrunnsplate(per.lag.map((l) => l.flate), per.bbox)) {
+        bakgrunn = alleFarger.pop();
+        merknader.push(
+          `${o.vis} ${o.navn}: bakgrunnsplaten ${bakgrunn!.hex} ` +
+          `(${(bakgrunn!.andel * 100).toFixed(1)} % av motivet) er tatt ut. ` +
+          "Den er ikke dekor, den er mellomrommet, og skjaeres ikke.");
+      }
+    }
+
     elementer.push({
       id: nokkel, vis: o.vis, navn: `${o.vis} ${o.navn}`, pdf,
       breddeMm: Math.round(tegnetB * malestokk),
       hoydeMm: Math.round(tegnetH * malestokk),
       antall: 1,
-      farger: per.lag.map((l) => ({ hex: l.hex, andel: l.andel })),
+      farger: alleFarger,
+      ...(bakgrunn ? { bakgrunn } : {}),
     });
   }
   if (!elementer.length) merknader.push("Ingen dekor a produsere i denne skissen.");

@@ -112,6 +112,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx piggtest.ts   # nullbrede pigger, Nytveit ved seks bredder
     npx tsx askotest.ts   # lagreglene: fire farger i ASKO reklame
     npx tsx vakttest.ts   # vaktene i foreslaFolier og kjorJobb
+    npx tsx platetest.ts  # bakgrunnsplaten holdes utenfor valgene
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -141,6 +142,26 @@ Hårfine rester fra subtraksjonen mellom lagene fjernes fra skjærefilene når
 de er **både** tynnere enn 1,0 mm og mindre enn 10 mm², og det legges en
 advarsel. Et ekte element som er tynt skal fortsatt meldes som kritisk.
 Regel 10 i samme dokument.
+
+**En bakgrunnsplate er ikke dekor, den er mellomrommet.** Rosen-logoen er
+tegnet på en hvit plate som utgjør 73 % av motivet i 13 biter etter at
+bokstavene er skåret fra. På bilen er det lakken. Meldes den som en farge
+blant de andre, foreslås den som folie, og appen tilbyr klar folie over tre
+firedeler av logoen. `lesBilskisse` tar den derfor ut av `farger`, legger
+den i `bakgrunn` på elementet, og melder fra i `merknader` med farge og
+andel.
+
+Kjennetegnet er **formen, ikke fargen**: nederste lag, og formen før den
+skjæres av lagene over fyller motivets ramme. Målt på proace2 gir alle fire
+elementene 1,0000; en ellipseformet badge gir 0,7847. `PLATE_FYLL = 0.995`
+i `src/bilmotor.ts` ligger høyt med vilje, så en plate med lett avrundede
+hjørner fortsatt er en plate, mens en badge med tekst oppå blir stående som
+et ekte element.
+
+**Bygger du `folier` til `kjorJobb`, må `"negativt"` legges til bakerst når
+`bakgrunn` er satt.** Platen ligger fortsatt i PDF-en som nederste lag, så
+en liste som er ett kortere enn lagene får platen til å smelte inn i en
+annen farge. `test/biljobb.ts` viser koblingen.
 
 **`foreslaFolier` skal avvise en katalog den ikke kan bruke.** Appen sendte
 en gang materiallista inn som fargekatalog. Den har varenummer, bredde og
