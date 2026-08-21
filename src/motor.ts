@@ -379,6 +379,22 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * sammen for lagvis oppbygging, og beholder plassen til den
        * oyverste.
        */
+      /**
+       * Faar alle fargelagene samme foliekode, skjaeres motivet som en
+       * flate og hver eneste detalj forsvinner. Det er nesten aldri
+       * meningen. Den vanligste arsaken er at appen har sendt feil liste
+       * til foreslaFolier, saa alle fargene traff samme oppforing.
+       *
+       * Maales for sammenslaingen under, som er nettopp det som skjuler
+       * symptomet ved a gjore de mange lagene til ett.
+       */
+      if (deler.length > 1 && new Set(deler.map((d) => d.folie.kode)).size === 1) {
+        advarsler.push(
+          `${l.navn}: alle ${deler.length} fargelagene har samme foliekode ` +
+          `${deler[0].folie.kode}. Motivet skjaeres da som en flate, og ` +
+          "detaljene forsvinner. Er det med vilje, kan du se bort fra dette.");
+      }
+
       for (let i = 0; i < deler.length; i++) {
         for (let j = deler.length - 1; j > i; j--) {
           if (deler[j].folie.kode !== deler[i].folie.kode) continue;

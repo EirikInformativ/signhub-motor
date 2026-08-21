@@ -111,6 +111,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx bmtest.ts     # spotfarger: to Pantone i Bergen Mekaniske
     npx tsx piggtest.ts   # nullbrede pigger, Nytveit ved seks bredder
     npx tsx askotest.ts   # lagreglene: fire farger i ASKO reklame
+    npx tsx vakttest.ts   # vaktene i foreslaFolier og kjorJobb
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -140,6 +141,22 @@ Hårfine rester fra subtraksjonen mellom lagene fjernes fra skjærefilene når
 de er **både** tynnere enn 1,0 mm og mindre enn 10 mm², og det legges en
 advarsel. Et ekte element som er tynt skal fortsatt meldes som kritisk.
 Regel 10 i samme dokument.
+
+**`foreslaFolier` skal avvise en katalog den ikke kan bruke.** Appen sendte
+en gang materiallista inn som fargekatalog. Den har varenummer, bredde og
+pris, men ingen `hex`. Motoren leste manglende hex som sort, så hver farge
+traff samme oppføring, alle lagene fikk samme foliekode og smeltet sammen,
+og skjærefila ble et fylt rektangel. Det tok tre runder å finne. Nå kastes
+det en feil som navngir årsaken, oppføringer uten hex hoppes over med
+melding, og `hex` godtas med og uten `#` og i tre tegn. Ingen stille
+standard.
+
+**`kjorJobb` advarer når alle fargelagene får samme foliekode.** Da skjæres
+motivet som én flate og detaljene forsvinner. Målt før sammenslåingen av
+like folier, siden det er nettopp den som skjuler symptomet.
+
+**Feilsignatur:** produksjonsfiler som er fylte rektangler uten innmat, og
+alle lag på én foliekode.
 
 **Spotfarger skal tolkes gjennom `tintTransform`, aldri som sort med en
 styrke.** En Pantone-logo bruker `cs` og `scn` med navngitte fargerom, ikke

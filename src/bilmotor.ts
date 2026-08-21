@@ -127,6 +127,25 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   };
 }
 
+/**
+ * Normaliserer en hex-farge til "#RRGGBB", eller gir null om strengen ikke
+ * er en farge i det hele tatt.
+ *
+ * Tar imot med og uten firkantkrall, tre og seks tegn, store og sma
+ * bokstaver. En funksjon i et offentlig grensesnitt skal ikke feiltolke
+ * inndata i stillhet: er strengen ikke en farge, sier vi fra i stedet for
+ * a gjette.
+ */
+export function normHex(h: unknown): string | null {
+  if (typeof h !== "string") return null;
+  const r = h.trim().replace(/^#/, "");
+  if (/^[0-9a-fA-F]{3}$/.test(r)) {
+    return ("#" + r[0] + r[0] + r[1] + r[1] + r[2] + r[2]).toUpperCase();
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(r)) return ("#" + r).toUpperCase();
+  return null;
+}
+
 const rgbAv = (h: string): [number, number, number] =>
   [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
@@ -140,14 +159,58 @@ const rgbAv = (h: string): [number, number, number] =>
  * og monteres oppa. Resten gaar til naermeste folie i katalogen.
  */
 export function foreslaFolier(farger: BilFarge[], katalog: Folie[]): (Folie | "negativt")[] {
+  if (!Array.isArray(katalog) || !katalog.length) {
+    throw new Error(
+      "foreslaFolier: fargekatalogen er tom. Den skal inneholde folier med " +
+      "kode og hex, ikke en materialliste.");
+  }
+
+  /**
+   * Katalogen ma ha farger for a kunne matches paa farge. Sendes en
+   * materialliste inn i stedet, med varenummer, bredde og pris men ingen
+   * hex, traff alle fargene samme oppforing fordi manglende hex ble lest
+   * som sort. Da fikk hele motivet en foliekode, lagene smeltet sammen, og
+   * skjaerefila ble et fylt rektangel. Det skal ikke skje stille.
+   */
+  const brukbare: { folie: Folie; rgb: [number, number, number] }[] = [];
+  const utenHex: string[] = [];
+  for (const k of katalog) {
+    const h = normHex(k?.hex);
+    if (h) brukbare.push({ folie: k, rgb: rgbAv(h) });
+    else utenHex.push(k?.kode ?? "(uten kode)");
+  }
+
+  if (!brukbare.length) {
+    throw new Error(
+      `foreslaFolier: ingen av de ${katalog.length} oppforingene i katalogen ` +
+      "har en brukbar hex-farge. Uten farge kan folie ikke velges paa farge. " +
+      "Ser listen ut som varenummer, bredde og pris, er det materiallista som " +
+      "er sendt inn i stedet for fargekatalogen. " +
+      `Kodene som mangler farge: ${utenHex.slice(0, 8).join(", ")}` +
+      (utenHex.length > 8 ? ` og ${utenHex.length - 8} til` : ""));
+  }
+
+  if (utenHex.length) {
+    console.warn(
+      `foreslaFolier: hopper over ${utenHex.length} av ${katalog.length} ` +
+      `folier uten brukbar hex: ${utenHex.slice(0, 8).join(", ")}` +
+      (utenHex.length > 8 ? ` og ${utenHex.length - 8} til` : "") +
+      ". De kan ikke velges paa farge.");
+  }
+
   return farger.map((f, i) => {
-    if (f.hex === "#FFFFFF" && i === farger.length - 1) return "negativt";
-    const a = rgbAv(f.hex);
-    let beste = katalog[0], minst = Infinity;
-    for (const k of katalog) {
-      const b = rgbAv(k.hex ?? "#000000");
-      const d = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 + (b[2] - a[2]) ** 2;
-      if (d < minst) { minst = d; beste = k; }
+    const fh = normHex(f?.hex);
+    if (!fh) {
+      throw new Error(
+        `foreslaFolier: farge ${i + 1} har ingen brukbar hex ` +
+        `(${JSON.stringify(f?.hex)}). Forventet "#rrggbb".`);
+    }
+    if (fh === "#FFFFFF" && i === farger.length - 1) return "negativt";
+    const a = rgbAv(fh);
+    let beste = brukbare[0].folie, minst = Infinity;
+    for (const k of brukbare) {
+      const d = (k.rgb[0] - a[0]) ** 2 + (k.rgb[1] - a[1]) ** 2 + (k.rgb[2] - a[2]) ** 2;
+      if (d < minst) { minst = d; beste = k.folie; }
     }
     return beste;
   });
