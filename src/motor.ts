@@ -8,8 +8,8 @@
  * Grensesnittet er med vilje smalt. Appen skal bare kalle kjorJobb().
  */
 import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
-         lukkGlipper, ryddFlate } from "./pdfbaner.ts";
-import type { MultiPoly } from "./pdfbaner.ts";
+         lukkGlipper, ryddFlate, kuttTrygt } from "./pdfbaner.ts";
+import type { MultiPoly, Geometri, GeometriPerFarge } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
 import * as pcModul from "polygon-clipping";
@@ -295,7 +295,7 @@ const slugg = (s: string) =>
 
 const ROLLER = ["primær", "sekundær", "tertiær", "kvartær", "kvintær"];
 
-interface Del { folie: Folie; flate: MultiPoly }
+interface Del { folie: Folie; flate: MultiPoly; hex: string }
 
 interface Elem {
   navn: string;
@@ -306,6 +306,24 @@ interface Elem {
   hoydeMm: number;
   antall: number;
   deler: Del[];
+}
+
+/** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
+const fargenavn = (d: Del) => `${d.hex} (folie ${d.folie.kode})`;
+
+/**
+ * Separeringen kutter ogsaa, og har selv ingen anelse om hvilket element
+ * den holder paa med. Navnet settes paa her, ett sted, saa ingen raa feil
+ * fra hverken separeringen eller lesingen slipper ut av kjorJobb uten aa
+ * si hvilken linje den gjelder.
+ */
+async function medNavn<T>(navn: string, f: () => Promise<T>): Promise<T> {
+  try {
+    return await f();
+  } catch (e: any) {
+    const m = String(e?.message ?? e ?? "ukjent feil");
+    throw m.startsWith(navn + ":") ? e : new Error(`${navn}: ${m}`);
+  }
 }
 
 const lys = (f: Folie) => {
@@ -324,9 +342,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   for (const l of b.linjer) {
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
     // som star igjen nar hvitt er visket bort.
-    const g0 = l.folier?.length
-      ? await hentGeometriPerFarge(l.pdf, 1.0)
-      : await hentGeometri(l.pdf, 1.0);
+    const g0 = await medNavn<Geometri | GeometriPerFarge>(l.navn, () =>
+      l.folier?.length ? hentGeometriPerFarge(l.pdf, 1.0)
+                       : hentGeometri(l.pdf, 1.0));
     const tomt = "flate" in g0 ? !g0.flate.length : !g0.lag.length;
     if (tomt) {
       throw new Error(`${l.navn}: fant ingen baner. Er teksten gjort om til ` +
@@ -344,14 +362,14 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
     // hele motivet, til mal og til tallene. Boksen er felles for alle farger,
     // slik at fargene havner pa noyaktig samme plass pa hvert ark.
-    const g = await hentGeometri(l.pdf, skala);
+    const g = await medNavn(l.navn, () => hentGeometri(l.pdf, skala));
 
     // fargene
     const deler: Del[] = [];
     let boks = g.bbox;
     let kuttet = g.flate;
     if (l.folier?.length) {
-      const per = await hentGeometriPerFarge(l.pdf, skala);
+      const per = await medNavn(l.navn, () => hentGeometriPerFarge(l.pdf, skala));
       boks = per.bbox;   // boksen omfatter alle farger, ogsa de hvite
       let venter: MultiPoly = [];
       per.lag.forEach((lag, i) => {
@@ -362,12 +380,14 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
             ? (pc.union(venter as any, lag.flate as any) as MultiPoly) : lag.flate;
           return;
         }
-        deler.push({ folie: v, flate: lag.flate });
+        deler.push({ folie: v, flate: lag.flate, hex: lag.hex });
       });
       if (!deler.length) throw new Error(`${l.navn}: alle farger er slatt av.`);
       // fargene som er slatt av smelter inn i den storste som star igjen
       if (venter.length) {
-        deler[0].flate = pc.union(deler[0].flate as any, venter as any) as MultiPoly;
+        deler[0].flate = kuttTrygt(l.navn, fargenavn(deler[0]),
+          (a, b) => pc.union(a as any, b as any) as MultiPoly,
+          deler[0].flate, venter);
       }
       /**
        * Fargelinjer som peker pa samme folie er ett lag, ikke flere.
@@ -398,15 +418,18 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       for (let i = 0; i < deler.length; i++) {
         for (let j = deler.length - 1; j > i; j--) {
           if (deler[j].folie.kode !== deler[i].folie.kode) continue;
-          deler[i].flate =
-            pc.union(deler[i].flate as any, deler[j].flate as any) as MultiPoly;
+          deler[i].flate = kuttTrygt(l.navn, fargenavn(deler[i]),
+            (a, b) => pc.union(a as any, b as any) as MultiPoly,
+            deler[i].flate, deler[j].flate);
           deler.splice(j, 1);
         }
       }
 
       // malene og tallene skal gjelde det som faktisk skjaeres
       kuttet = deler.length === 1 ? deler[0].flate
-        : (pc.union(...deler.map((d) => d.flate as any)) as MultiPoly);
+        : kuttTrygt(l.navn, "alle lag",
+            (...f) => pc.union(...(f as any[])) as MultiPoly,
+            ...deler.map((d) => d.flate));
       // lagvis: hvert lag tar med seg alt som ligger over
       const lagvis = l.lagvis ?? true;
       if (lagvis && deler.length > 1) {
@@ -415,7 +438,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           .map((x) => x.flate);
         const somHull = hull.length
           ? (hull.length === 1 ? hull[0]
-             : (pc.union(...hull.map((h) => h as any)) as MultiPoly))
+             : kuttTrygt(l.navn, "de negative lagene",
+                 (...f) => pc.union(...(f as any[])) as MultiPoly, ...hull))
           : [];
         /**
          * Et lag fyller igjen hullene som fargene over har stanset ut av
@@ -430,20 +454,31 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * uendrede lagene.
          */
         for (let i = deler.length - 1; i >= 1; i--) {
+          const navn = fargenavn(deler[i]);
           const over: MultiPoly = i === 1 ? deler[0].flate
-            : (pc.union(...deler.slice(0, i).map((d) => d.flate as any)) as MultiPoly);
-          // renner smalere enn SPOR_MM teller som innenfor formen
-          const lukket = lukkGlipper(deler[i].flate, (SPOR_MM * MM) / skala);
-          const fylt = lukket.map((p) => [p[0]]) as MultiPoly;
-          const innenfor = pc.intersection(fylt as any, over as any) as MultiPoly;
-          let ny: MultiPoly = innenfor.length
-            ? (pc.union(deler[i].flate as any, innenfor as any) as MultiPoly)
-            : deler[i].flate;
-          if (somHull.length) {
-            ny = pc.difference(ny as any, somHull as any) as MultiPoly;
-          }
-          // rydd bort nullbrede pigger unionen kan ha lagt igjen
-          deler[i].flate = ryddFlate(ny);
+            : kuttTrygt(l.navn, navn,
+                (...f) => pc.union(...(f as any[])) as MultiPoly,
+                ...deler.slice(0, i).map((d) => d.flate));
+          /**
+           * Hele oppbyggingen av dette ene laget ligger inne i vakten,
+           * ikke bare den ene operasjonen som tilfeldigvis kastet. Feiler
+           * den, kjores den om igjen paa ryddet geometri, og gaar det
+           * fortsatt ikke, sier feilen hvilket element og hvilken farge.
+           */
+          deler[i].flate = kuttTrygt(l.navn, navn, (egen, oppa, somHullNa) => {
+            // renner smalere enn SPOR_MM teller som innenfor formen
+            const lukket = lukkGlipper(egen, (SPOR_MM * MM) / skala);
+            const fylt = lukket.map((p) => [p[0]]) as MultiPoly;
+            const innenfor = pc.intersection(fylt as any, oppa as any) as MultiPoly;
+            let ny: MultiPoly = innenfor.length
+              ? (pc.union(egen as any, innenfor as any) as MultiPoly)
+              : egen;
+            if (somHullNa.length) {
+              ny = pc.difference(ny as any, somHullNa as any) as MultiPoly;
+            }
+            // rydd bort nullbrede pigger unionen kan ha lagt igjen
+            return ryddFlate(ny);
+          }, deler[i].flate, over, somHull);
         }
         /**
          * Nederste lag fylles ikke blankt ut lenger.
@@ -465,7 +500,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     } else {
       const folie = l.folie ?? b.folie;
       if (!folie) throw new Error(`${l.navn}: mangler folie.`);
-      deler.push({ folie, flate: g.flate });
+      deler.push({ folie, flate: g.flate, hex: folie.hex ?? "#000000" });
     }
 
     for (const d of deler) {

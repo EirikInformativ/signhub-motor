@@ -662,6 +662,62 @@ export function ryddFlate(mp: MultiPoly): MultiPoly {
   }
 }
 
+/**
+ * Vakt rundt kuttingen per element og farge.
+ *
+ * polygon-clipping kan miste tellingen paa hakkete geometri og kaste
+ * «Unable to find segment #52671 25.377125, 10.503875 til
+ * 25.401951614863158, 10.524788266040684 in SweepLine tree» rett ut i
+ * appen. Vi saa den paa bakgrunnsplaten i Rosen-logoen: 73 prosent av
+ * motivet, 13 biter, og hver bit full av korte segmenter fra bokstavene
+ * som er stanset ut av den.
+ *
+ * Bakgrunnsplaten skjaeres ikke lenger, se erBakgrunnsplate i
+ * src/bilmotor.ts, saa den aarsaken er borte. Men motoren skal ikke
+ * kunne kastes ut med en raa biblioteksfeil uansett hva slags fil som
+ * kommer inn. Foerste forsoek gaar paa geometrien som den er. Feiler
+ * det, ryddes hver operand med ryddFlate og forsoeket gjentas en gang.
+ * Gaar det fortsatt ikke, kastes en feil som sier hvilket element og
+ * hvilken farge det gjelder.
+ *
+ * Den raa teksten fra biblioteket logges til konsollen for feilsoking,
+ * men naar aldri fram til brukeren. Brukeren skal aldri se SweepLine
+ * tree.
+ */
+export function kuttTrygt(
+  el: string,
+  farge: string,
+  op: (...flater: MultiPoly[]) => MultiPoly,
+  ...flater: MultiPoly[]
+): MultiPoly {
+  try {
+    return op(...flater);
+  } catch (forste: any) {
+    console.warn(`${el || "fargesepareringen"} / ${farge}: kuttingen feilet ` +
+      `(${kortFeil(forste)}). ` +
+      "Proever en gang til med ryddet geometri.");
+    try {
+      return op(...flater.map((f) => ryddFlate(f)));
+    } catch (andre: any) {
+      console.error(`${el || "fargesepareringen"} / ${farge}: kuttingen ` +
+        `feilet ogsaa etter ` +
+        `opprydding (${kortFeil(andre)}).`);
+      throw new Error(
+        `${el ? el + ": klarte" : "Klarte"} ikke skjaere fargen ${farge}. ` +
+        "Geometrien i denne " +
+        "flaten er saa oppdelt at motoren ikke far kuttet den, heller ikke " +
+        "etter opprydding. Ligger fargen som en bakgrunnsplate bak motivet, " +
+        "skal den ikke skjaeres i folie, men settes til negativt.");
+    }
+  }
+}
+
+/** Kort, ufarlig sammendrag av en biblioteksfeil, til konsollen. */
+function kortFeil(e: any): string {
+  const m = String(e?.message ?? e ?? "ukjent feil");
+  return m.length > 120 ? m.slice(0, 117) + "..." : m;
+}
+
 export function lukkGlipper(mp: MultiPoly, delta: number): MultiPoly {
   if (!(delta > 0) || !mp.length) return mp;
   const S = 1e4;
@@ -785,9 +841,11 @@ export async function hentGeometri(
     if (!gruppe.length) continue;
     const samlet = gruppe.length === 1 ? gruppe : (pc.union(...gruppe.map((g) => [g] as any)) as MultiPoly);
     if (hvit) {
-      if (flate.length) flate = pc.difference(flate as any, samlet as any) as MultiPoly;
+      if (flate.length) flate = kuttTrygt("", "motivet",
+        (a, b) => pc.difference(a as any, b as any) as MultiPoly, flate, samlet);
     } else {
-      flate = flate.length ? (pc.union(flate as any, samlet as any) as MultiPoly) : samlet;
+      flate = flate.length ? kuttTrygt("", "motivet",
+        (a, b) => pc.union(a as any, b as any) as MultiPoly, flate, samlet) : samlet;
     }
   }
 
@@ -851,13 +909,16 @@ export async function hentGeometriPerFarge(
 
     for (const [k, v] of lag) {
       if (k === hex || !v.length) continue;
-      lag.set(k, pc.difference(v as any, samlet as any) as MultiPoly);
+      lag.set(k, kuttTrygt("", k,
+        (a, b) => pc.difference(a as any, b as any) as MultiPoly, v, samlet));
     }
     // hvitt legges til som et lag pa linje med de andre. At det dekker det
     // som ligger under, er allerede tatt hoyde for over.
     const fra = lag.get(hex);
     lag.set(hex, fra && fra.length
-      ? (pc.union(fra as any, samlet as any) as MultiPoly) : samlet);
+      ? kuttTrygt("", hex,
+          (a, b) => pc.union(a as any, b as any) as MultiPoly, fra, samlet)
+      : samlet);
     hvite.set(hex, hvit);
   }
 

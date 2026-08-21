@@ -325,6 +325,41 @@ ved `delta = 4`. Virkningen er avgrenset, fordi den lukkede formen bare
 brukes til å finne hva som ligger under fargene over: den legger aldri folie
 et sted ingen farge over dekker.
 
+### 13. En rå biblioteksfeil skal aldri nå brukeren
+
+`polygon-clipping` kan miste tellingen på hakkete geometri og kaste
+
+    Unable to find segment #52671 25.377125, 10.503875 til
+    25.401951614863158, 10.524788266040684 in SweepLine tree
+
+Vi så den i produksjon på bakgrunnsplaten i Rosen-logoen: 73 prosent av
+motivet i 13 biter, hver bit full av korte segmenter fra bokstavene som er
+stanset ut av den. Regelen om bakgrunnsplaten i `CLAUDE.md` fjerner den
+årsaken, siden platen ikke lenger skjæres. Men motoren skal ikke kunne kastes ut med en rå biblioteksfeil
+uansett hvilken fil som kommer inn.
+
+`kuttTrygt(element, farge, operasjon, ...flater)` i `pdfbaner.ts` ligger
+rundt kuttingen per element og farge:
+
+1. første forsøk går på geometrien som den er
+2. feiler det, ryddes hver operand med `ryddFlate` og forsøket gjentas
+   **én** gang
+3. går det fortsatt ikke, kastes en feil som sier hvilket element og
+   hvilken farge det gjelder
+
+Den rå teksten logges til konsollen for feilsøking, men når aldri fram til
+brukeren. **Brukeren skal aldri se SweepLine tree.**
+
+Vakten ligger tre steder: i den lagvise oppbyggingen i `motor.ts`, der hele
+oppbyggingen av ett lag ligger inne i den — ikke bare den ene operasjonen
+som tilfeldigvis kastet — og i selve fargesepareringen i `pdfbaner.ts`, som
+er der feilen faktisk satt. Separeringen vet ikke hvilket element den
+holder på med, så den sender tom `element`-streng og lar kallstedet sette
+navnet på: `medNavn()` i `motor.ts` og et tilsvarende kast i `bilmotor.ts`.
+
+**Feilsignatur:** en feilmelding i appen som nevner `SweepLine tree`,
+`segment #` eller et annet internt begrep fra et bibliotek.
+
 ## Fallgruver vi allerede har gått i
 
 * `pushOperators({ toString })` gjør ingenting. pdf-lib serialiserer via

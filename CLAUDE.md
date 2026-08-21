@@ -113,6 +113,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx askotest.ts   # lagreglene: fire farger i ASKO reklame
     npx tsx vakttest.ts   # vaktene i foreslaFolier og kjorJobb
     npx tsx platetest.ts  # bakgrunnsplaten holdes utenfor valgene
+    npx tsx kuttvakt.ts   # vakten rundt kuttingen per element og farge
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -178,6 +179,28 @@ like folier, siden det er nettopp den som skjuler symptomet.
 
 **Feilsignatur:** produksjonsfiler som er fylte rektangler uten innmat, og
 alle lag på én foliekode.
+
+**En rå biblioteksfeil skal aldri nå brukeren.** `polygon-clipping` kan
+miste tellingen på hakkete geometri og kaste `Unable to find segment #52671
+... in SweepLine tree` rett ut i appen. Vi så den i produksjon på
+bakgrunnsplaten i Rosen-logoen. Platen skjæres ikke lenger, så årsaken er
+borte, men motoren skal uansett ikke kunne kastes ut med en feil fra et
+bibliotek. `kuttTrygt()` i `src/pdfbaner.ts` ligger rundt kuttingen per
+element og farge: første forsøk går på geometrien som den er, feiler det
+ryddes hver operand med `ryddFlate` og forsøket gjentas **én** gang, og går
+det fortsatt ikke kastes en feil som sier hvilket element og hvilken farge
+det gjelder. Den rå teksten logges til konsollen, men når aldri brukeren.
+
+Vakten ligger både i den lagvise oppbyggingen i `src/motor.ts` — der hele
+oppbyggingen av ett lag ligger inne i den, ikke bare den ene operasjonen som
+tilfeldigvis kastet — og i fargesepareringen i `src/pdfbaner.ts`, som er der
+feilen faktisk satt. Separeringen vet ikke hvilket element den holder på
+med, så den sender tom `element`-streng og lar kallstedet sette navnet på:
+`medNavn()` i `src/motor.ts` og et tilsvarende kast i `src/bilmotor.ts`.
+Regel 13 i `prompt-claude-code-martine.md`.
+
+**Feilsignatur:** en feilmelding i appen som nevner `SweepLine tree`,
+`segment #` eller et annet internt begrep fra et bibliotek.
 
 **Spotfarger skal tolkes gjennom `tintTransform`, aldri som sort med en
 styrke.** En Pantone-logo bruker `cs` og `scn` med navngitte fargerom, ikke

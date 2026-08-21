@@ -133,7 +133,13 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const valgte = baner.filter((b) => andel(b, o) >= 0.9);
     if (!valgte.length) continue;
     const pdf = await skrivPdf(valgte);
-    const per = await hentGeometriPerFarge(pdf, 1.0);
+    // ogsaa her skal en feil si hvilket element den gjelder, ikke bare hvilken farge
+    let per;
+    try {
+      per = await hentGeometriPerFarge(pdf, 1.0);
+    } catch (e: any) {
+      throw new Error(`${o.vis} ${o.navn}: ${String(e?.message ?? e ?? "ukjent feil")}`);
+    }
     const tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
     const tegnetH = (per.bbox[3] - per.bbox[1]) / MM;
     /**
