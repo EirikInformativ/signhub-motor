@@ -12,7 +12,8 @@
 import { lesLett, tolk } from "./bilskisse.ts";
 import { finnDekor } from "./dekorfinn.ts";
 import { hentBaner, skrivPdf } from "./uttrekk.ts";
-import { hentGeometriPerFarge, areal } from "./pdfbaner.ts";
+import type { Bane } from "./uttrekk.ts";
+import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
@@ -111,6 +112,32 @@ export interface BilValg {
   bredde?: number;
 }
 
+/**
+ * Fargen en bane faktisk faar i den skrevne element-PDF-en.
+ *
+ * skrivPdf runder til tre desimaler for den skriver `k`, og
+ * hentGeometriPerFarge leser det tilbake gjennom cmykTilRgb. Rundingen
+ * gjoeres derfor her ogsaa, saa hexen vi filtrerer paa er noeyaktig den
+ * separeringen kommer til aa se.
+ */
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+const baneHex = (f: number[]) =>
+  tilHex(cmykTilRgb(r3(f[0] ?? 0), r3(f[1] ?? 0), r3(f[2] ?? 0), r3(f[3] ?? 0)));
+
+/**
+ * Hoerer banen til bakgrunnsplaten?
+ *
+ * En bane som bade fylles og strekes ligger i to lag, og skal bare bort
+ * naar begge deler er platefargen. Ellers ville vi tatt med en strek som
+ * hoerer til en annen farge.
+ */
+function horerTilPlaten(b: Bane, platehex: string): boolean {
+  const fyllTreff = b.fyll && baneHex(b.farge) === platehex;
+  const strekTreff = b.strek && baneHex(b.strekFarge ?? b.farge) === platehex;
+  if (b.fyll && b.strek) return fyllTreff && strekTreff;
+  return b.fyll ? fyllTreff : strekTreff;
+}
+
 export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSkisseLest> {
   const lett = await lesLett(kilde);
   const s = tolk(lett);
@@ -132,16 +159,18 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   for (const o of funn.omraader) {
     const valgte = baner.filter((b) => andel(b, o) >= 0.9);
     if (!valgte.length) continue;
-    const pdf = await skrivPdf(valgte);
     // ogsaa her skal en feil si hvilket element den gjelder, ikke bare hvilken farge
-    let per;
-    try {
-      per = await hentGeometriPerFarge(pdf, 1.0);
-    } catch (e: any) {
-      throw new Error(`${o.vis} ${o.navn}: ${String(e?.message ?? e ?? "ukjent feil")}`);
-    }
-    const tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
-    const tegnetH = (per.bbox[3] - per.bbox[1]) / MM;
+    const lesTrygt = async (bytes: Uint8Array) => {
+      try {
+        return await hentGeometriPerFarge(bytes, 1.0);
+      } catch (e: any) {
+        throw new Error(`${o.vis} ${o.navn}: ${String(e?.message ?? e ?? "ukjent feil")}`);
+      }
+    };
+    let pdf = await skrivPdf(valgte);
+    let per = await lesTrygt(pdf);
+    let tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
+    let tegnetH = (per.bbox[3] - per.bbox[1]) / MM;
     /**
      * To like elementer skal vaere ett element i to eksemplarer, ellers
      * pakkes de hver for seg og arket blir lengre enn det trenger.
@@ -163,15 +192,45 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
      * 1,0000; en ellipseformet badge gir 0,7847. Er bunnen formet, er den
      * et ekte element og blir staaende.
      */
-    const alleFarger = per.lag.map((l) => ({ hex: l.hex, andel: l.andel }));
     let bakgrunn: BilFarge | undefined;
-    {
-      if (erBakgrunnsplate(per.lag.map((l) => l.flate), per.bbox)) {
-        bakgrunn = alleFarger.pop();
+    if (erBakgrunnsplate(per.lag.map((l) => l.flate), per.bbox)) {
+      const plate = per.lag[per.lag.length - 1];
+      const platehex = plate.hex;
+      /**
+       * Platen tas ut av selve element-PDF-en, ikke bare av fargelista.
+       *
+       * Foerste utgave meldte to farger og leverte en PDF med tre lag.
+       * Appen bygde da folier med to oppfoeringer, kjorJobb leste fila paa
+       * nytt og fant tre, og laget uten instruks ble forsoekt skaaret. Det
+       * er nettopp den skjoere plategeometrien som ikke lar seg kutte, og
+       * feilen kom ut paa feil farge fordi lagene talte i utakt.
+       *
+       * Det som meldes og det som utleveres maa vaere det samme. Naar
+       * platen ikke finnes i fila, kan ingen som kaller motoren gjoere
+       * dette feil.
+       */
+      const igjen = valgte.filter((b) => !horerTilPlaten(b, platehex));
+      if (igjen.length && igjen.length < valgte.length) {
+        pdf = await skrivPdf(igjen);
+        // alt som meldes utledes na av den fila som faktisk leveres
+        per = await lesTrygt(pdf);
+        tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
+        tegnetH = (per.bbox[3] - per.bbox[1]) / MM;
+      }
+      if (per.lag.some((l) => l.hex === platehex)) {
+        // filteret traff ikke: da meldes platen som en farge, slik at det
+        // som meldes fortsatt er det som ligger i fila
         merknader.push(
-          `${o.vis} ${o.navn}: bakgrunnsplaten ${bakgrunn!.hex} ` +
-          `(${(bakgrunn!.andel * 100).toFixed(1)} % av motivet) er tatt ut. ` +
-          "Den er ikke dekor, den er mellomrommet, og skjaeres ikke.");
+          `${o.vis} ${o.navn}: bakgrunnsplaten ${platehex} lot seg ikke ` +
+          "skille ut av filen, og staar derfor igjen som en vanlig farge. " +
+          "Settes den ikke til negativt, skjaeres den som folie.");
+      } else {
+        bakgrunn = { hex: platehex, andel: plate.andel };
+        merknader.push(
+          `${o.vis} ${o.navn}: bakgrunnsplaten ${platehex} ` +
+          `(${(plate.andel * 100).toFixed(1)} % av motivet) er tatt ut, ` +
+          "bade av fargelista og av filen. Den er ikke dekor, den er " +
+          "mellomrommet, og skjaeres ikke.");
       }
     }
 
@@ -180,7 +239,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       breddeMm: Math.round(tegnetB * malestokk),
       hoydeMm: Math.round(tegnetH * malestokk),
       antall: 1,
-      farger: alleFarger,
+      farger: per.lag.map((l) => ({ hex: l.hex, andel: l.andel })),
       ...(bakgrunn ? { bakgrunn } : {}),
     });
   }

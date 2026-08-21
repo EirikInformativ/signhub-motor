@@ -13,8 +13,8 @@
 import * as fs from "fs";
 import { PDFDocument, rgb } from "pdf-lib";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { lesBilskisse, DISCLAIMER, VANNMERKE } from "../src/motor";
-import { erBakgrunnsplate } from "../src/bilmotor";
+import { lesBilskisse, kjorJobb, DISCLAIMER, VANNMERKE } from "../src/motor";
+import { erBakgrunnsplate, foreslaFolier } from "../src/bilmotor";
 import { hentGeometriPerFarge } from "../src/pdfbaner";
 
 let feil = 0;
@@ -93,6 +93,59 @@ const fyllgrad = async (bytes: Uint8Array) => {
   sjekk("merknaden navngir farge og andel",
     meldt.every((m) => /#FFFFFF/.test(m) && /\d+\.\d %/.test(m)),
     meldt[0]?.slice(0, 70) + "...");
+
+  /**
+   * Det som meldes og det som utleveres maa vaere det samme.
+   *
+   * Foerste utgave fjernet platen fra farger, men lot den ligge igjen i
+   * element-PDF-en. Appen bygde folier med to oppfoeringer, kjorJobb leste
+   * fila paa nytt og fant tre lag, og laget uten instruks ble forsoekt
+   * skaaret. Det var den skjoere plategeometrien som ikke lot seg kutte,
+   * og feilen kom ut paa feil farge fordi lagene talte i utakt.
+   */
+  console.log("\n3. meldte farger = fargelag i den utleverte pdf-en");
+
+  for (const e of lest.elementer) {
+    const per = await hentGeometriPerFarge((e as any).pdf, 1.0);
+    sjekk(`${e.navn}: like mange`, e.farger.length === per.lag.length,
+      `meldt ${e.farger.length} (${e.farger.map((f) => f.hex).join(" ")}), ` +
+      `i pdf ${per.lag.length} (${per.lag.map((l) => l.hex).join(" ")})`);
+    sjekk(`${e.navn}: samme farger, i samme rekkefolge`,
+      e.farger.every((f, i) => f.hex === per.lag[i]?.hex));
+    sjekk(`${e.navn}: ingen hvit plate igjen i filen`,
+      !per.lag.some((l) => l.hex === "#FFFFFF"));
+  }
+
+  console.log("\n4. hele veien gjennom kjorJobb");
+
+  const KATALOG: any[] = [
+    { kode: "751-010", hex: "#FFFFFF", breddeMm: 1260 },
+    { kode: "751-031", hex: "#E6000D", breddeMm: 1260 },
+    { kode: "751-070", hex: "#1A1A1A", breddeMm: 1260 },
+    { kode: "751-086", hex: "#0033FF", breddeMm: 1260 },
+  ];
+  // folier bygges av foreslaFolier alene: ingenting skal legges til bakerst
+  const r = await kjorJobb({
+    jobb: "Rosen-Proace", bilder,
+    lerret: (b: number, h: number) => createCanvas(Math.round(b), Math.round(h)) as any,
+    egenSkisse: false, snuOpp: true,
+    kundeValg: { forside: lest.forside },
+    linjer: lest.elementer.map((e) => ({
+      navn: e.navn, pdf: (e as any).pdf, breddeMm: e.breddeMm, antall: e.antall,
+      folier: foreslaFolier(e.farger, KATALOG as any),
+    })),
+  } as any);
+
+  sjekk("to ark", r.ark.length === 2,
+    r.ark.map((k: any) => `${k.foliekode} ${k.breddeMm} x ${k.lengdeMm.toFixed(0)}`).join(" | "));
+  sjekk("folierne er 751-031 og 751-086",
+    r.ark.map((k: any) => k.foliekode).join(",") === "751-031,751-086");
+  sjekk("begge arkene 1164 x 1268 mm",
+    r.ark.every((k: any) => k.breddeMm === 1164 && Math.round(k.lengdeMm) === 1268));
+  sjekk("fire filer", r.filer.length === 4,
+    r.filer.map((f: any) => f.navn).join(" "));
+  sjekk("ingen advarsel om samme foliekode",
+    !r.advarsler.some((a: string) => /samme foliekode/.test(a)));
 
   console.log(feil === 0 ? "\nok: bakgrunnsplaten holdes utenfor, formet bunn beholdes"
                          : `\nFEIL: ${feil} sjekker feilet`);

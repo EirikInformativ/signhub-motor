@@ -400,7 +400,7 @@ function rgbOp(op: string, tall: number[]): [number, number, number] | null {
   return null;
 }
 
-function cmykTilRgb(c: number, m: number, y: number, k: number): [number, number, number] {
+export function cmykTilRgb(c: number, m: number, y: number, k: number): [number, number, number] {
   return [(1 - Math.min(1, c + k)), (1 - Math.min(1, m + k)), (1 - Math.min(1, y + k))];
 }
 

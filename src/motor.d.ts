@@ -218,16 +218,19 @@ export interface BilElement {
   /** samme element funnet flere steder telles her, ikke som egne elementer */
   antall: number;
   /**
-   * fargene som skal skjaeres, oyverst forst. En bakgrunnsplate er tatt ut
-   * og ligger i `bakgrunn` i stedet; den skal ikke tilbys som valg.
+   * fargene som skal skjaeres, oyverst forst.
+   *
+   * Dette er noyaktig fargelagene i `pdf`, i samme rekkefolge. En
+   * bakgrunnsplate er tatt ut av begge deler, saa listen fra
+   * foreslaFolier passer rett inn i kjorJobb uten at noe legges til.
    */
   farger: BilFarge[];
   /**
-   * bakgrunnsplaten, hvis elementet er tegnet paa en. Den er ikke dekor,
-   * den er mellomrommet, og paa bilen er det lakken. Motoren trenger den i
-   * PDF-en for aa bygge lagene, men den skal aldri skjaeres. Bygger du
-   * folier til kjorJobb, legg til "negativt" bakerst naar denne er satt,
-   * slik at listen holder folge med lagene i PDF-en.
+   * bakgrunnsplaten, hvis elementet var tegnet paa en. Den er ikke dekor,
+   * den er mellomrommet, og paa bilen er det lakken.
+   *
+   * Feltet er til opplysning: platen er allerede fjernet fra `farger` og
+   * fra `pdf`. Legg ikke til noe i folier-listen fordi dette er satt.
    */
   bakgrunn?: BilFarge;
 }

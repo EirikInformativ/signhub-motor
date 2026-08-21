@@ -159,10 +159,32 @@ i `src/bilmotor.ts` ligger høyt med vilje, så en plate med lett avrundede
 hjørner fortsatt er en plate, mens en badge med tekst oppå blir stående som
 et ekte element.
 
-**Bygger du `folier` til `kjorJobb`, må `"negativt"` legges til bakerst når
-`bakgrunn` er satt.** Platen ligger fortsatt i PDF-en som nederste lag, så
-en liste som er ett kortere enn lagene får platen til å smelte inn i en
-annen farge. `test/biljobb.ts` viser koblingen.
+**Det som meldes og det som utleveres må være det samme.** Platen fjernes
+fra `farger` **og** fra element-PDF-en. `farger` er derfor nøyaktig
+fargelagene i `pdf`, i samme rekkefølge, og listen fra `foreslaFolier` går
+rett inn i `kjorJobb` uten at noe legges til bakerst. `bakgrunn` er bare
+til opplysning.
+
+Første utgave fjernet platen bare fra `farger`. Appen bygde da `folier`
+med to oppføringer, `kjorJobb` leste PDF-en på nytt og fant tre lag, og
+laget uten instruks ble forsøkt skåret. Det er nettopp den skjøre
+plategeometrien som ikke lar seg kutte, og feilen kom ut på **feil farge**
+fordi lagene talte i utakt: «klarte ikke skjaere fargen #0033FF» når det
+var den hvite platen som var årsaken. Reprodusert nøyaktig, samme segment
+og samme koordinater, ved å la platen ligge igjen i fila.
+
+Platen tas ut ved kilden i `lesBilskisse`: banene som har platefargen
+filtreres bort før `skrivPdf`, og alt som meldes — farger, bredde, høyde —
+utledes deretter av den fila som faktisk leveres. En bane som både fylles
+og strekes fjernes bare når begge deler er platefargen. Blir platen likevel
+stående, meldes den som en vanlig farge med en merknad, så listen aldri kan
+komme i utakt. `test/platetest.ts` måler dette per element.
+
+Merk at elementets mål krymper noen millimeter når platen forsvinner, fordi
+platen stakk litt utenfor selve dekoren. Skalaen er uendret — den er
+`målestokk / MM` uansett — så dekoren skjæres i nøyaktig samme størrelse.
+Målt på proace2: skåret areal 284 721 mm² før, 284 791 mm² etter, mens arket
+går fra 1182 til 1164 mm i bredden.
 
 **`foreslaFolier` skal avvise en katalog den ikke kan bruke.** Appen sendte
 en gang materiallista inn som fargekatalog. Den har varenummer, bredde og

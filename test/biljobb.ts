@@ -30,10 +30,9 @@ const KATALOG = [
   console.log("VISNINGER: " + lest.visninger.map((v) => v.navn).join(", "));
   console.log("\nELEMENTER");
   const linjer = lest.elementer.map((e) => {
-    // bakgrunnsplaten ligger fortsatt i PDF-en som nederste lag, men er
-    // ikke et valg. Listen ma likevel holde folge med lagene der.
+    // bakgrunnsplaten er tatt ut av bade fargelista og element-PDF-en, saa
+    // listen fra foreslaFolier holder foelge med lagene i filen som den er.
     const folier: any[] = foreslaFolier(e.farger, KATALOG as any);
-    if (e.bakgrunn) folier.push("negativt");
     console.log(`   ${e.navn.padEnd(34)} ${e.breddeMm} x ${e.hoydeMm} mm  ${e.antall} stk  ` +
       e.farger.map((f, i) => `${f.hex}->${typeof folier[i] === "string" ? folier[i] : (folier[i] as any).kode}`).join(" "));
     return { navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall, folier };
