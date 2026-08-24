@@ -114,6 +114,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx vakttest.ts   # vaktene i foreslaFolier og kjorJobb
     npx tsx platetest.ts  # bakgrunnsplaten holdes utenfor valgene
     npx tsx kuttvakt.ts   # vakten rundt kuttingen per element og farge
+    npx tsx malestokk.ts  # den trykte malestokken er fasit
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -201,6 +202,30 @@ like folier, siden det er nettopp den som skjuler symptomet.
 
 **Feilsignatur:** produksjonsfiler som er fylte rektangler uten innmat, og
 alle lag på én foliekode.
+
+**Står det en målestokk på arket, er den fasit.** Målingen er vakthund, ikke
+kilde. Den kan aldri treffe eksakt, fordi CCVisions egen tegning ikke stemmer
+eksakt med CCVisions eget oppgitte lengdemål: arket sier 1:30 og L 5.309 m,
+men rådataen ganget opp 3000 prosent gir 5322,325 mm — 13 mm mer. Utledes
+målestokken av L, B og H, sammenlignes en tegning mot et tall som ikke
+beskriver den tegningen presist. På proace2 ga det 1:29,8904, altså -0,365
+prosent, og alt ble tilsvarende for lite.
+
+`velgMalestokk()` i `src/bilskisse.ts`:
+
+| tilfelle | resultat |
+| --- | --- |
+| avvik under 3 % | trykt målestokk brukes, `avvikProsent` settes til 0 |
+| større, forholdet nær et rent tall | arket er skalert. Meld fra, bruk den målte |
+| verken nært eller lite | skissen er ikke til å stole på. Bruk ingen |
+| ingen trykt målestokk | bruk den målte, med merknad om at den er utledet |
+
+Merk at vi måler **ytterkanten av streken**, ikke selve banen. Karosseriet er
+streket, og halve strekbredden ligger utenfor bilen. Det er derfor våre
+177,62 mm er litt mer enn de 177,41 mm som gir 5322,325.
+
+**Feilsignatur:** `avvikProsent` som aldri blir 0 på et ark som oppgir sin
+egen målestokk, og produksjonsmål som er en halv prosent for små.
 
 **En rå biblioteksfeil skal aldri nå brukeren.** `polygon-clipping` kan
 miste tellingen på hakkete geometri og kaste `Unable to find segment #52671

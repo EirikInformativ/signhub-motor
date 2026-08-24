@@ -141,9 +141,18 @@ function horerTilPlaten(b: Bane, platehex: string): boolean {
 export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSkisseLest> {
   const lett = await lesLett(kilde);
   const s = tolk(lett);
-  const malestokk = s.malt ?? s.malestokkTekst;
+  /**
+   * Staar det en malestokk paa arket, er den fasit. Maalingen er vakthund.
+   * Reglene staar i velgMalestokk i bilskisse.ts.
+   */
+  const malestokk = s.malestokk;
   if (!malestokk) {
-    throw new Error("Fant ingen malestokk i skissen. Uten den kan ikke ekte mal regnes ut.");
+    throw new Error(
+      s.malestokkTekst && s.malt
+        ? `Malestokken i skissen er ikke til a stole pa: teksten sier ` +
+          `1:${s.malestokkTekst}, malingen sier 1:${s.malt.toFixed(1)}. ` +
+          "Kontroller arket."
+        : "Fant ingen malestokk i skissen. Uten den kan ikke ekte mal regnes ut.");
   }
   const funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
   const merknader = [...s.merknader, ...funn.merknader];

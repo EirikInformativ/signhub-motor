@@ -176,9 +176,72 @@ export interface Skisse {
   malestokkTekst: number | null;
   lengdeM: number | null; breddeM: number | null; hoydeM: number | null;
   visninger: { bredde: number; hoyde: number }[];
+  /** malestokken vi selv maalte oss fram til, som vakthund */
   malt: number | null;
+  /** den motoren skal regne med. null betyr at skissen ikke kan brukes. */
+  malestokk: number | null;
   avvikProsent: number | null;
   merknader: string[];
+}
+
+/**
+ * Staar det en malestokk paa arket, er den fasit.
+ *
+ * Maalingen kan aldri treffe eksakt, for CCVision sin egen tegning stemmer
+ * ikke eksakt med CCVision sitt eget oppgitte lengdemaal. Arket sier 1:30
+ * og L 5.309 m. Ganger man raadataen opp 3000 prosent i Illustrator, blir
+ * bilen 5322,325 mm, altsa 13 mm mer enn tallet som staar skrevet. Saa
+ * lenge malestokken utledes av L, B og H, sammenlignes en tegning mot et
+ * tall som ikke beskriver den tegningen presist, og avviket kan aldri bli
+ * null. Paa proace2 ble det -0,365 prosent, og sidelogoen kom ut 1228 mm
+ * der den skal vaere 1233. Fem millimeter for lite paa en logo paa 1,2
+ * meter.
+ *
+ * Resten av differansen forklares av at vi maaler ytterkanten av streken,
+ * ikke selve banen. Karosseriet er streket, og halve strekbredden ligger
+ * utenfor bilen. Det er derfor vaare 177,62 mm er litt mer enn de 177,41
+ * mm som gir 5322,325.
+ *
+ * Maalingen beholdes som vakthund, ikke som kilde:
+ *
+ *   avvik under 3 prosent     trykt malestokk brukes, avvik settes til 0
+ *   storre, men forholdet er
+ *   naer et rent tall         arket er skalert. Meld fra, bruk den maalte.
+ *   verken naert eller lite   skissen er ikke til aa stole paa. Bruk ingen.
+ *   ingen trykt malestokk     bruk den maalte, med merknad om at den er
+ *                             utledet
+ */
+const GRENSE_PROSENT = 3;
+export function velgMalestokk(
+  trykt: number | null, malt: number | null, merknader: string[]
+): { malestokk: number | null; avvikProsent: number | null } {
+  if (!trykt) {
+    if (malt) {
+      merknader.push(`Ingen malestokk staar skrevet paa arket. Motoren regner ` +
+        `med 1:${malt.toFixed(2)}, utledet av malene L, B og H.`);
+    }
+    return { malestokk: malt, avvikProsent: null };
+  }
+  if (!malt) {
+    merknader.push(`Fant ingen mal aa kontrollere malestokken mot. ` +
+      `Motoren regner med 1:${trykt} slik det staar paa arket.`);
+    return { malestokk: trykt, avvikProsent: null };
+  }
+  const avvik = (malt / trykt - 1) * 100;
+  if (Math.abs(avvik) < GRENSE_PROSENT) {
+    return { malestokk: trykt, avvikProsent: 0 };
+  }
+  const forhold = trykt / malt;
+  if (Math.abs(forhold - Math.round(forhold)) < 0.05 && Math.round(forhold) !== 1) {
+    merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +
+      `Arket ser ut til a vaere skalert ${Math.round(forhold) * 100} prosent. ` +
+      `Reell malestokk er 1:${malt.toFixed(0)}, og den brukes.`);
+    return { malestokk: malt, avvikProsent: avvik };
+  }
+  merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +
+    `Det er verken samme malestokk eller en rent skalert utgave av den, saa ` +
+    "skissen er ikke til a stole pa. Kontroller arket for du produserer.");
+  return { malestokk: null, avvikProsent: avvik };
 }
 
 export function tolk(lest: LettLest, glippeMm = 6): Skisse {
@@ -230,16 +293,7 @@ export function tolk(lest: LettLest, glippeMm = 6): Skisse {
   }
   if (!malt) merknader.push("Ingen to mal stotter hverandre. Skissen er ikke til a stole pa.");
 
-  let avvikProsent: number | null = null;
-  if (malt && malestokkTekst) {
-    avvikProsent = (malt / malestokkTekst - 1) * 100;
-    const forhold = malestokkTekst / malt;
-    if (Math.abs(avvikProsent) > 2) {
-      merknader.push(`Teksten sier 1:${malestokkTekst}, malingen sier 1:${malt.toFixed(1)}.`);
-      if (Math.abs(forhold - Math.round(forhold)) < 0.05 && Math.round(forhold) !== 1) {
-        merknader.push(`Arket ser ut til a vaere skalert ${Math.round(forhold) * 100} prosent. Reell malestokk er 1:${malt.toFixed(0)}.`);
-      }
-    }
-  }
-  return { malestokkTekst, lengdeM, breddeM, hoydeM, visninger: grupper, malt, avvikProsent, merknader };
+  const { malestokk, avvikProsent } = velgMalestokk(malestokkTekst, malt, merknader);
+  return { malestokkTekst, lengdeM, breddeM, hoydeM, visninger: grupper, malt,
+           malestokk, avvikProsent, merknader };
 }

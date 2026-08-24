@@ -140,8 +140,10 @@ const fyllgrad = async (bytes: Uint8Array) => {
     r.ark.map((k: any) => `${k.foliekode} ${k.breddeMm} x ${k.lengdeMm.toFixed(0)}`).join(" | "));
   sjekk("folierne er 751-031 og 751-086",
     r.ark.map((k: any) => k.foliekode).join(",") === "751-031,751-086");
-  sjekk("begge arkene 1164 x 1268 mm",
-    r.ark.every((k: any) => k.breddeMm === 1164 && Math.round(k.lengdeMm) === 1268));
+  // 1168 x 1272 etter at den trykte malestokken 1:30 ble tatt i bruk.
+  // Med den utledede 1:29,8904 var det 1164 x 1268, altsa 0,37 % for lite.
+  sjekk("begge arkene 1168 x 1272 mm",
+    r.ark.every((k: any) => k.breddeMm === 1168 && Math.round(k.lengdeMm) === 1272));
   sjekk("fire filer", r.filer.length === 4,
     r.filer.map((f: any) => f.navn).join(" "));
   sjekk("ingen advarsel om samme foliekode",

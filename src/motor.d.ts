@@ -236,11 +236,19 @@ export interface BilElement {
 }
 
 export interface BilSkisseLest {
-  /** malestokken motoren faktisk regner med */
+  /**
+   * malestokken motoren faktisk regner med.
+   *
+   * Staar det en malestokk paa arket, er den fasit. Vaar egen maling er
+   * bare vakthund: er avviket under 3 prosent, brukes den trykte og
+   * avvikProsent settes til 0. Er arket rent skalert, meldes det i
+   * merknader og den malte brukes. Stemmer ingen av delene, kaster
+   * lesBilskisse i stedet for aa gjette.
+   */
   malestokk: number;
   /** malestokken som staar skrevet paa arket, hvis den staar der */
   malestokkTekst: number | null;
-  /** hvor mye de to spriker, i prosent */
+  /** hvor mye maling og trykt malestokk spriker, i prosent. 0 naar den trykte brukes. */
   avvikProsent: number | null;
   lengdeM: number | null;
   breddeM: number | null;
