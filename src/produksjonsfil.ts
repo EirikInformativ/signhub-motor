@@ -155,6 +155,37 @@ function utfallendeHull(flate: MultiPoly, d: number): MultiPoly {
   return ut as MultiPoly;
 }
 
+/**
+ * Rammene kant i kant, med smaa glipper lukket (Eirik 16.11.2026: «dersom
+ * gapet er mindre enn 5 mm boer du legge de sammen til 1»). To kanter som
+ * vender mot hverandre med under KANT_GLIPPE_MM mellom seg, blir én linje:
+ * den korteste kanten flyttes ut til den lengste, saa den lange linjen er
+ * rett og den korte rammen blir litt stoerre (det horisontale elementet
+ * viker, saa det vertikale ikke faar et trappetrinn midt i thru-cuten).
+ */
+const KANT_GLIPPE_MM = 5;
+function kantRekt<T extends { x: number; y: number; w: number; h: number; id: number }>(ps: T[]): T[] {
+  const r = ps.map((p) => ({ ...p }));
+  for (let runde = 0; runde < 4; runde++) {
+    let endret = false;
+    for (const a of r) for (const b of r) {
+      if (a === b) continue;
+      const yOv = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      const xOv = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const gx = b.x - (a.x + a.w), gy = b.y - (a.y + a.h);
+      if (yOv > 1e-6 && gx > 1e-6 && gx < KANT_GLIPPE_MM) {
+        if (a.h <= b.h) a.w += gx; else { b.x -= gx; b.w += gx; }
+        endret = true;
+      } else if (xOv > 1e-6 && gy > 1e-6 && gy < KANT_GLIPPE_MM) {
+        if (a.w <= b.w) a.h += gy; else { b.y -= gy; b.h += gy; }
+        endret = true;
+      }
+    }
+    if (!endret) break;
+  }
+  return r;
+}
+
 /** Bare strek i et fargerom (kiss eller thru), i elementets enheter. */
 function strekOpsFlate(flate: MultiPoly, skala: number, cs: string, strek = 0.25): string {
   let o = `/${cs} CS\n1 SCN\n${(strek / skala).toFixed(6)} w\n`;
@@ -399,7 +430,7 @@ export async function byggProduksjonsfil(
     if (valg.kantIKant) {
       // hver delte kant skjaeres én gang, i sammenhengende linjer
       const kanter: [Pkt, Pkt][] = [];
-      for (const p of ark.plasseringer) {
+      for (const p of kantRekt(ark.plasseringer)) {
         const a: Pkt[] = [[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h]];
         for (let i = 0; i < 4; i++) kanter.push([a[i], a[(i + 1) % 4]]);
       }
@@ -449,7 +480,7 @@ export async function byggProduksjonsfil(
    * primaerarket, én gang per linje.
    */
   if (valg.kantIKant && !valg.kunThru) {
-    const rekt = ark.plasseringer.filter((p) => harForm[p.id])
+    const rekt = kantRekt(ark.plasseringer).filter((p) => harForm[p.id])
       .map((p) => [[[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h], [p.x, p.y]]]);
     if (valg.thruCut && rekt.length) {
       const blokk = pc.union(...(rekt as [any])) as MultiPoly;

@@ -208,7 +208,13 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
   let formet = false;
   if (motiver.some((m) => m.omriss?.length)) {
     const p = pakkProfil(motiver, items, brukbar, geo, tillatRotasjon);
-    if (p && p.h < best.h - 1) { best = p; formet = true; }
+    /**
+     * Kant i kant (enveis thru) brukes alltid der det er mulig (Eirik
+     * 16.11.2026). Formede rammer vinner bare naar de gir et ark som er
+     * minst KANT_FORTRINN kortere.
+     */
+    const grense = kant ? best.h * (1 - KANT_FORTRINN) : best.h - 1;
+    if (p && p.h < grense) { best = p; formet = true; kant = false; }
   }
 
   // formnestingen brukes bare naar den gir kortere ark enn rammene
@@ -417,6 +423,8 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
  * fire retninger og legges der toppen blir lavest (saa lengst til venstre).
  */
 const NEST_RES = 2.5;
+/** Formede rammer maa gi saa mye kortere ark for aa slaa kant i kant. */
+const KANT_FORTRINN = 0.1;
 const MM = 72 / 25.4;
 function nestForm(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, rot: boolean):
   { ut: Plassering[]; h: number; navn: string } | null {

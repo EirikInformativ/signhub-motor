@@ -135,7 +135,9 @@ import { hentBaner } from "../src/uttrekk";
     const t = await innhold(f);
     const kiss = t.slice(t.indexOf("/OC /L3 BDC"), t.indexOf("EMC", t.indexOf("/OC /L3 BDC")));
     const linjer = (kiss.match(/\nS\n/g) ?? []).length;
-    sjekk(linjer > 3, `${f.navn}: kiss-boks rundt hvert thru-cut-element (${linjer} kiss-linjer)`);
+    // kant i kant (Eirik 16.11.2026): én kiss-linje rundt hele blokken, utenfor thru; ellers én per element.
+    // To av linjene er boksene rundt regmark-kolonnene.
+    sjekk(linjer >= 3, `${f.navn}: kiss-boks rundt thru-cut-elementene (${linjer} kiss-linjer)`);
   }
 
   // skraadde elementer rettes opp etter grunnlinjen: stripen, A-en (foettene),

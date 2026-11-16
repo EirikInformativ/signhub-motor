@@ -36,6 +36,8 @@ export type { Forhandsvisning, ForhandsvisValg } from "./forhandsvis.ts";
 export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
+/** Et felt dreies naar rammen blir minst saa mye mindre. */
+const DREI_GEVINST = 0.1;
 /** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
 const MAKS_FILER = 6;
 const SAMLE_M2 = 5;
@@ -384,23 +386,43 @@ function heltKonveks(f: MultiPoly): boolean {
  * gaar fargen under UNDERLAP_MM inn under.
  */
 /**
- * Thru-linjen rundt bitene i én logo som skal teipes inn: minste lukking som
- * gjoer bitene til ett stykke, TETT_THRU_MM utenfor, minus det som er andre
- * farger. Samme form som tettArk bruker.
+ * Et helt felt (én farge, ett konvekst stykke, ikke en stripe) dreies til
+ * den vinkelen som gir minst ramme (Eirik 16.11.2026, Vito: «forstaar ikke
+ * hvorfor du vegrer deg for aa rotere de 2 store feltene paa bakluke»).
+ * Vinkelen er langs en av sidene i det konvekse skallet, som alltid gir den
+ * minste rammen rundt en konveks form. Bare naar rammen blir minst
+ * DREI_GEVINST mindre. Montoeren legger feltet etter skissen uansett.
  */
-function tettForm(flate: MultiPoly, andre: MultiPoly, skala: number): MultiPoly {
-  const ytre = pc.union(...(flate.map((poly) => [poly[0]]) as [any])) as MultiPoly;
-  const ringer = ytre.map((poly) => poly[0].map(([x, y]) => [x, y] as [number, number]));
-  const tilMulti = (rs: [number, number][][]) => pc.union(...(rs.map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
-  let lukket = tilMulti(ringer);
-  for (let rMm = 1; lukket.length > 1 && rMm <= 200; rMm *= 1.25) {
-    const r = (rMm * MM) / skala;
-    lukket = tilMulti(offsetRinger(tilMulti(offsetRinger(ringer, r)).map((poly) => poly[0] as [number, number][]), -r));
-    lukket = pc.union(lukket as any, ytre as any) as MultiPoly;
-  }
-  let form = tilMulti(offsetRinger(lukket.map((poly) => poly[0] as [number, number][]), (TETT_THRU_MM * MM) / skala));
-  if (andre.length) form = pc.difference(form as any, andre as any) as MultiPoly;
-  return pc.union(form as any, flate as any) as MultiPoly;
+function dreiFelt(elementer: Elem[], advarsler: string[]): Elem[] {
+  return elementer.map((e) => {
+    if (e.deler.length !== 1 || e.trykk?.length || e.thruForm || e.markering?.length || e.forleng?.size ||
+        e.skjoter?.length || e.lagvis) return e;
+    const f = e.deler[0].flate;
+    if (f.length !== 1 || f[0].length !== 1 || !heltKonveks(f)) return e;
+    if (Math.max(e.breddeMm, e.hoydeMm) >= STRIPE_FORHOLD * Math.min(e.breddeMm, e.hoydeMm)) return e;
+    const sk = konvekstSkall(f[0][0].slice(0, -1) as [number, number][]);
+    const flate0 = (e.bbox[2] - e.bbox[0]) * (e.bbox[3] - e.bbox[1]);
+    let best = { a: 0, A: flate0 };
+    for (let i = 0; i < sk.length; i++) {
+      const p = sk[i], q = sk[(i + 1) % sk.length];
+      const a = -Math.atan2(q[1] - p[1], q[0] - p[0]);
+      const c = Math.cos(a), sn = Math.sin(a);
+      const xs = sk.map(([x, y]) => x * c - y * sn), ys = sk.map(([x, y]) => x * sn + y * c);
+      const A = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+      if (A < best.A) best = { a, A };
+    }
+    if (best.A > (1 - DREI_GEVINST) * flate0) return e;
+    const c = Math.cos(best.a), sn = Math.sin(best.a);
+    const dr = (m: MultiPoly): MultiPoly => m.map((poly) => poly.map((r) => r.map(([x, y]) => [x * c - y * sn, x * sn + y * c] as [number, number])));
+    const ny = dr(f);
+    const pk = ny.flat(2);
+    const bb: [number, number, number, number] = [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+      Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+    const w = ((bb[2] - bb[0]) * e.skala) / MM, h = ((bb[3] - bb[1]) * e.skala) / MM;
+    advarsler.push(`${e.navn}: dreid ${Math.abs(best.a * 180 / Math.PI).toFixed(0)}° paa arket, ramme ${Math.round(e.breddeMm)} x ` +
+      `${Math.round(e.hoydeMm)} til ${Math.round(w)} x ${Math.round(h)} mm. Monteres etter skissen.`);
+    return { ...e, bbox: bb, breddeMm: w, hoydeMm: h, deler: [{ ...e.deler[0], flate: ny }], omriss: ny };
+  });
 }
 
 function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
@@ -507,11 +529,15 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
           }
           // hver del av fargen for seg (CENTER og trekanten under D-en)
           const kl = klyng(x.f);
+          /**
+           * Rammen er saa firkantet som mulig (Eirik 16.11.2026: «det er
+           * bedre at den er saa firkantet som mulig og gjerne har enveisthru
+           * mot andre elementer»): vanlig rektangulaer ramme, kant i kant.
+           */
           kl.forEach((f, ki) => {
-            const form = tettForm(f, hovedHer, e.skala);
-            const bb = boks(form), [w2, h2] = mmAv(bb);
+            const bb = boks(f), [w2, h2] = mmAv(bb);
             ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
-              breddeMm: w2, hoydeMm: h2, antall: e.antall, deler: [{ ...x.d, flate: f }], omriss: form, thruForm: form });
+              breddeMm: w2, hoydeMm: h2, antall: e.antall, deler: [{ ...x.d, flate: f }], omriss: f, egetArk: true });
           });
         }
       }
@@ -702,15 +728,21 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
       const andre = ps.filter((q) => q !== p);
       const overlappY = (q: any) => q.y < p.y + p.h - 1e-6 && p.y < q.y + q.h - 1e-6;
       const overlappX = (q: any) => q.x < p.x + p.w - 1e-6 && p.x < q.x + q.w - 1e-6;
+      /**
+       * Naboer som allerede griper inn i rammen (formede rammer nestes inn i
+       * hverandre) stenger veien: da blir ledig plass negativ og enden
+       * strekkes ikke (Eirik 16.11.2026: feltet bak paa Vito overlappet en
+       * stripe som var strukket tvers gjennom det).
+       */
       const ledig = (r: "V" | "H" | "O" | "N") => {
         let fri = 0;
-        if (r === "H") fri = Math.min(feltH, ...andre.filter((q) => overlappY(q) && q.x >= p.x + p.w - 1e-6)
+        if (r === "H") fri = Math.min(feltH, ...andre.filter((q) => overlappY(q) && q.x + q.w > p.x + p.w + 1e-6)
           .map((q) => q.x - (rettMot(q, "H") ? 0 : geo.gap))) - (p.x + p.w);
-        if (r === "V") fri = p.x - Math.max(feltV, ...andre.filter((q) => overlappY(q) && q.x + q.w <= p.x + 1e-6)
+        if (r === "V") fri = p.x - Math.max(feltV, ...andre.filter((q) => overlappY(q) && q.x < p.x - 1e-6)
           .map((q) => q.x + q.w + (rettMot(q, "V") ? 0 : geo.gap)));
-        if (r === "N") fri = Math.min(feltN, ...andre.filter((q) => overlappX(q) && q.y >= p.y + p.h - 1e-6)
+        if (r === "N") fri = Math.min(feltN, ...andre.filter((q) => overlappX(q) && q.y + q.h > p.y + p.h + 1e-6)
           .map((q) => q.y - (rettMot(q, "N") ? 0 : geo.gap))) - (p.y + p.h);
-        if (r === "O") fri = p.y - Math.max(feltO, ...andre.filter((q) => overlappX(q) && q.y + q.h <= p.y + 1e-6)
+        if (r === "O") fri = p.y - Math.max(feltO, ...andre.filter((q) => overlappX(q) && q.y < p.y - 1e-6)
           .map((q) => q.y + q.h + (rettMot(q, "O") ? 0 : geo.gap)));
         return fri;
       };
@@ -893,6 +925,8 @@ interface Elem {
    * som printes, hver for seg. Skjaerelinjen er hele elementet (deler[0]).
    */
   trykk?: { flate: MultiPoly; hex: string; spot?: Spot }[];
+  /** bitene som teipes inn i et oppsett: eget ark, aldri sammen med striper */
+  egetArk?: boolean;
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -1341,7 +1375,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   // gjor at delene treffer hverandre nar folien legges pa.
   // dyr folie: ut av oppsettet og tett, naar det er billigere enn tiden det
   // tar aa legge bitene over for hand
-  const vurdert = tettArk(samleFiler(elementer, advarsler), grunngeo, b, advarsler);
+  const vurdert = tettArk(dreiFelt(samleFiler(elementer, advarsler), advarsler), grunngeo, b, advarsler);
   const grupper = new Map<string, Elem[]>();
   for (const e of vurdert) {
     /**
@@ -1349,7 +1383,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * lukes og legges over paa det sorte oppsettet, mens stripene har sin
      * egen fil (Appliser+thru). De skal aldri paa samme ark.
      */
-    const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|") + (e.thruForm ? "|tett" : "");
+    const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|") + (e.thruForm || e.egetArk ? "|tett" : "");
     if (!grupper.has(nokkel)) grupper.set(nokkel, []);
     grupper.get(nokkel)!.push(e);
   }
@@ -1709,7 +1743,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       // alle fire sider rette: tegnes paa nytt som et eksakt rektangel paa rammens maal
       if (sider.every(Boolean)) d.flate = [[[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]]];
     }
-    const kantKiss = !kunThru && gruppe.length > 1 && gruppe.every((e) => !e.thruForm && !e.markering?.length);
+    const kantKiss = !kunThru && gruppe.reduce((t, e) => t + e.antall, 0) > 1 && gruppe.every((e) => !e.thruForm && !e.markering?.length);
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,

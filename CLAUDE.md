@@ -644,10 +644,18 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   `DEL_AVSTAND_MM` blir egne elementer.
 - Teip inn i oppsettet (Eirik 16.11.2026): i en slik logo er fargen med
   stoerst flate oppsettet, og den skjaerer ogsaa omrisset av de andre
-  fargene som kiss (markering). De andre fargene kiss-cuttes tett, lukes og
-  thru-cuttes rundt hver del (`tettForm`), og teipes inn i oppsettet. De
-  appliseres ikke. Bunnfarger (961 under det hvite) er egne elementer.
-  Vito: 9 til 6 filer.
+  fargene som kiss (markering). De andre fargene kiss-cuttes, lukes og
+  thru-cuttes i rektangulaere rammer kant i kant paa eget ark (`egetArk`,
+  aldri sammen med striper), og teipes inn i oppsettet. De appliseres ikke.
+  Bunnfarger (961 under det hvite) er egne elementer. Vito: 9 til 6 filer.
+- Kant i kant vinner alltid, med mindre formede rammer gir minst
+  `KANT_FORTRINN` (10 %) kortere ark. Glipper under `KANT_GLIPPE_MM` (5 mm)
+  mellom to thru-linjer lukkes: den korteste kanten flyttes ut til den
+  lengste (`kantRekt`), saa den lange linjen er rett.
+- Et helt felt (én farge, konvekst, ikke stripe) dreies til minste ramme
+  (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
+- `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i
+  rammen (formede rammer). Feilsignatur: et felt som overlapper en stripe.
 
 ## Ikke endre
 
