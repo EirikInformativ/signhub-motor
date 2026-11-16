@@ -33,6 +33,13 @@ export interface Bane {
   strek: boolean;
   bredde: number;
   boks: { x0: number; y0: number; x1: number; y1: number };
+  /**
+   * klippebanene som gjaldt da banen ble malt (W/W*). Brukes bare av
+   * kundeskissen, saa bilen ser ut slik den blir: dekor som designeren har
+   * klippet langs karosseriet, vises klippet. Skjaerefilene bruker hele
+   * banen.
+   */
+  klipp?: { segs: Seg[]; eo: boolean }[];
 }
 
 function mul(a: Mat, b: Mat): Mat {
@@ -57,8 +64,12 @@ const TOKEN = /\/[^\s/[\]<>(){}]+|\((?:[^()\\]|\\.)*\)|<<|>>|\[|\]|[^\s[\]<>(){}
 const FYLL = new Set(["f", "F", "f*", "b", "b*", "B", "B*"]);
 const STREK = new Set(["S", "s", "b", "b*", "B", "B*"]);
 
-function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut: Bane[]) {
+function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut: Bane[],
+             klippInn: { segs: Seg[]; eo: boolean }[] = []) {
   const mStabel: Mat[] = [], fStabel: number[][] = [], wStabel: number[] = [];
+  let klipp = klippInn;
+  const kStabel: { segs: Seg[]; eo: boolean }[][] = [];
+  let ventKlipp: { segs: Seg[]; eo: boolean } | null = null;
   const sStabel: number[][] = [];
   let cur = ctm, tall: number[] = [], navn: string | null = null;
   // Fyll og strek har hver sin farge i PDF. Sma bokstaver setter fyllet,
@@ -83,11 +94,12 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
     if (t.startsWith("(")) continue;
     const op = t;
 
-    if (op === "q") { mStabel.push(cur); fStabel.push(farge); sStabel.push(strekFarge); wStabel.push(bredde); csStabel.push([fyllCs, strekCs]); }
+    if (op === "q") { mStabel.push(cur); fStabel.push(farge); sStabel.push(strekFarge); wStabel.push(bredde); csStabel.push([fyllCs, strekCs]); kStabel.push(klipp); }
     else if (op === "Q") {
       cur = mStabel.pop() ?? cur; farge = fStabel.pop() ?? farge;
       strekFarge = sStabel.pop() ?? strekFarge; bredde = wStabel.pop() ?? bredde;
       const c = csStabel.pop(); if (c) { fyllCs = c[0]; strekCs = c[1]; }
+      klipp = kStabel.pop() ?? klipp;
     }
     // spotfarger (cs/scn, CS/SCN), se bilskisse.ts: Kia PV5 310079
     else if (op === "cs" && navn) fyllCs = csFraObj(res, navn);
@@ -134,10 +146,13 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
       if (segs.length && op !== "n") {
         const sk = Math.sqrt(Math.abs(cur[0] * cur[3] - cur[1] * cur[2])) || 1;
         ut.push({ segs, farge: farge.slice(), strekFarge: strekFarge.slice(),
-          fyll: FYLL.has(op), strek: STREK.has(op), bredde: bredde * sk, boks });
+          fyll: FYLL.has(op), strek: STREK.has(op), bredde: bredde * sk, boks,
+          ...(klipp.length ? { klipp } : {}) });
       }
+      // klippet gjelder fra og med neste maling
+      if (ventKlipp) { klipp = [...klipp, ventKlipp]; ventKlipp = null; }
       tom();
-    } else if (op === "W" || op === "W*") { /* klipp: banen males ikke */ }
+    } else if (op === "W" || op === "W*") { ventKlipp = { segs: segs.slice(), eo: op === "W*" }; }
     else if (op === "Do" && navn && dybde < 6) {
       const xo = res?.lookup(PDFName.of("XObject"), PDFDict);
       const form: any = xo?.lookup(PDFName.of(navn));
@@ -145,7 +160,7 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
       if (dict && String(dict.lookup(PDFName.of("Subtype"))) === "/Form") {
         const mArr: any = dict.lookup(PDFName.of("Matrix"));
         const fm: Mat = mArr?.asArray ? (mArr.asArray().map((v: any) => v.asNumber()) as Mat) : ID;
-        gaa(streamText(form), dict.lookup(PDFName.of("Resources"), PDFDict) ?? res, mul(fm, cur), dybde + 1, ut);
+        gaa(streamText(form), dict.lookup(PDFName.of("Resources"), PDFDict) ?? res, mul(fm, cur), dybde + 1, ut, klipp);
       }
     }
     if (op !== "cs" && op !== "CS") tall = [];

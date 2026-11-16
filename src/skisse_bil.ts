@@ -20,6 +20,8 @@ export interface BilSkisseValg {
    */
   visninger: { x0: number; y0: number; x1: number; y1: number }[];
   omraader: { x0: number; y0: number; x1: number; y1: number; navn: string; vis: string }[];
+  /** maalrammer rundt dekoren; av som standard (kundeskisse) */
+  visMaal?: boolean;
   bilder: { disclaimer: any; vannmerke: any };
   lerret: (b: number, h: number) => any;
   /** hoyde delt paa bredde. Settes til A4 nar skissen skal paa et A4-ark. */
@@ -79,7 +81,23 @@ export function tegnBilSkisse(baner: Bane[], v: BilSkisseValg): { jpeg: Uint8Arr
   g.fillStyle = "#ffffff";
   g.fillRect(0, 0, arkB, H);
 
+  const spor = (segs: any[]) => {
+    for (const seg of segs) {
+      if (seg.t === "m") g.moveTo(X(seg.p[0]), Y(seg.p[1]));
+      else if (seg.t === "l") g.lineTo(X(seg.p[0]), Y(seg.p[1]));
+      else if (seg.t === "c") g.bezierCurveTo(X(seg.a[0]), Y(seg.a[1]), X(seg.b[0]), Y(seg.b[1]), X(seg.c[0]), Y(seg.c[1]));
+      else g.closePath();
+    }
+  };
   const tegn = (b: Bane, farge: string, strekFarge: string) => {
+    if (b.klipp?.length) {
+      g.save();
+      for (const k of b.klipp) { g.beginPath(); spor(k.segs as any[]); g.clip(k.eo ? "evenodd" : "nonzero"); }
+    }
+    tegnUklippet(b, farge, strekFarge);
+    if (b.klipp?.length) g.restore();
+  };
+  const tegnUklippet = (b: Bane, farge: string, strekFarge: string) => {
     g.beginPath();
     for (const seg of b.segs) {
       if (seg.t === "m") g.moveTo(X(seg.p[0]), Y(seg.p[1]));
@@ -91,22 +109,18 @@ export function tegnBilSkisse(baner: Bane[], v: BilSkisseValg): { jpeg: Uint8Arr
     if (b.strek) { g.strokeStyle = strekFarge; g.lineWidth = Math.max(0.35, b.bredde * s); g.stroke(); }
   };
 
-  // 1. bilen, dempet, sa dekoren er det oyet gaar til
+  // 1. bilen og dekoren i tegnerekkefoelgen fra skissen, med klippebanene,
+  //    saa kunden ser bilen slik den blir (Eirik 16.11.2026)
   for (const b of baner) {
-    if (!iVisning(b)) continue;
-    if (v.omraader.some((o) => andel(b, o) >= 0.9)) continue;
-    tegn(b, cmykTilCss(b.farge), cmykTilCss(b.strekFarge ?? b.farge));
-  }
-  // 2. dekoren, i egne farger
-  for (const b of baner) {
-    if (!v.omraader.some((o) => andel(b, o) >= 0.9)) continue;
+    if (!iVisning(b) && !v.omraader.some((o) => andel(b, o) >= 0.9)) continue;
     tegn(b, cmykTilCss(b.farge), cmykTilCss(b.strekFarge ?? b.farge));
   }
 
-  // 3. plasseringsmaal rundt hver dekor
+  // 3. plasseringsmaal rundt hver dekor: bare naar det er bedt om. Paa
+  //    kundeskissen gjorde de bilen til en produksjonstegning.
   g.font = `${Math.round(W * 0.0085)}px sans-serif`;
   g.textBaseline = "middle";
-  for (const o of v.omraader) {
+  for (const o of v.visMaal ? v.omraader : []) {
     // maalene skal gjelde dekoren, ikke omraadet noen pekte ut rundt den
     const egne = baner.filter((b2) => andel(b2, o) >= 0.9);
     if (!egne.length) continue;
@@ -133,7 +147,8 @@ export function tegnBilSkisse(baner: Bane[], v: BilSkisseValg): { jpeg: Uint8Arr
   g.fillText(v.jobb, Math.round(arkB * 0.02), Math.round(topp * 0.35));
   g.fillStyle = "#555555";
   g.font = `${Math.round(W * 0.0095)}px sans-serif`;
-  g.fillText(`Skissen er tegnet i 1:${v.malestokk.toFixed(1)}. Maalene gjelder ekte kjoretoy.`,
+  g.fillText(v.visMaal ? `Skissen er tegnet i 1:${v.malestokk.toFixed(1)}. Maalene gjelder ekte kjoretoy.`
+    : `Skissen er tegnet i 1:${v.malestokk.toFixed(0)}.`,
     Math.round(arkB * 0.02), Math.round(topp * 0.72));
 
   // 5. vannmerket. Samme styrke og tetthet som i logoskissen, ellers

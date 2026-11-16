@@ -235,17 +235,23 @@ utfallene meldes. Alle kandidatene skjøtes først, så prøves hver av dem
 hel igjen: prøvd én og én ble stripen bak (1,5 m) skåret hel fordi
 stripene på sidene (2,6 m) uansett gjorde arket langt.
 
-**Skrådde elementer rettes opp i produksjonsfila** (Eirik 16.11.2026).
-Designerne skrår elementer for å følge karosserilinjene. `rettOpp` i
-`src/bilmotor.ts` leser helningen av de rette kantene: hver rett kant
-stemmer med sin lengde på avviket fra nærmeste akse, og den sterkeste
-vinkelen innenfor `RETT_MAKS_GRAD = 6` er helningen. Minste ramme brukes
-ikke, fordi kursiv tekst (ÅTG, åtg.no) gir mindre ramme dreid 5 til 8°
-uten å være skrådd. Elementet roteres når vinkelen er minst 0,5° og
-rammen krymper minst 3 %, og det meldes («Monteres med samme helning som
-på skissen»). Kia PV5: stripene og teksten på sidene rettet opp 0,5 til
-0,9°, og samlet folie fra 11,9 m til 5,5 m med deling og skjøting.
-`test/kiatest.ts` vokter reglene.
+**Skrådde elementer rettes opp i produksjonsfila etter grunnlinjen**
+(Eirik 16.11.2026: «tenk alltid baseline»). Designerne skrår elementer for
+å følge karosserilinjene. `rettOpp` i `src/bilmotor.ts` stemmer bare med
+rette underkanter: kanter innenfor `RETT_MAKS_GRAD = 6` fra vannrett som
+har formen over seg og luft under. Runde bokstaver med buet bunn stemmer
+ikke. Føttene på A-en, underkanten på en stripe, bunnen av R, E, L og T, og
+den grønne streken under ÅTG gir helningen. Kursiv står rett fordi
+bunnene er vannrette. Elementet roteres fra `RETT_MIN_GRAD = 0,3°`, og det
+meldes («Monteres med samme helning som på skissen»). Grunnlinjen må være
+minst 5 % av bredden for å telle. `test/kiatest.ts` vokter reglene.
+
+**Kundeskissen viser bilen slik den blir.** `hentBaner` i `src/uttrekk.ts`
+tar med klippebanene (`W`/`W*`) på hver bane (`klipp`), og `tegnBilSkisse`
+klipper med dem og tegner alt i skissens rekkefølge. Stripene ender da ved
+hjulbuene, som designeren har tegnet dem. Målrammene rundt dekoren vises
+bare med `visMaal`, ikke på kundeskissen: de gjorde den til en
+produksjonstegning. Skjærefilene bruker fortsatt hele banen.
 
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom

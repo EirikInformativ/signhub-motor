@@ -21,6 +21,7 @@
 import * as fs from "fs";
 import { lesBilskisse, kjorJobb, DISCLAIMER, VANNMERKE } from "../src/motor";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { hentBaner } from "../src/uttrekk";
 
 (async () => {
   const bilder = { disclaimer: await loadImage(DISCLAIMER), vannmerke: await loadImage(VANNMERKE) } as any;
@@ -55,10 +56,15 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(r.advarsler.some((a: string) => /skjoetet i 3 stykker/.test(a)), "den lange stripen er skjoetet i 3");
   sjekk(r.advarsler.some((a: string) => /1543 mm lang stripe er skjoetet i 2/.test(a)), "stripen bak er ogsaa skjoetet (i 2)");
   sjekk(sum < 6, `samlet folie under 6 m (${sum.toFixed(2)} m)`);
-  // skraadde elementer rettes opp, kursiv tekst (ÅTG, åtg.no) roeres ikke
-  const rettet = l.merknader.filter((m) => /rettet opp/.test(m));
-  sjekk(rettet.length >= 2 && rettet.every((m) => /dekor 2 del [23]/.test(m)),
-    `stripene og teksten paa siden rettet opp, ikke logoene (${rettet.map((m) => m.split(":")[0]).join(", ")})`);
+  // skraadde elementer rettes opp etter grunnlinjen: stripen, A-en (foettene),
+  // teksten og ÅTG (den gronne streken i bunn)
+  const rettet = l.merknader.filter((m) => /rettet opp/.test(m)).map((m) => m.split(":")[0]);
+  for (const navn of ["side ovre dekor 2 del 1", "side ovre dekor 2 del 2", "side ovre dekor 2 del 3", "side ovre dekor 1"])
+    sjekk(rettet.includes(navn), `${navn} rettet opp etter grunnlinjen`);
+
+  // kundeskissen viser bilen slik den blir: klippebanene foelger med banene
+  const { baner } = await hentBaner(new Uint8Array(fs.readFileSync("kia.pdf")));
+  sjekk(baner.some((b) => b.klipp?.length), `klippebaner foelger med til kundeskissen (${baner.filter((b) => b.klipp?.length).length} baner)`);
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: Kia PV5 leses riktig");

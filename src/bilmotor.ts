@@ -449,9 +449,8 @@ export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
 
 
 /** minste helning som rettes opp, og minste gevinst i ramme */
-const RETT_MIN_GRAD = 0.5;
+const RETT_MIN_GRAD = 0.3;
 const RETT_MAKS_GRAD = 6;
-const RETT_MIN_GEVINST = 0.03;
 
 /**
  * Retter opp et element som er skraadd for aa foelge karosseriet (Eirik
@@ -479,26 +478,51 @@ function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: 
   };
   const null0 = flate(0);
   /*
-   * Vinkelen leses av de rette kantene, ikke av minste ramme: kursiv tekst
-   * (ÅTG, åtg.no) gir mindre ramme naar den dreies 5 til 8°, men den er
-   * ikke skraadd. Hver rett kant stemmer med sin lengde paa avviket fra
-   * naermeste akse; den sterkeste vinkelen innenfor ±RETT_MAKS_GRAD er
-   * helningen. Bunnen paa bokstaver og kantene paa en stripe er det som
-   * teller.
+   * Vinkelen leses av grunnlinjen (Eirik 16.11.2026: «tenk alltid
+   * baseline»): de rette kantene som er en underkant, altsaa har formen over
+   * seg og luft under. Runde bokstaver med buet bunn har ingen rett
+   * underkant og stemmer ikke. Kursiv (ÅTG, åtg.no) har rette, vannrette
+   * bunner og staar derfor rett. Paa A-en paa doerene er det foettene, paa
+   * en stripe underkanten, paa tekst bunnen av R, E, L og T.
    */
+  const inni = (bb: Bane, x: number, y: number) => {
+    let inn = false;
+    let start: [number, number] | null = null, forr: [number, number] | null = null;
+    const kant = (p: [number, number], q: [number, number]) => {
+      if ((p[1] > y) !== (q[1] > y) && x < p[0] + ((y - p[1]) * (q[0] - p[0])) / (q[1] - p[1])) inn = !inn;
+    };
+    for (const sg of bb.segs as any[]) {
+      if (sg.t === "m") { if (forr && start) kant(forr, start); start = sg.p; forr = sg.p; }
+      else if (sg.t === "l") { kant(forr!, sg.p); forr = sg.p; }
+      else if (sg.t === "c") { kant(forr!, sg.c); forr = sg.c; }
+      else if (sg.t === "h") { if (forr && start) kant(forr, start); forr = start; }
+    }
+    if (forr && start) kant(forr, start);
+    return inn;
+  };
   const stemmer = new Map<number, number>();
-  let total = 0;
+  const vinkelSum = new Map<number, number>();
+  let bredde = 0;
+  {
+    const xs = pts.map((p) => p[0]); bredde = Math.max(...xs) - Math.min(...xs);
+  }
   for (const bb of baner) {
+    if (!bb.fyll) continue;
     let forrige: [number, number] | null = null;
     for (const sg of bb.segs as any[]) {
       if (sg.t === "m") { forrige = sg.p; continue; }
       if (sg.t === "l" && forrige) {
         const dx = sg.p[0] - forrige[0], dy = sg.p[1] - forrige[1], len = Math.hypot(dx, dy);
-        if (len > 0) {
-          let g = (Math.atan2(dy, dx) * 180) / Math.PI;
-          g = ((g % 90) + 90) % 90; if (g > 45) g -= 90;
-          total += len;
-          if (Math.abs(g) <= RETT_MAKS_GRAD) { const k = Math.round(g * 10); stemmer.set(k, (stemmer.get(k) ?? 0) + len); }
+        let g = (Math.atan2(dy, dx) * 180) / Math.PI;
+        if (g > 90) g -= 180; if (g < -90) g += 180;
+        if (len > 0 && Math.abs(g) <= RETT_MAKS_GRAD) {
+          const mx = (sg.p[0] + forrige[0]) / 2, my = (sg.p[1] + forrige[1]) / 2;
+          const e = 0.1;   // tegnede punkter: tynt nok for en tynn stripe
+          // underkant: formen over, luft under (y peker opp i PDF)
+          if (inni(bb, mx, my + e) && !inni(bb, mx, my - e)) {
+            const k = Math.round(g * 10); stemmer.set(k, (stemmer.get(k) ?? 0) + len);
+            vinkelSum.set(k, (vinkelSum.get(k) ?? 0) + g * len);
+          }
         }
       }
       if (sg.p) forrige = sg.p; else if (sg.c) forrige = sg.c;
@@ -510,12 +534,13 @@ function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: 
     if (v > modeV) { modeV = v; mode = k; }
   }
   let sv = 0, sw = 0;
-  for (let d = -2; d <= 2; d++) { const w = stemmer.get(mode + d) ?? 0; sv += w * (mode + d) / 10; sw += w; }
-  // rotasjon som opphever helningen
-  const best = sw > 0 && modeV >= 0.2 * total ? -sv / sw : 0;
+  for (let d = -2; d <= 2; d++) { sv += vinkelSum.get(mode + d) ?? 0; sw += stemmer.get(mode + d) ?? 0; }
+  // grunnlinjen maa vaere en reell del av bredden for aa telle
+  const best = sw > 0 && modeV >= 0.05 * bredde ? -sv / sw : 0;
   const bestA = flate(best);
   const gevinst = 1 - bestA / Math.max(null0, 1e-9);
-  if (Math.abs(best) < RETT_MIN_GRAD || gevinst < RETT_MIN_GEVINST) return { baner, vinkel: 0, spartProsent: 0 };
+  // grunnlinjen avgjoer; gevinsten i ramme meldes bare
+  if (Math.abs(best) < RETT_MIN_GRAD) return { baner, vinkel: 0, spartProsent: 0 };
   const r = (best * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
   const rot = (p: [number, number]): [number, number] =>
     [cx + c * (p[0] - cx) - sn * (p[1] - cy), cy + sn * (p[0] - cx) + c * (p[1] - cy)];
