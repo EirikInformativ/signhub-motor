@@ -30,7 +30,9 @@ import { hentBaner } from "../src/uttrekk";
   const sjekk = (ok: boolean, t: string) => { console.log(`${ok ? "ok  " : "FEIL"} ${t}`); if (!ok) feil++; };
   const l = await lesBilskisse(new Uint8Array(fs.readFileSync("kia.pdf")), { jobb: "kia", bilder, lerret });
   const GRONN = "#00B528", SORT = "#000000";
-  sjekk(l.elementer.length === 10, `10 elementer (fikk ${l.elementer.length})`);
+  // sidene er ulike etter kuttet ved bildelene (speil og rute paa foerersiden), saa
+  // stripen og A-en er ett element per side
+  sjekk(l.elementer.length === 12, `12 elementer (fikk ${l.elementer.length})`);
   sjekk(l.elementer.filter((e) => e.sammeSom).length === 1, "panseret meldt som samme merke");
   const fremmed = l.elementer.filter((e) => e.farger.some((f) => f.hex !== GRONN && f.hex !== SORT));
   sjekk(!fremmed.length, `bare gronn og sort, ingen bildeler (${fremmed.map((e) => e.navn + ": " + e.farger.map((f) => f.hex).join(" ")).join("; ")})`);
@@ -39,10 +41,13 @@ import { hentBaner } from "../src/uttrekk";
   sjekk(!!atg && sortAndel > 0.75, `ÅTG i 3 eksemplarer med sorte bokstaver og ring (sort ${(sortAndel * 100).toFixed(0)} %)`);
   const stor = l.elementer.filter((e) => e.breddeMm > 1000 && e.hoydeMm > 300);
   sjekk(!stor.length, `ingen store elementer med luft (${stor.map((e) => e.breddeMm + " x " + e.hoydeMm).join(", ")})`);
-  const stripe = l.elementer.find((e) => e.breddeMm > 2400 && e.hoydeMm < 150 && e.antall === 2);
-  sjekk(!!stripe && stripe.farger.length === 1, "den lange stripen er egen del, 2 stk, bare gronn");
-  const a = l.elementer.find((e) => e.antall === 2 && e.hoydeMm > 600);
-  sjekk(!!a && a.farger.length === 2, "A-en med gronn trekant er egen del, 2 stk");
+  const striper = l.elementer.filter((e) => e.breddeMm > 2000 && e.hoydeMm < 150);
+  sjekk(striper.length === 2 && striper.every((e) => e.farger.length === 1), "den lange stripen er egen del paa hver side, bare gronn");
+  // kuttet 50 mm forbi det som synes: hjulbuene skjuler endene (2570 mm foer)
+  sjekk(striper.every((e) => e.breddeMm < 2400), `stripene er kuttet ved hjulbuene (${striper.map((e) => e.breddeMm).join(", ")} mm)`);
+  const aer = l.elementer.filter((e) => e.hoydeMm > 500 && e.farger.length === 2 && /side/.test(e.vis));
+  sjekk(aer.length === 2 && aer.every((e) => e.hoydeMm < 679), `A-en med gronn trekant er egen del paa hver side, kuttet under rute og speil (${aer.map((e) => e.hoydeMm).join(", ")} mm hoy)`);
+  sjekk(l.merknader.filter((m) => /inn under bilens egne deler og er kuttet 50 mm/.test(m)).length === 2, "kuttet ved bildelene meldes for begge sidene");
   const tekst = l.elementer.filter((e) => e.breddeMm > 1150 && e.breddeMm < 1300 && e.farger.length === 1 && e.farger[0].hex === SORT);
   sjekk(tekst.length === 2, `«RØR - ELEKTRO - ENERGI» for seg paa begge sider (${tekst.length})`);
   const bakSort = l.elementer.filter((e) => /ende hoyre dekor 2 del/.test(e.navn) && e.farger[0].hex === SORT);
@@ -53,7 +58,7 @@ import { hentBaner } from "../src/uttrekk";
   const r: any = await kjorJobb({ jobb: "kia", egenSkisse: false, linjer: l.elementer.filter((e) => !e.sammeSom)
     .map((e) => ({ navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall, folier: e.farger.map((f) => KART[f.hex]) })) } as any);
   const sum = r.ark.reduce((a: number, k: any) => a + k.lengdeMm, 0) / 1000;
-  sjekk(r.advarsler.some((a: string) => /skjoetet i 3 stykker/.test(a)), "den lange stripen er skjoetet i 3");
+  sjekk(r.advarsler.some((a: string) => /21\d\d mm lang stripe er skjoetet/.test(a)), "den lange stripen er skjoetet");
   sjekk(r.advarsler.some((a: string) => /1543 mm lang stripe er skjoetet i 2/.test(a)), "stripen bak er ogsaa skjoetet (i 2)");
   sjekk(sum < 6, `samlet folie under 6 m (${sum.toFixed(2)} m)`);
   // skraadde elementer rettes opp etter grunnlinjen: stripen, A-en (foettene),
@@ -74,7 +79,7 @@ import { hentBaner } from "../src/uttrekk";
     return Math.abs(a[0] - z[0]) > 0.5 && f.every((c) => Math.abs(c[0] - c[1]) < 0.02 && Math.abs(c[1] - c[2]) < 0.02);
   }), "gradientene gaar fra hvitt til sort i graatoner (prosess-sort, ikke reservefarge)");
   const elBaner = l.elementer.length;
-  sjekk(elBaner === 10 && l.elementer.every((e: any) => !e.farger.some((f: any) => !/^#(00B528|000000)$/i.test(f.hex))),
+  sjekk(elBaner === 12 && l.elementer.every((e: any) => !e.farger.some((f: any) => !/^#(00B528|000000)$/i.test(f.hex))),
     "ingen gradient havner i et element");
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }

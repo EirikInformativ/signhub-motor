@@ -18,6 +18,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
+import { kuttVedBildeler, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
 import type { Folie } from "./motor.ts";
 
@@ -223,6 +224,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
    * sammen, mens tekst og striper som bare staar ved siden av, skilles.
    */
   const arbeid: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
+  const valgtPerOmraade: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
   for (const o of funn.omraader) {
     /**
      * Bilens egne streker og flater ligger ofte inne i rammen til en stor
@@ -239,7 +241,27 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const likBoks = (b: Bane) => o.liste.some((x) => Math.abs(x.x0 - b.boks.x0) < T &&
       Math.abs(x.y0 - b.boks.y0) < T && Math.abs(x.x1 - b.boks.x1) < T && Math.abs(x.y1 - b.boks.y1) < T);
     const valgte = baner.filter((b) => !b.gradient && andel(b, o) >= 0.9 && !erBil(b) && likBoks(b));
-    if (!valgte.length) continue;
+    if (valgte.length) valgtPerOmraade.push({ o, valgte });
+  }
+  /**
+   * Dekor som gaar inn under bilens egne deler kuttes 50 mm forbi det som
+   * synes (Eirik 16.11.2026, Kia PV5 310079). Reglene staar i klippkant.ts.
+   */
+  const alleDekor = new Set(valgtPerOmraade.flatMap((x) => x.valgte));
+  const luft = (KLIPP_LUFT_MM / malestokk) * MM, min = (KLIPP_MIN_MM / malestokk) * MM;
+  for (const x of valgtPerOmraade) {
+    const r = kuttVedBildeler(x.valgte, baner, (b) => alleDekor.has(b), luft, min);
+    if (r.fjernet > 0) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gaar inn under bilens egne deler ` +
+      `og er kuttet ${KLIPP_LUFT_MM} mm forbi det som synes. Sparer ` +
+      `${(r.fjernet / MM / MM * malestokk * malestokk / 1e6).toFixed(2).replace(".", ",")} m² folie ` +
+      `(${(r.fjernet / r.foer * 100).toFixed(0)} % av de kuttede delene). Alt som synes paa bilen er med` +
+      (r.gjennomsyn ? ", bortsett fra smaa gjennomsyn mellom bildelene (for eksempel mellom hjulbue og dekk)." : "."));
+    if (r.kortForbi.length) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gaar mindre enn ` +
+      `${KLIPP_MIN_MM} mm inn under bilens deler (${r.kortForbi.length} ${r.kortForbi.length === 1 ? "del" : "deler"}). ` +
+      "Montoeren trenger noe aa skjaere til etter. Forleng dekoren i skissen.");
+    x.valgte = r.baner;
+  }
+  for (const { o, valgte } of valgtPerOmraade) {
     const deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
     deler.forEach((d, k) => arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d }));

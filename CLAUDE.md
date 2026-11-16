@@ -267,6 +267,23 @@ med i et element. `test/kiatest.ts` vokter dette.
 **Feilsignatur:** hvite vindusruter på kundeskissen der originalen har
 tonede ruter.
 
+**Dekor som går inn under bilens egne deler kuttes 50 mm forbi det som
+synes** (Eirik 16.11.2026, Kia PV5). Designeren tegner A-en opp under
+ruta og speilet, og stripen inn under hjulbuene. I CCVision er det ikke en
+klippebane, men bildeler tegnet oppå dekoren. `kuttVedBildeler` i
+`src/klippkant.ts`: synlig = dekoren minus fylte ikke-dekorbaner tegnet
+etter den, og dekoren kuttes langs synlig utvidet med `KLIPP_LUFT_MM = 50`,
+med hullene fylt, så håndtak og speil inne i dekoren aldri blir hull.
+Små, tynne synlige øyer (under 5 % av største synlige del og tynnere enn
+10 mm) er gjennomsyn, for eksempel sort A mellom hjulbue og dekk, og styrer
+ikke kuttet. Går dekoren mindre enn `KLIPP_MIN_MM = 20` inn under en
+bildel, meldes det: montøren skjærer til for hånd og trenger overlapp.
+Dette er ikke et unntak fra «motoren fjerner aldri noe»: alt som synes,
+står. Det meldes med spart areal. `test/kiatest.ts` vokter det.
+
+**Feilsignatur:** synlig dekor som mangler i produksjonsfila, eller striper
+som er like lange som tegnet langt inn under hjulbuen.
+
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom
 ikke med: på 309916 manglet «XL-BYGG Osterøy» på to av tre steder, mens
