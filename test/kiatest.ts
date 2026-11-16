@@ -60,7 +60,7 @@ import { hentBaner } from "../src/uttrekk";
   const sum = r.ark.reduce((a: number, k: any) => a + k.lengdeMm, 0) / 1000;
   sjekk(r.advarsler.some((a: string) => /21\d\d mm lang stripe er skjoetet/.test(a)), "den lange stripen er skjoetet");
   sjekk(r.advarsler.some((a: string) => /1543 mm lang stripe er skjoetet i 2/.test(a)), "stripen bak er ogsaa skjoetet (i 2)");
-  sjekk(sum < 6, `samlet folie under 6 m (${sum.toFixed(2)} m)`);
+  sjekk(sum < 5.4, `samlet folie under 5,4 m med formede rammer (${sum.toFixed(2)} m)`);
   // skraadde elementer rettes opp etter grunnlinjen: stripen, A-en (foettene),
   // teksten og ÅTG (den gronne streken i bunn)
   const rettet = l.merknader.filter((m) => /rettet opp/.test(m)).map((m) => m.split(":")[0]);

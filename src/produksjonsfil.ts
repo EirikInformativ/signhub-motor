@@ -65,10 +65,22 @@ export interface Motiv {
   breddeMm: number;
   hoydeMm: number;
   antall: number;
+  /**
+   * Elementets omriss (alle fargene samlet), i samme enheter som bbox.
+   * Naar det finnes, kan rammen foelge formen (se ramme.ts).
+   */
+  omriss?: MultiPoly;
 }
 
 export interface Plassering {
   x: number; y: number; w: number; h: number; rotated: boolean; id: number;
+  /**
+   * Thru-cut-rammen naar den foelger formen, i mm paa arket med y nedover.
+   * Uten den er rammen rektangelet x, y, w, h.
+   */
+  ramme?: [number, number][];
+  /** kiss-cut-boksen rundt rammen, likeledes */
+  kiss?: [number, number][];
 }
 
 export interface Ark {
@@ -94,6 +106,13 @@ function sirkel(cx: number, cy: number, r: number, op: "f" | "S"): string {
     c(cx + k, cy - r, cx + r, cy - k, cx + r, cy) +
     `h\n${op}\n`
   );
+}
+
+/** En lukket ring i mm (y nedover) som strek. */
+function ringOps(r: [number, number][], ytop: (v: number) => number): string {
+  let o = `${f4(r[0][0] * MM)} ${f4(ytop(r[0][1]))} m\n`;
+  for (let i = 1; i < r.length; i++) o += `${f4(r[i][0] * MM)} ${f4(ytop(r[i][1]))} l\n`;
+  return o + "h\nS\n";
 }
 
 export interface ArkValg {
@@ -181,7 +200,8 @@ export async function byggProduksjonsfil(
      * fargene legges oppa nettopp dette stykket.
      */
     for (const p of ark.plasseringer) {
-      ops.push(`${f4(p.x * MM)} ${f4(ytop(p.y + p.h))} ${f4(p.w * MM)} ${f4(p.h * MM)} re\nS\n`);
+      if (p.ramme) ops.push(ringOps(p.ramme, ytop));
+      else ops.push(`${f4(p.x * MM)} ${f4(ytop(p.y + p.h))} ${f4(p.w * MM)} ${f4(p.h * MM)} re\nS\n`);
     }
     ops.push("Q\nEMC\n");
   }
@@ -212,6 +232,7 @@ export async function byggProduksjonsfil(
   for (const p of ark.plasseringer) {
     if (!harForm[p.id]) continue;
     const k = geo.boksKiss;
+    if (p.kiss) { ops.push(ringOps(p.kiss, ytop)); continue; }
     ops.push(`${f4((p.x - k) * MM)} ${f4(ytop(p.y + p.h + k))} ` +
              `${f4((p.w + 2 * k) * MM)} ${f4((p.h + 2 * k) * MM)} re\nS\n`);
   }

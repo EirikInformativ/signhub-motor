@@ -339,6 +339,8 @@ interface Elem {
   hoydeMm: number;
   antall: number;
   deler: Del[];
+  /** alle fargene samlet: grunnlaget for rammer som foelger formen */
+  omriss: MultiPoly;
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -687,7 +689,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
     elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
                      bbox: boks, skala,
-                     breddeMm, hoydeMm, antall: l.antall, deler });
+                     breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -728,7 +730,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       fb <= grunngeo.wildMaksRull ? grunngeo.wildMaksSkjaer : grunngeo.summaMaksSkjaer);
     const maksLengde = sk - 2 * grunngeo.bleed - 2 * (grunngeo.kissInset + grunngeo.regClear + grunngeo.regmarkD);
     const lengde = (es: Elem[]) => pakkFritt(es.map((e) => ({ navn: e.navn, flate: [], bbox: e.bbox,
-      skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall })),
+      skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss })),
       { ...grunngeo, foliebredde: fb, skjaerebredde: sk }).arklengde;
     /*
      * Foerst skjoetes alle kandidatene, saa proeves hver av dem hel igjen.
@@ -757,7 +759,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         const bb: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
         biter.push({ ...e, navn: `${e.navn} skjoet ${i + 1} av ${n}`, bbox: bb,
           breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-          deler: [{ ...e.deler[0], flate: bit }] });
+          deler: [{ ...e.deler[0], flate: bit }], omriss: bit });
       }
       biterAv.set(e, biter);
     }
@@ -805,7 +807,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     if (!(sk > 0)) return Infinity;
     const ark = pakkFritt(g.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
-      breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall,
+      breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
     })), { ...grunngeo, foliebredde: fb, skjaerebredde: sk });
     /**
      * Folien kommer paa rull. Du betaler for lengden du bruker, ikke for
@@ -907,7 +909,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
-      breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall,
+      breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);

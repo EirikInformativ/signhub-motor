@@ -73,7 +73,9 @@ Kilden ligger i `src/`, testene i `test/`. Stiene under er relative til `src/`.
 | --- | --- |
 | pdfbaner.ts | leser PDF-en, gir geometri per farge, ekspanderer stroke til form |
 | motor.ts | kjorJobb() og analyserFil(), lagvis oppbygging, rollefordeling |
-| pakk.ts | skyline-pakking av elementene på arket |
+| pakk.ts | skyline-pakking av elementene på arket, og profilpakking av formede rammer |
+| ramme.ts | rammer som følger formen, med rett bunn |
+| klippkant.ts | kutter dekor 50 mm forbi det som synes under bilens egne deler |
 | produksjonsfil.ts | selve arket: lag, regmarks, thru-cut, kiss-cut. Eier STD_GEO |
 | skjaereform.ts | byggSkjaereform() og separasjon() (spotfargene Through og CutContour) |
 | tykkelse.ts | måler tynneste detalj |
@@ -120,6 +122,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx bilfarger.ts  # bilens deler er ikke dekor, svart logo-flate er ikke lakk
     npx tsx lagbunn.ts    # ytterkanten i bunn, levende tekst og doble merker meldes
     npx tsx kiatest.ts    # spotfarger, sort ved siden av kuloer, bil inne i stripene
+    npx tsx rammetest.ts  # formede rammer med rett bunn
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -558,6 +561,21 @@ prøver dette med `oppspenningM: 10`, der bare denne regelen holder PROFF
 på eget ark.
 
 Like filnavn (samme folie og prosess på to ark) får `del 1 av 2`.
+
+**Rammene følger elementets form, bunnen er alltid rett** (Eirik
+16.11.2026). Thru-cut-rammen og kiss-cut-boksen var rektangler. Nå lager
+`src/ramme.ts` rammen av elementets omriss (alle fargene, hullene fylt)
+utvidet med bleed, med alt under fylt ned til en rett bunn og et bånd
+langs bunnen så rammen er ett stykke. Kiss-boksen er rammen utvidet med
+`boksKiss`. Bunnen er grunnlinjen montøren retter inn etter. `pakk.ts`
+pakker rammene på et høydeprofil, speilvendt så toppene lager daler, og
+speiler oppsettet tilbake. Formede rammer brukes bare når arket blir minst
+1 mm kortere enn med rektangler; ellers står rektanglene. Kia PV5: 5,55 m
+til 5,30 m. `test/rammetest.ts` vokter rett bunn, kiss utenfor rammen og
+gapet mellom rammene.
+
+**Feilsignatur:** en ramme uten rett bunn, eller to rammer nærmere hverandre
+enn `gap`.
 
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er
