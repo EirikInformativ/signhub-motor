@@ -657,6 +657,10 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   vender mot naboens rette kant: striper som smalner av, med én rett lang
   kant, legges parvis med felles thru-linje. `slaaSammenLinjer` og
   `strekkUt` tar hensyn til `snu`.
+- Appliser+thru skyves sammen etter formen (`skyvSammen`): stykker kant i
+  kant er én enhet, og hver enhet proeves som den ligger og snudd 180°, og
+  skyves til venstre til formen er `gap` fra det som ligger der. Vito:
+  feltet fra 1020 til 900 mm bredt.
 - Et helt felt (én farge, konvekst, ikke stripe) dreies til minste ramme
   (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
 - `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i
