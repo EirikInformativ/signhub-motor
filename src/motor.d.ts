@@ -233,6 +233,8 @@ export interface BilElement {
    * fra `pdf`. Legg ikke til noe i folier-listen fordi dette er satt.
    */
   bakgrunn?: BilFarge;
+  /** trolig samme merke som dette elementet, sett fra en annen visning. Ikke fjernet. */
+  sammeSom?: string;
 }
 
 export interface BilSkisseLest {
@@ -258,6 +260,8 @@ export interface BilSkisseLest {
   /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
   forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
   merknader: string[];
+  /** levende tekst i visningene. Er ikke med i skjaerefilene. */
+  levendeTekst: { tekst: string; vis: string; element: string | null }[];
 }
 
 export interface BilValg {

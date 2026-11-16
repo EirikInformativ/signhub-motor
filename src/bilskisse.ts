@@ -13,7 +13,9 @@ const ID: Mat = [1, 0, 0, 1, 0, 0];
 const MM = 72 / 25.4;
 
 export interface Boks { x0: number; y0: number; x1: number; y1: number; farge?: number[] }
-export interface LettLest { tekst: string; bokser: Boks[]; side: Boks }
+/** levende tekst paa arket: hvor den staar, og hva den sier */
+export interface TekstBoks extends Boks { tekst: string; usynlig: boolean }
+export interface LettLest { tekst: string; bokser: Boks[]; side: Boks; levende: TekstBoks[] }
 
 function mul(a: Mat, b: Mat): Mat {
   return [
@@ -38,8 +40,24 @@ function streamText(obj: any): string {
 const TOKEN = /\/[^\s/[\]<>(){}]+|\((?:[^()\\]|\\.)*\)|<<|>>|\[|\]|[^\s[\]<>(){}/]+/g;
 
 function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
-             ut: Boks[], tekst: string[]) {
+             ut: Boks[], tekst: string[], levende: TekstBoks[] = []) {
   const stabel: Mat[] = [];
+  /**
+   * Levende tekst: tekstmatrisen foelges grovt, nok til aa vite hvor
+   * teksten staar. Bredden anslaas til en halv skriftstoerrelse per tegn.
+   * Den skal bare plassere teksten ved et element, ikke maale den.
+   */
+  let tm: Mat = ID, tlm: Mat = ID, fsz = 12, lead = 0, tr = 0;
+  let iTekst = false;
+  let biter: string[] = [];
+  const visTekst = (s: string) => {
+    if (!s.trim()) return;
+    const m = mul(tm, cur);
+    const sk = Math.hypot(m[0], m[1]) * fsz;
+    const [x, y] = app(m, 0, 0);
+    levende.push({ x0: x, y0: y - 0.2 * sk, x1: x + 0.5 * sk * s.length, y1: y + 0.8 * sk,
+      farge: farge.slice(), tekst: s, usynlig: tr === 3 || tr === 7 });
+  };
   let cur = ctm;
   let tall: number[] = [];
   let navn: string | null = null;
@@ -62,10 +80,30 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
     if (!Number.isNaN(n) && t !== "") { tall.push(n); continue; }
     if (t.startsWith("/")) { navn = t.slice(1); continue; }
     if (t.startsWith("(")) {
-      tekst.push(t.slice(1, -1).replace(/\\([()\\])/g, "$1"));
+      const s = t.slice(1, -1).replace(/\\([0-7]{1,3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)))
+        .replace(/\\([()\\])/g, "$1");
+      tekst.push(s);
+      if (iTekst) biter.push(s);
       continue;
     }
+    if (t.startsWith("<") && t !== "<<" && iTekst) { biter.push("?"); continue; }
     const op = t;
+    if (op === "BT") { iTekst = true; tm = ID; tlm = ID; biter = []; }
+    else if (op === "ET") { iTekst = false; }
+    else if (op === "Tf" && tall.length >= 1) fsz = tall[tall.length - 1];
+    else if (op === "Tr" && tall.length >= 1) tr = tall[tall.length - 1];
+    else if (op === "TL" && tall.length >= 1) lead = tall[tall.length - 1];
+    else if (op === "Tm" && tall.length >= 6) { tm = tall.slice(-6) as Mat; tlm = tm; }
+    else if ((op === "Td" || op === "TD") && tall.length >= 2) {
+      const [tx, ty] = tall.slice(-2);
+      if (op === "TD") lead = -ty;
+      tlm = mul([1, 0, 0, 1, tx, ty], tlm); tm = tlm;
+    }
+    else if (op === "T*") { tlm = mul([1, 0, 0, 1, 0, -lead], tlm); tm = tlm; }
+    else if (op === "Tj" || op === "TJ" || op === "'" || op === "\"") {
+      if (op !== "Tj" && op !== "TJ") { tlm = mul([1, 0, 0, 1, 0, -lead], tlm); tm = tlm; }
+      visTekst(biter.join("")); biter = [];
+    }
     if (op === "q") { stabel.push(cur); fargeStabel.push(farge); }
     else if (op === "Q") { cur = stabel.pop() ?? cur; farge = fargeStabel.pop() ?? farge; }
     else if (op === "k" && tall.length >= 4) farge = tall.slice(-4);
@@ -99,7 +137,7 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
           const mArr: any = dict.lookup(PDFName.of("Matrix"));
           const fm: Mat = mArr?.asArray ? (mArr.asArray().map((v: any) => v.asNumber()) as Mat) : ID;
           gaa(streamText(form), dict.lookup(PDFName.of("Resources"), PDFDict) ?? res,
-              mul(fm, cur), dybde + 1, ut, tekst);
+              mul(fm, cur), dybde + 1, ut, tekst, levende);
         } else if (sub === "/Image") {
           // et bilde fyller enhetsruta i gjeldende matrise
           punkt(0, 0); punkt(1, 0); punkt(1, 1); punkt(0, 1); lukk();
@@ -122,7 +160,8 @@ export async function lesLett(pdf: Uint8Array): Promise<LettLest> {
   else data = streamText(c);
   const bokser: Boks[] = [];
   const tekst: string[] = [];
-  gaa(data, res, ID, 0, bokser, tekst);
+  const levende: TekstBoks[] = [];
+  gaa(data, res, ID, 0, bokser, tekst, levende);
   const mb: any = page.node.MediaBox();
   const v = mb?.asArray ? mb.asArray().map((x: any) => x.asNumber()) : [0, 0, 595, 842];
   const side: Boks = { x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
@@ -136,7 +175,7 @@ export async function lesLett(pdf: Uint8Array): Promise<LettLest> {
     if (b.x1 < side.x0 || b.x0 > side.x1 || b.y1 < side.y0 || b.y0 > side.y1) return false;
     return (b.x1 - b.x0) * (b.y1 - b.y0) < 0.5 * sideAreal;
   });
-  return { tekst: tekst.join(""), bokser: rene, side };
+  return { tekst: tekst.join(""), bokser: rene, side, levende };
 }
 
 /** Klyngedeling: forst vannrette band, sa kolonner i hvert band. */

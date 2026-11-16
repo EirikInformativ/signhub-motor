@@ -118,6 +118,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx skjultkutt.ts # ingen skjulte baner (Form XObject/klipp) i produksjonsfilene
     npx tsx ingenfjernet.ts # motoren fjerner aldri noe fra logoen
     npx tsx bilfarger.ts  # bilens deler er ikke dekor, svart logo-flate er ikke lakk
+    npx tsx lagbunn.ts    # ytterkanten i bunn, levende tekst og doble merker meldes
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -189,6 +190,33 @@ koden. `test/bilfarger.ts` vokter e-expert og proace2.
 **Feilsignatur:** baklykter, hjul, takrails eller hele taket som
 elementer, eller en logo som mister en flate som har en annen farge enn
 bilen.
+
+**Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
+Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom
+ikke med: på 309916 manglet «XL-BYGG Osterøy» på to av tre steder, mens
+pinnen ved siden av kom med. `lesBilskisse` returnerer nå `levendeTekst`,
+og tekst ved et element gir merknaden «er IKKE med i skjaerefilene».
+Rutinen er at designerne konverterer tekst til kurver før korrekturen
+lagres.
+
+**Samme merke sett fra to visninger meldes, det fjernes ikke.** Panseret
+står både i front (978 x 55, sammentrykt) og topp (227 x 978). Like
+farger i likt forhold, lik lengste side og kortere andre side gir
+`sammeSom` på elementet og en merknad. Appen bør la brukeren ta det ut.
+
+**Fargen som danner ytterkanten legges i bunn som ett helt stykke**
+(Eirik 16.11.2026). XL-logoen: gullramme, svart rute, gull XL. Med svart
+i bunn må ytterkanten av ruten treffe innerkanten av rammen, og en
+forskyvning gir en tynn stripe. Med gull i bunn som rektangel og svart
+oppå med XL skåret ut finnes ingen slik kant. Regelen i `kjorJobb`: et
+lag som ikke er nederst, men som med hullene fylt dekker minst
+`RAMME_FYLL = 0.995` av motivet, flyttes til bunnen. Den lagvise
+oppbyggingen fyller det så. Det synlige bildet er det samme.
+`test/lagbunn.ts` vokter dette og de to reglene over.
+
+**Feilsignatur:** to like kanter som må treffe hverandre ved montering,
+tekst som mangler ved siden av et element, eller samme merke skåret to
+ganger.
 
 **Det som meldes og det som utleveres må være det samme.** Platen fjernes
 fra `farger` **og** fra element-PDF-en. `farger` er derfor nøyaktig
