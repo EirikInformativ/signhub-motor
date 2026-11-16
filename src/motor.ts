@@ -764,7 +764,20 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * oppspenning er verdt malt i folie.
          */
         const merForbruk = (samlet - hver) / 1000;   // meter rull
-        if (merForbruk <= (b.oppspenningM ?? OPPSPENNING_M)) {
+        /**
+         * Arket faar ikke bli lengre for en folie de flyttede elementene
+         * ikke bruker selv (Eirik 16.11.2026, 309916 XL-Bygg). PROFF i sort
+         * ble lagt inn paa arket med gull og sort: 0,48 m mer folie totalt,
+         * innenfor oppspenningens 0,5 m, men gullet ble 0,88 m lengre og
+         * laa ubrukt under PROFF. Metrene havner paa en folie som kan
+         * koste mange ganger mer. Siden den lille gruppens folier er en
+         * ekte delmengde, finnes det alltid en slik folie, saa regelen er:
+         * slaa bare sammen naar arket ikke blir lengre.
+         */
+        const lengdeStor = kostnad(grupper.get(stor)!) / c.size;
+        const lengdeSamlet = samlet / c.size;
+        const blirLengre = lengdeSamlet > lengdeStor + 1;
+        if (!blirLengre && merForbruk <= (b.oppspenningM ?? OPPSPENNING_M)) {
           grupper.set(stor, [...grupper.get(stor)!, ...grupper.get(liten)!]);
           grupper.delete(liten);
           slaattSammen = true;

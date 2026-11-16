@@ -68,11 +68,19 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
   }
 
   // hele jobben: ingen to filer med samme navn (den ene skrev over den andre)
-  const hel: any = await kjorJobb({ jobb: "309916 e-expert", linjer: lest.elementer.filter((e) => !e.sammeSom)
+  // oppspenningM 10: sammenslaaing er «billig» i meter, saa bare regelen om
+  // at arket ikke faar bli lengre for gullet holder PROFF paa eget ark
+  const hel: any = await kjorJobb({ jobb: "309916 e-expert", oppspenningM: 10, linjer: lest.elementer.filter((e) => !e.sammeSom)
     .map((e) => ({ navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall,
       folier: e.farger.map((f) => f.hex === "#D7C46D" ? GULL : SORT) })) } as any);
   const navn = hel.filer.map((f: any) => f.navn);
   sjekk(new Set(navn).size === navn.length, `hele jobben: unike filnavn (${navn.join(" | ")})`);
+  // PROFF (bare sort) skal ikke gjoere gullarket lengre. Sammenslaatt ble
+  // gullet 2,27 m mot 1,39 m paa eget ark (Eirik 16.11.2026).
+  const gullArk = hel.ark.find((a: any) => a.foliekode === "900-991");
+  const sortAlene = hel.ark.filter((a: any) => a.foliekode === "751-070");
+  sjekk(sortAlene.length === 2 && gullArk.lengdeMm < 1600,
+    `PROFF paa eget sort ark, gullet ikke forlenget (gull ${gullArk.lengdeMm.toFixed(0)} mm, sorte ark ${sortAlene.length})`);
 
   const tekst = lest.levendeTekst.filter((t) => t.element && /Osterøy/.test(t.tekst));
   sjekk(tekst.length === 2, `levende tekst «XL-BYGG Osterøy» meldt ved 2 elementer (fikk ${tekst.length})`);

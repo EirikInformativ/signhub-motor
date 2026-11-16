@@ -453,6 +453,19 @@ bredere enn 1260 mm, eller kommer ytterste kiss-cut utenfor 1215 mm, lages
 summa-varianten med doble regmarks i stedet, med advarsel. Det er ikke et
 valg i skjemaet.
 
+**Et ark slås bare sammen med et annet når det ikke blir lengre.** En
+gruppe med færre folier (PROFF i bare sort) kan legges inn på arket til en
+gruppe med flere (XL-boksene i gull og sort) for å spare en oppspenning.
+Men da blir arket lengre også for gullet, som PROFF ikke bruker: på 309916
+ble gullet 2,27 m mot 1,39 m, mens totalen bare økte 0,48 m og slapp
+gjennom oppspenningsgrensen på 0,5 m. Metrene havner på en folie som kan
+koste mange ganger mer. Regelen (Eirik 16.11.2026): slå bare sammen når de
+flyttede elementene får plass uten at arket blir lengre. `test/lagbunn.ts`
+prøver dette med `oppspenningM: 10`, der bare denne regelen holder PROFF
+på eget ark.
+
+Like filnavn (samme folie og prosess på to ark) får `del 1 av 2`.
+
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er
 `Kiss+thru` på primærfargen og `Kiss` på fargene som legges oppå.
