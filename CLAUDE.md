@@ -604,8 +604,8 @@ hele jobben fra 5,55 til 4,26 m. `test/kiatest.ts` vokter det.
 skjærer hver linje i fila, uansett farge, så to linjer ved siden av
 hverandre blir skåret to ganger. Elementene er én bane hver: fylt med
 skjermfargen (foliens hex som `rg`) og streket i CutContour i samme `B*`.
-På ark med thru-cut skjærer rammen ut hvert element, så kiss-boksen rett
-utenfor er tatt bort der. Den står bare på ark uten thru-cut.
+Kiss-boksen uten fyll rundt hvert thru-cut-element står (Eirik
+16.11.2026: den skal ikke fjernes); bare rene thru-ark har ingen.
 
 **Ark med bare hele stykker er bare thru-cut** (Eirik 16.11.2026, Kia PV5:
 stripestykkene i grønt). Er arket én folie, og hvert element er én hel,
@@ -616,8 +616,9 @@ linje. Ingen ramme, ingen kiss, ingen bleed, og ingen regmarks, fordi det
 bare er én oppgave på summaen. Prosess i filnavnet er `Thru`.
 `test/kiatest.ts` og `test/skjultkutt.ts` (en hel sirkel) vokter det.
 
-**Feilsignatur:** to linjer ved siden av hverandre rundt et element, eller
-regmarks og kiss på et ark med bare hele stripestykker.
+**Feilsignatur:** et element tegnet to ganger (en fylt og en streket kopi),
+manglende kiss-boks rundt thru-cut-elementene, eller regmarks og kiss på et
+ark med bare hele stripestykker.
 
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er

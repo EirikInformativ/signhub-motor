@@ -235,13 +235,9 @@ export async function byggProduksjonsfil(
    * ikke vaere der. Plassen blir staaende, for alle foliene ma ha samme
    * oppsett for a ligge i register.
    */
-  /**
-   * Paa ark med thru-cut skjaerer thru-cut-rammen allerede ut hvert
-   * element. En kiss-boks rett utenfor ville vaert en dobbel linje, og wild
-   * skjaerer hver linje i fila, uansett farge (Eirik 16.11.2026: «maa ikke
-   * legges doble linjer»). Boksen legges derfor bare paa ark uten thru-cut.
-   */
-  for (const p of valg.thruCut || valg.kunThru ? [] : ark.plasseringer) {
+  // kiss-boksen (uten fyll) rundt hvert element staar ogsaa paa ark med
+  // thru-cut (Eirik 16.11.2026). Bare rene thru-ark (kunThru) har ingen.
+  for (const p of valg.kunThru ? [] : ark.plasseringer) {
     if (!harForm[p.id]) continue;
     const k = geo.boksKiss;
     if (p.kiss) { ops.push(ringOps(p.kiss, ytop)); continue; }
