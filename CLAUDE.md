@@ -618,6 +618,21 @@ bare er én oppgave på summaen. Metoden heter **Appliser+thru** (Eirik
 elementene. Arket er feltet: elementene pluss `APPLISER_OVERMAAL_MM = 20`
 på hver side, rundet opp til hele 10 mm, og feltet står i filnavnet,
 `<jobb> Appliser+thru <folie> felt <B>x<L> 100%.pdf`, og i PDF-tittelen.
+
+**Kant i kant, én linje** (Eirik 16.11.2026, prinsippet fra
+klebemerke-skillen). To rette sider som ligger mot hverandre trenger ikke
+mellomrom: Appliser+thru-elementene legges kant i kant, og linjen de deler
+skjæres én gang. `retteSider` i `src/motor.ts` finner sidene formen ligger
+langs (innenfor `RETT_SIDE_MM = 0.5`, minst `RETT_SIDE_ANDEL = 0.97` av
+lengden), og retter dem helt ut til rammen, utover, aldri innover, så to
+kanter aldri ligger en brøkdel av en millimeter fra hverandre. `pakkKant` i
+`src/pakk.ts` gir rette sider 0 og andre sider halvt gap. Fila har bare
+skjærelinjer i Through: `slaaSammenLinjer` i `src/produksjonsfil.ts` slår
+sammen stykker på samme linje, setter dem sammen til sammenhengende baner
+og tar dem i nærmeste-nabo-rekkefølge. Ingen fylte baner, for wild skjærer
+dem også. Kia: stripearket fra 500 til 460 mm. `test/kiatest.ts` feiler
+hvis en linje skjæres to ganger eller to parallelle linjer ligger under
+2 mm fra hverandre.
 `test/kiatest.ts` og `test/skjultkutt.ts` (en hel sirkel) vokter det.
 
 **Feilsignatur:** et element tegnet to ganger (en fylt og en streket kopi),

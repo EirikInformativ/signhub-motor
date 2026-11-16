@@ -65,6 +65,9 @@ const TEKST_GLIPPE_MM = 3;
 const TEKST_PASS_MM = 10;
 /** overmaal paa hver side av feltet som appliseres foer thru-cut */
 const APPLISER_OVERMAAL_MM = 20;
+/** en side er rett naar formen ligger innenfor RETT_SIDE_MM av den langs minst RETT_SIDE_ANDEL av lengden; da rettes den helt ut */
+const RETT_SIDE_MM = 0.5;
+const RETT_SIDE_ANDEL = 0.97;
 /** hull smalere enn dette i snitt kan ingen kniv skjaere: tegnefeil */
 const GLIPPE_MM = 0.1;
 
@@ -299,6 +302,26 @@ function heltKonveks(f: MultiPoly): boolean {
   const as = Math.abs(arealRing([...skall, skall[0]]));
   return as > 0 && a / as >= 0.99;
 }
+/**
+ * Hvilke sider av rammen formen ligger rett langs: [venstre, hoeyre, bunn,
+ * topp]. En side er rett naar kantene som ligger paa den (innenfor
+ * RETT_SIDE_MM) dekker minst RETT_SIDE_ANDEL av den.
+ */
+function retteSider(f: MultiPoly, b: [number, number, number, number], skala: number): [boolean, boolean, boolean, boolean] {
+  const tol = (RETT_SIDE_MM * MM) / skala;
+  const dekket = [0, 0, 0, 0];
+  for (const poly of f) for (const r of poly) for (let i = 0; i < r.length - 1; i++) {
+    const [x0, y0] = r[i], [x1, y1] = r[i + 1];
+    if (Math.abs(x0 - b[0]) < tol && Math.abs(x1 - b[0]) < tol) dekket[0] += Math.abs(y1 - y0);
+    if (Math.abs(x0 - b[2]) < tol && Math.abs(x1 - b[2]) < tol) dekket[1] += Math.abs(y1 - y0);
+    if (Math.abs(y0 - b[1]) < tol && Math.abs(y1 - b[1]) < tol) dekket[2] += Math.abs(x1 - x0);
+    if (Math.abs(y0 - b[3]) < tol && Math.abs(y1 - b[3]) < tol) dekket[3] += Math.abs(x1 - x0);
+  }
+  const H = b[3] - b[1], W = b[2] - b[0];
+  return [dekket[0] >= RETT_SIDE_ANDEL * H, dekket[1] >= RETT_SIDE_ANDEL * H,
+          dekket[2] >= RETT_SIDE_ANDEL * W, dekket[3] >= RETT_SIDE_ANDEL * W];
+}
+
 function arealRing(r: [number, number][]): number {
   let s = 0;
   for (let i = 0; i < r.length - 1; i++) s += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
@@ -994,9 +1017,26 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const kunThru = folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && heltKonveks(e.deler[0].flate));
     const geo: Geo = { ...grunngeo, foliebredde, skjaerebredde, ...(kunThru ? { bleed: 0 } : {}) };
 
+    /**
+     * Kant i kant krever at sidene er helt rette: to linjer som avviker
+     * en brøkdel av en millimeter er nettopp kniven i nesten samme spor. En
+     * side som ligger innenfor RETT_SIDE_MM av rammen, rettes derfor helt ut
+     * til rammen. Det flytter kanten utover, aldri innover: det legges til
+     * folie, ingenting trekkes fra.
+     */
+    if (kunThru) for (const e of gruppe) {
+      const d = e.deler[0];
+      const tol = (RETT_SIDE_MM * MM) / e.skala, b = e.bbox;
+      const sider = retteSider(d.flate, b, e.skala);
+      d.flate = d.flate.map((poly) => poly.map((r) => r.map(([x, y]) => [
+        sider[0] && Math.abs(x - b[0]) < tol ? b[0] : sider[1] && Math.abs(x - b[2]) < tol ? b[2] : x,
+        sider[2] && Math.abs(y - b[1]) < tol ? b[1] : sider[3] && Math.abs(y - b[3]) < tol ? b[3] : y,
+      ] as [number, number])));
+    }
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
+      ...(kunThru ? { sider: retteSider(e.deler[0].flate, e.bbox, e.skala) } : {}),
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);

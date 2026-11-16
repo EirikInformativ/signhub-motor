@@ -82,8 +82,33 @@ import { hentBaner } from "../src/uttrekk";
   if (thru.length) {
     const t = await innhold(thru[0]);
     const maling = t.split("\n").filter((l) => /^(f|f\*|S|s|B|B\*|b|b\*)$/.test(l));
-    sjekk(maling.length > 0 && maling.every((l) => l === "B*") && /\/CS0 CS/.test(t),
-      `thru-fila har bare elementene, fylt og streket i Through: ingen regmarks, ramme eller kiss (${[...new Set(maling)].join(", ")})`);
+    sjekk(maling.length > 0 && maling.every((l) => l === "S") && /\/CS0 CS/.test(t) && !/\/CS1 CS\n1 SCN\n[\d.]+ w\n[\d.]/.test(t),
+      `Appliser+thru-fila har bare skjaerelinjer i Through: ingen fyll, regmarks, ramme eller kiss (${[...new Set(maling)].join(", ")})`);
+    /**
+     * Kant i kant (Eirik 16.11.2026, prinsippet fra klebemerkene): ingen
+     * linjestykker paa samme linje som overlapper, og ingen parallelle
+     * linjer naermere enn 2 mm. Kniven gaar aldri i samme spor to ganger.
+     */
+    const st: number[][] = [];
+    for (const bane of t.split("\nS\n")) {
+      const p = [...bane.matchAll(/([\d.]+) ([\d.]+) [ml]\n/g)].map((m) => [+m[1] / 2.8346, +m[2] / 2.8346]);
+      for (let i = 0; i < p.length - 1; i++) st.push([...p[i], ...p[i + 1]]);
+    }
+    let dobbel = 0;
+    for (let i = 0; i < st.length; i++) for (let j = i + 1; j < st.length; j++) {
+      const [a0, a1, a2, a3] = st[i], [b0, b1, b2, b3] = st[j];
+      const la = Math.hypot(a2 - a0, a3 - a1), lb = Math.hypot(b2 - b0, b3 - b1);
+      if (la < 5 || lb < 5) continue;
+      const ux = (a2 - a0) / la, uy = (a3 - a1) / la;
+      if (Math.abs(ux * (b3 - b1) / lb - uy * (b2 - b0) / lb) > 0.01) continue;          // ikke parallelle
+      const avst = Math.abs(-uy * (b0 - a0) + ux * (b1 - a1));
+      if (avst > 2) continue;
+      const t0 = ux * (b0 - a0) + uy * (b1 - a1), t1 = ux * (b2 - a0) + uy * (b3 - a1);
+      const over = Math.min(la, Math.max(t0, t1)) - Math.max(0, Math.min(t0, t1));
+      if (over > 1) dobbel++;
+    }
+    sjekk(dobbel === 0, `kant i kant: ingen linje skjaeres to ganger og ingen parallelle linjer under 2 mm (${dobbel})`);
+    sjekk(r.ark.some((a: any) => /kant i kant/.test(a.strategi)), "stripestykkene ligger kant i kant");
   }
   // kiss-boksen uten fyll rundt hvert thru-cut-element skal staa (Eirik 16.11.2026)
   for (const f of r.filer.filter((f: any) => / Kiss\+thru /.test(f.navn))) {

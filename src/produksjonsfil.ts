@@ -70,6 +70,12 @@ export interface Motiv {
    * Naar det finnes, kan rammen foelge formen (se ramme.ts).
    */
   omriss?: MultiPoly;
+  /**
+   * Hvilke sider som er helt rette langs elementets ramme, i elementets egen
+   * retning: [venstre, hoeyre, bunn, topp]. To rette sider kan ligge kant i
+   * kant uten mellomrom, og skjaerelinjen deres blir én (Appliser+thru).
+   */
+  sider?: [boolean, boolean, boolean, boolean];
 }
 
 export interface Plassering {
@@ -178,9 +184,25 @@ export async function byggProduksjonsfil(
   const ytop = (v: number) => H - v * MM;
   const ops: string[] = [];
 
+  /**
+   * Appliser+thru: bare skjaerelinjer, slaatt sammen (Eirik 16.11.2026,
+   * prinsippet fra klebemerkene). Elementer som ligger kant i kant deler
+   * linje, og den skjaeres én gang. Ingen fylte baner, for wild skjaerer
+   * hver bane i fila, ogsaa en fylt kopi under linjene.
+   */
+  if (valg.kunThru) {
+    ops.push(`/OC /L1 BDC\nq\n/CS0 CS\n1 SCN\n${f4(geo.strek)} w\n`);
+    for (const bane of slaaSammenLinjer(motiver, ark, geo)) {
+      let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+      for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+      ops.push(o + "S\n");
+    }
+    ops.push("Q\nEMC\n");
+  }
+
   // Design
   ops.push("/OC /L0 BDC\nq\n");
-  for (const p of ark.plasseringer) {
+  for (const p of valg.kunThru ? [] : ark.plasseringer) {
     if (!harForm[p.id]) continue;
     const m = motiver[p.id];
     const b = m.bbox, s = m.skala;
@@ -295,4 +317,89 @@ export async function byggProduksjonsfil(
                  `${ark.arklengde.toFixed(1)} mm. ${ark.plasseringer.length} elementer.`);
   doc.setProducer("SignHub");
   return doc.save();
+}
+
+
+type Pkt = [number, number];
+/**
+ * Alle kantene til elementene, i mm paa arket (y nedover), som rette
+ * stykker. Kanter som ligger paa samme linje og overlapper, slaas sammen til
+ * ett stykke, saa kniven aldri gaar i samme spor to ganger.
+ */
+export function slaaSammenLinjer(motiver: Motiv[], ark: Ark, geo: Geo): Pkt[][] {
+  const kanter: [Pkt, Pkt][] = [];
+  for (const p of ark.plasseringer) {
+    const m = motiver[p.id];
+    const b = m.bbox, k = m.skala / MM, bl = geo.bleed;
+    const til = ([X, Y]: number[]): Pkt => p.rotated
+      ? [p.x + bl + (b[3] - Y) * k, p.y + p.h - bl - (X - b[0]) * k]
+      : [p.x + bl + (X - b[0]) * k, p.y + p.h - bl - (Y - b[1]) * k];
+    for (const poly of m.flate) for (const r of poly) {
+      for (let i = 0; i < r.length - 1; i++) {
+        const a = til(r[i]), c = til(r[i + 1]);
+        if (Math.hypot(c[0] - a[0], c[1] - a[1]) > 1e-6) kanter.push([a, c]);
+      }
+    }
+  }
+  // grupper paa linje: retning (vinkel mod 180) og avstand fra origo
+  const grupper = new Map<string, { ux: number; uy: number; d: number; iv: [number, number][] }>();
+  for (const [a, c] of kanter) {
+    let ux = c[0] - a[0], uy = c[1] - a[1];
+    const l = Math.hypot(ux, uy); ux /= l; uy /= l;
+    if (ux < -1e-9 || (Math.abs(ux) < 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
+    const d = -uy * a[0] + ux * a[1];
+    const nokkel = `${Math.round(Math.atan2(uy, ux) * 1e4)}|${Math.round(d * 100)}`;
+    const g = grupper.get(nokkel) ?? { ux, uy, d, iv: [] };
+    const t0 = ux * a[0] + uy * a[1], t1 = ux * c[0] + uy * c[1];
+    g.iv.push([Math.min(t0, t1), Math.max(t0, t1)]);
+    grupper.set(nokkel, g);
+  }
+  const ut: [Pkt, Pkt][] = [];
+  for (const g of grupper.values()) {
+    g.iv.sort((x, y) => x[0] - y[0]);
+    const slaatt: [number, number][] = [];
+    for (const [t0, t1] of g.iv) {
+      const sist = slaatt[slaatt.length - 1];
+      if (sist && t0 <= sist[1] + 1e-3) sist[1] = Math.max(sist[1], t1);
+      else slaatt.push([t0, t1]);
+    }
+    const punkt = (t: number): Pkt => [g.ux * t - g.uy * g.d, g.uy * t + g.ux * g.d];
+    for (const [t0, t1] of slaatt) ut.push([punkt(t0), punkt(t1)]);
+  }
+  /**
+   * Stykkene settes sammen til sammenhengende baner der de moetes, saa
+   * kniven ikke loefter mellom hver bit av en bue. Banene tas i
+   * naermeste-nabo-rekkefoelge fra nullpunktet, saa kutteren ikke kjoerer
+   * tomt fram og tilbake.
+   */
+  const n = (p: Pkt) => `${Math.round(p[0] * 100)}|${Math.round(p[1] * 100)}`;
+  const ved = new Map<string, number[]>();
+  ut.forEach(([a, c], i) => { for (const q of [a, c]) (ved.get(n(q)) ?? ved.set(n(q), []).get(n(q))!).push(i); });
+  const brukt = new Array(ut.length).fill(false);
+  const baner: Pkt[][] = [];
+  let her: Pkt = [0, 0];
+  for (;;) {
+    // naermeste ubrukte stykke
+    let best = -1, bestD = Infinity, snu = false;
+    ut.forEach(([a, c], i) => {
+      if (brukt[i]) return;
+      const da = Math.hypot(a[0] - her[0], a[1] - her[1]), dc = Math.hypot(c[0] - her[0], c[1] - her[1]);
+      if (da < bestD) { bestD = da; best = i; snu = false; }
+      if (dc < bestD) { bestD = dc; best = i; snu = true; }
+    });
+    if (best < 0) break;
+    brukt[best] = true;
+    const bane: Pkt[] = snu ? [ut[best][1], ut[best][0]] : [ut[best][0], ut[best][1]];
+    for (;;) {
+      const ende = bane[bane.length - 1];
+      const neste = (ved.get(n(ende)) ?? []).find((i) => !brukt[i]);
+      if (neste === undefined) break;
+      brukt[neste] = true;
+      const [a, c] = ut[neste];
+      bane.push(n(a) === n(ende) ? c : a);
+    }
+    baner.push(bane);
+    her = bane[bane.length - 1];
+  }
+  return baner;
 }

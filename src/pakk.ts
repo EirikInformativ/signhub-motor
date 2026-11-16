@@ -136,6 +136,18 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
   if (!best) throw new Error("Fant ingen gyldig pakking.");
 
   /**
+   * Kant i kant (Eirik 16.11.2026, prinsippet fra klebemerkene): to rette
+   * sider som ligger mot hverandre trenger ikke mellomrom. De legges kant i
+   * kant, og linjen skjaeres én gang. Bare sider som er rette faar 0;
+   * de andre beholder halve gapet hver, saa mellomrommet mot en skraa kant
+   * aldri blir mindre enn gap/2.
+   */
+  if (motiver.length && motiver.every((m) => m.sider)) {
+    const k = pakkKant(motiver, items, brukbar, geo.gap, tillatRotasjon);
+    if (k && k.h < best.h + 1e-6) best = k;
+  }
+
+  /**
    * Rammer som foelger formen, med rett bunn (Eirik 16.11.2026). Pakkes paa
    * et hoeydeprofil. Gir det ikke kortere ark enn rektanglene, brukes
    * rektanglene: formede rammer er bare verdt det naar de sparer folie.
@@ -290,6 +302,50 @@ function pakkProfil(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, 
       if (!best || h < best.h - 1e-9) best = { ut, h, navn: `formede rammer, ${st.navn}${r ? ", med rotasjon" : ", uten rotasjon"}` };
     }
   }
+  }
+  return best;
+}
+
+
+/**
+ * Kant-i-kant-pakking. Hver boks faar halvt gap paa sidene som ikke er
+ * rette og 0 paa de rette, og pakkes uten gap. Sidene foelger rotasjonen
+ * slik Design-laget roterer (90 grader: topp til venstre, bunn til hoeyre,
+ * hoeyre til topp, venstre til bunn).
+ */
+function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number, rot: boolean):
+  { ut: Plassering[]; h: number; navn: string } | null {
+  const pad = (rett: boolean) => (rett ? 0 : gap / 2);
+  const retning = (m: Motiv, r: boolean) => {
+    const [v, h, b, t] = m.sider!;
+    // [venstre, hoeyre, topp, bunn] paa arket (y nedover)
+    const s = r ? [t, b, h, v] : [v, h, t, b];
+    return { pl: pad(s[0]), pr: pad(s[1]), pt: pad(s[2]), pb: pad(s[3]) };
+  };
+  let best: { ut: Plassering[]; h: number; navn: string } | null = null;
+  for (const st of STRATEGIER) {
+    for (const r of rot ? [true, false] : [false]) {
+      const sky = new Skyline(brukbar);
+      const ut: Plassering[] = [];
+      let ok = true;
+      for (const it of items.slice().sort(st.key)) {
+        const m = motiver[it.id];
+        let valgt: { x: number; y: number; w: number; h: number; rr: boolean; top: number; p: ReturnType<typeof retning> } | null = null;
+        for (const rr of r ? [false, true] : [false]) {
+          const p = retning(m, rr);
+          const w = (rr ? it.h : it.w) + p.pl + p.pr, h = (rr ? it.w : it.h) + p.pt + p.pb;
+          const f = sky.finn(w, h, false);
+          if (f && (!valgt || f.top < valgt.top - 1e-9)) valgt = { x: f.x, y: f.y, w, h, rr, top: f.top, p };
+        }
+        if (!valgt) { ok = false; break; }
+        sky.legg(valgt.x, valgt.y, valgt.w, valgt.h);
+        ut.push({ x: valgt.x + valgt.p.pl, y: valgt.y + valgt.p.pt,
+          w: valgt.rr ? it.h : it.w, h: valgt.rr ? it.w : it.h, rotated: valgt.rr, id: it.id });
+      }
+      if (!ok || !ut.length) continue;
+      const h = Math.max(...ut.map((p) => p.y + p.h));
+      if (!best || h < best.h - 1e-9) best = { ut, h, navn: `kant i kant, ${st.navn}${r ? ", med rotasjon" : ", uten rotasjon"}` };
+    }
   }
   return best;
 }
