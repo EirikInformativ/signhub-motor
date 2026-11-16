@@ -230,8 +230,9 @@ bokstaver. Dette legger til folie, det trekker aldri fra.
 16.11.2026). XL-boksen og PROFF er ett merke, men skjæres hver for seg.
 `leggPassmerker` i `src/bilmotor.ts` finner par i samme visning, side om
 side med luft under halve høyden, i omtrent samme høyde og med en felles
-farge. Det høyeste elementet får en strimmel på 5 mm i den mørkeste
-felles fargen langs underkanten av naboen, 5 mm inn under den. Montøren
+farge. Det høyeste elementet får en loddrett strimmel, 10 mm bred, i den
+mørkeste felles fargen ved naboens nærmeste kant og i naboens fulle høyde,
+5 mm inn under naboen og 5 mm utenfor (Eirik: loddrett, ikke vannrett). Montøren
 legger naboen der strimmelen viser og river strimmelen av. Elementer som
 telles i flere eksemplarer får ikke passmerke. Feltet `passmerke` på
 elementet og en merknad sier fra.

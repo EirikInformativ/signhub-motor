@@ -359,8 +359,8 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   };
 }
 
-/** passmerkets hoyde og hvor langt det gaar inn under nabo-elementet, i ekte mm */
-const PASS_HOYDE_MM = 5;
+/** passmerkets bredde og hvor langt det gaar inn under nabo-elementet, i ekte mm */
+const PASS_BREDDE_MM = 10;
 const PASS_OVERLAPP_MM = 5;
 
 /**
@@ -377,8 +377,9 @@ const PASS_OVERLAPP_MM = 5;
  * samme hoeyde, og har en farge felles. Det er kjennetegnet paa noe som
  * er delt for aa spare folie.
  *
- * Strimmelen legges langs underkanten av naboen, fra baererens kant og
- * PASS_OVERLAPP_MM inn under naboen, i den felles fargen. Baereren er det
+ * Strimmelen er loddrett (Eirik 16.11): den staar ved naboens naermeste
+ * kant, i naboens fulle hoyde, PASS_OVERLAPP_MM inn under naboen og like
+ * mye utenfor, i den felles fargen. Baereren er det
  * hoeyeste elementet, som monteres foerst. Elementer som telles i flere
  * eksemplarer faar ikke passmerke, siden naboen bare staar ved ett av dem.
  */
@@ -412,9 +413,13 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
     const kilde = (baner.get(nabo) ?? []).find((x) => x.fyll && baneHex(x.farge) === hex)
       ?? (baner.get(baerer) ?? []).find((x) => x.fyll && baneHex(x.farge) === hex);
     if (!kilde) continue;
-    const h = tilTegnet(PASS_HOYDE_MM), inn = tilTegnet(PASS_OVERLAPP_MM);
-    const y0 = rN.y0, y1 = rN.y0 + h;
-    const [x0, x1] = rN.x0 > rB.x1 ? [rB.x1, rN.x0 + inn] : [rN.x1 - inn, rB.x0];
+    // Loddrett strimmel ved naboens naermeste kant, i naboens fulle hoyde:
+    // PASS_OVERLAPP_MM inn under naboen og like mye utenfor, saa den kan
+    // gripes og rives av. Den viser baade hvor kanten skal staa og hvor
+    // topp og bunn skal ligge (Eirik 16.11: loddrett, ikke vannrett).
+    const inn = tilTegnet(PASS_OVERLAPP_MM), ut = tilTegnet(PASS_BREDDE_MM - PASS_OVERLAPP_MM);
+    const y0 = rN.y0, y1 = rN.y1;
+    const [x0, x1] = rN.x0 > rB.x1 ? [rN.x0 - ut, rN.x0 + inn] : [rN.x1 - inn, rN.x1 + ut];
     const strimmel: Bane = {
       segs: [{ t: "m", p: [x0, y0] }, { t: "l", p: [x1, y0] }, { t: "l", p: [x1, y1] },
              { t: "l", p: [x0, y1] }, { t: "h" }] as any,
@@ -428,12 +433,12 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
     baerer.breddeMm = Math.round(((per.bbox[2] - per.bbox[0]) / MM) * malestokk);
     baerer.hoydeMm = Math.round(((per.bbox[3] - per.bbox[1]) / MM) * malestokk);
     baerer.farger = per.lag.map((l) => ({ hex: l.hex, andel: l.andel }));
-    baerer.passmerke = { mot: nabo.navn, hex, lengdeMm: Math.round(((x1 - x0) / MM) * malestokk) };
+    baerer.passmerke = { mot: nabo.navn, hex, lengdeMm: Math.round(((y1 - y0) / MM) * malestokk) };
     baner.set(baerer, nye);
     brukt.add(a); brukt.add(b);
-    merknader.push(`${baerer.navn}: passmerke lagt inn mot ${nabo.navn}, en strimmel ` +
-      `${PASS_HOYDE_MM} mm hoy i ${hex} langs underkanten, ${PASS_OVERLAPP_MM} mm inn under ` +
-      "naboen. Montoeren legger naboen der strimmelen viser, og river strimmelen av.");
+    merknader.push(`${baerer.navn}: passmerke lagt inn mot ${nabo.navn}, en loddrett strimmel ` +
+      `${PASS_BREDDE_MM} mm bred i ${hex} ved naboens kant og i naboens hoyde, ${PASS_OVERLAPP_MM} mm ` +
+      "inn under den. Montoeren legger naboen der strimmelen viser, og river strimmelen av.");
   }
 }
 
