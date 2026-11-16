@@ -53,7 +53,12 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
     .map((e) => ({ navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall, folier: e.farger.map((f) => KART[f.hex]) })) } as any);
   const sum = r.ark.reduce((a: number, k: any) => a + k.lengdeMm, 0) / 1000;
   sjekk(r.advarsler.some((a: string) => /skjoetet i 3 stykker/.test(a)), "den lange stripen er skjoetet i 3");
-  sjekk(sum < 7, `samlet folie under 7 m (${sum.toFixed(2)} m)`);
+  sjekk(r.advarsler.some((a: string) => /1543 mm lang stripe er skjoetet i 2/.test(a)), "stripen bak er ogsaa skjoetet (i 2)");
+  sjekk(sum < 6, `samlet folie under 6 m (${sum.toFixed(2)} m)`);
+  // skraadde elementer rettes opp, kursiv tekst (ÅTG, åtg.no) roeres ikke
+  const rettet = l.merknader.filter((m) => /rettet opp/.test(m));
+  sjekk(rettet.length >= 2 && rettet.every((m) => /dekor 2 del [23]/.test(m)),
+    `stripene og teksten paa siden rettet opp, ikke logoene (${rettet.map((m) => m.split(":")[0]).join(", ")})`);
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: Kia PV5 leses riktig");

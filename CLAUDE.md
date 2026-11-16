@@ -231,8 +231,21 @@ gir kortere ark.** Kandidat i `kjorJobb`: ett lag, én flate uten hull,
 lengre enn det som får plass på tvers og minst `STRIPE_FORHOLD = 8`
 ganger så lang som høy. Den deles i like lange stykker med `SKJOT_MM = 10`
 overlapp, gruppen pakkes begge veier, og den korteste vinner. Begge
-utfallene meldes. Kia PV5: fra 11,9 m til 6,3 m folie.
-`test/kiatest.ts` vokter begge reglene.
+utfallene meldes. Alle kandidatene skjøtes først, så prøves hver av dem
+hel igjen: prøvd én og én ble stripen bak (1,5 m) skåret hel fordi
+stripene på sidene (2,6 m) uansett gjorde arket langt.
+
+**Skrådde elementer rettes opp i produksjonsfila** (Eirik 16.11.2026).
+Designerne skrår elementer for å følge karosserilinjene. `rettOpp` i
+`src/bilmotor.ts` leser helningen av de rette kantene: hver rett kant
+stemmer med sin lengde på avviket fra nærmeste akse, og den sterkeste
+vinkelen innenfor `RETT_MAKS_GRAD = 6` er helningen. Minste ramme brukes
+ikke, fordi kursiv tekst (ÅTG, åtg.no) gir mindre ramme dreid 5 til 8°
+uten å være skrådd. Elementet roteres når vinkelen er minst 0,5° og
+rammen krymper minst 3 %, og det meldes («Monteres med samme helning som
+på skissen»). Kia PV5: stripene og teksten på sidene rettet opp 0,5 til
+0,9°, og samlet folie fra 11,9 m til 5,5 m med deling og skjøting.
+`test/kiatest.ts` vokter reglene.
 
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom

@@ -730,14 +730,17 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const lengde = (es: Elem[]) => pakkFritt(es.map((e) => ({ navn: e.navn, flate: [], bbox: e.bbox,
       skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall })),
       { ...grunngeo, foliebredde: fb, skjaerebredde: sk }).arklengde;
-    const ny: Elem[] = [];
-    let skjoet = false;
+    /*
+     * Foerst skjoetes alle kandidatene, saa proeves hver av dem hel igjen.
+     * Proeves de en og en mot de andre hele, skjuler den lengste stripen
+     * gevinsten for de kortere: stripen bak paa Kia (1,5 m) ble skaaret hel
+     * fordi stripene paa sidene (2,6 m) uansett gjorde arket langt.
+     */
+    const biterAv = new Map<Elem, Elem[]>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
       const f = e.deler.length === 1 ? e.deler[0].flate : [];
-      if (!(f.length === 1 && f[0].length === 1 && lang > maksLengde && lang >= STRIPE_FORHOLD * kort)) {
-        ny.push(e); continue;
-      }
+      if (!(f.length === 1 && f[0].length === 1 && lang > maksLengde && lang >= STRIPE_FORHOLD * kort)) continue;
       const n = Math.ceil(lang / maksLengde);
       const langsX = e.breddeMm >= e.hoydeMm;
       const [b0, b1] = langsX ? [e.bbox[0], e.bbox[2]] : [e.bbox[1], e.bbox[3]];
@@ -756,18 +759,24 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
           deler: [{ ...e.deler[0], flate: bit }] });
       }
-      const hel = lengde(g), delt = lengde([...g.filter((x) => x !== e), ...biter]);
-      if (delt < hel) {
-        ny.push(...biter); skjoet = true;
-        advarsler.push(`${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${n} stykker ` +
-          `med ${SKJOT_MM} mm overlapp, for arket blir da ${((hel - delt) / 1000).toFixed(2)} m kortere.`);
-      } else {
-        ny.push(e);
-        advarsler.push(`${e.navn}: ${lang.toFixed(0)} mm lang stripe skjaeres hel; skjoeting ville ` +
-          "ikke gjort arket kortere.");
-      }
+      biterAv.set(e, biter);
     }
-    if (skjoet) grupper.set(nokkel, ny);
+    if (!biterAv.size) continue;
+    const hel = new Set<Elem>();
+    const sett = () => g.flatMap((e) => biterAv.has(e) && !hel.has(e) ? biterAv.get(e)! : [e]);
+    for (const e of biterAv.keys()) {
+      const delt = lengde(sett());
+      hel.add(e);
+      const helL = lengde(sett());
+      if (!(helL <= delt)) hel.delete(e);
+    }
+    for (const [e, biter] of biterAv) {
+      const lang = Math.max(e.breddeMm, e.hoydeMm);
+      advarsler.push(hel.has(e)
+        ? `${e.navn}: ${lang.toFixed(0)} mm lang stripe skjaeres hel; skjoeting ville ikke gjort arket kortere.`
+        : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
+    }
+    grupper.set(nokkel, sett());
   }
 
   /**

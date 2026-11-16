@@ -246,7 +246,11 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     merknader.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
       "(tekst og striper som bare staar ved siden av hverandre).");
   }
-  for (const { o, valgte } of arbeid) {
+  for (const { o, valgte: raa } of arbeid) {
+    const rett = rettOpp(raa);
+    const valgte = rett.baner;
+    if (rett.vinkel) merknader.push(`${o.vis} ${o.navn}: rettet opp ${Math.abs(rett.vinkel).toFixed(1).replace(".", ",")}° i ` +
+      `produksjonsfila (sparer ${rett.spartProsent.toFixed(0)} % ramme). Monteres med samme helning som paa skissen.`);
     // ogsaa her skal en feil si hvilket element den gjelder, ikke bare hvilken farge
     const lesTrygt = async (bytes: Uint8Array) => {
       try {
@@ -441,6 +445,89 @@ export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
         x1: Math.max(...xs.map((x) => x.boks.x1)), y1: Math.max(...xs.map((x) => x.boks.y1)) } } as Bane;
     });
   });
+}
+
+
+/** minste helning som rettes opp, og minste gevinst i ramme */
+const RETT_MIN_GRAD = 0.5;
+const RETT_MAKS_GRAD = 6;
+const RETT_MIN_GEVINST = 0.03;
+
+/**
+ * Retter opp et element som er skraadd for aa foelge karosseriet (Eirik
+ * 16.11.2026). Paa Kia PV5 heller stripen 1,6°, og den 40 mm hoye stripen
+ * fikk en ramme paa 106 mm. Rettet opp skjaeres den i sin egen hoyde.
+ *
+ * Vinkelen er den som gir minst omsluttende rektangel, soekt innenfor
+ * ±RETT_MAKS_GRAD. Elementet roteres bare naar vinkelen er minst
+ * RETT_MIN_GRAD og rammen krymper minst RETT_MIN_GEVINST; en logo som
+ * staar rett, eller nesten rett, roeres ikke.
+ */
+function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: number } {
+  const pts: [number, number][] = [];
+  for (const b of baner) for (const s of b.segs as any[]) { if (s.p) pts.push(s.p); if (s.a) pts.push(s.a, s.b, s.c); }
+  if (pts.length < 3) return { baner, vinkel: 0, spartProsent: 0 };
+  const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length, cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+  const flate = (grad: number) => {
+    const r = (grad * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) {
+      const X = c * (x - cx) - sn * (y - cy), Y = sn * (x - cx) + c * (y - cy);
+      if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+    }
+    return (x1 - x0) * (y1 - y0);
+  };
+  const null0 = flate(0);
+  /*
+   * Vinkelen leses av de rette kantene, ikke av minste ramme: kursiv tekst
+   * (ÅTG, åtg.no) gir mindre ramme naar den dreies 5 til 8°, men den er
+   * ikke skraadd. Hver rett kant stemmer med sin lengde paa avviket fra
+   * naermeste akse; den sterkeste vinkelen innenfor ±RETT_MAKS_GRAD er
+   * helningen. Bunnen paa bokstaver og kantene paa en stripe er det som
+   * teller.
+   */
+  const stemmer = new Map<number, number>();
+  let total = 0;
+  for (const bb of baner) {
+    let forrige: [number, number] | null = null;
+    for (const sg of bb.segs as any[]) {
+      if (sg.t === "m") { forrige = sg.p; continue; }
+      if (sg.t === "l" && forrige) {
+        const dx = sg.p[0] - forrige[0], dy = sg.p[1] - forrige[1], len = Math.hypot(dx, dy);
+        if (len > 0) {
+          let g = (Math.atan2(dy, dx) * 180) / Math.PI;
+          g = ((g % 90) + 90) % 90; if (g > 45) g -= 90;
+          total += len;
+          if (Math.abs(g) <= RETT_MAKS_GRAD) { const k = Math.round(g * 10); stemmer.set(k, (stemmer.get(k) ?? 0) + len); }
+        }
+      }
+      if (sg.p) forrige = sg.p; else if (sg.c) forrige = sg.c;
+    }
+  }
+  let mode = 0, modeV = -1;
+  for (const [k] of stemmer) {
+    let v = 0; for (let d = -2; d <= 2; d++) v += stemmer.get(k + d) ?? 0;
+    if (v > modeV) { modeV = v; mode = k; }
+  }
+  let sv = 0, sw = 0;
+  for (let d = -2; d <= 2; d++) { const w = stemmer.get(mode + d) ?? 0; sv += w * (mode + d) / 10; sw += w; }
+  // rotasjon som opphever helningen
+  const best = sw > 0 && modeV >= 0.2 * total ? -sv / sw : 0;
+  const bestA = flate(best);
+  const gevinst = 1 - bestA / Math.max(null0, 1e-9);
+  if (Math.abs(best) < RETT_MIN_GRAD || gevinst < RETT_MIN_GEVINST) return { baner, vinkel: 0, spartProsent: 0 };
+  const r = (best * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
+  const rot = (p: [number, number]): [number, number] =>
+    [cx + c * (p[0] - cx) - sn * (p[1] - cy), cy + sn * (p[0] - cx) + c * (p[1] - cy)];
+  const ut = baner.map((b) => {
+    const segs = (b.segs as any[]).map((s) => s.t === "c" ? { t: "c", a: rot(s.a), b: rot(s.b), c: rot(s.c) }
+      : s.p ? { t: s.t, p: rot(s.p) } : s);
+    const q: [number, number][] = [];
+    for (const s of segs) { if (s.p) q.push(s.p); if (s.a) q.push(s.a, s.b, s.c); }
+    return { ...b, segs, boks: { x0: Math.min(...q.map((p) => p[0])), y0: Math.min(...q.map((p) => p[1])),
+      x1: Math.max(...q.map((p) => p[0])), y1: Math.max(...q.map((p) => p[1])) } } as Bane;
+  });
+  return { baner: ut, vinkel: best, spartProsent: gevinst * 100 };
 }
 
 /** delene innenfor denne avstanden (ekte mm) kan hoere sammen */
