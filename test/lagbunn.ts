@@ -66,6 +66,13 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
     sjekk(rr.advarsler.some((a: string) => /danner ytterkanten/.test(a)), `${b} x ${h}: gull lagt i bunn ogsaa ved siden av PROFF`);
   }
 
+  // hele jobben: ingen to filer med samme navn (den ene skrev over den andre)
+  const hel: any = await kjorJobb({ jobb: "309916 e-expert", linjer: lest.elementer.filter((e) => !e.sammeSom)
+    .map((e) => ({ navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall,
+      folier: e.farger.map((f) => f.hex === "#D7C46D" ? GULL : SORT) })) } as any);
+  const navn = hel.filer.map((f: any) => f.navn);
+  sjekk(new Set(navn).size === navn.length, `hele jobben: unike filnavn (${navn.join(" | ")})`);
+
   const tekst = lest.levendeTekst.filter((t) => t.element && /Osterøy/.test(t.tekst));
   sjekk(tekst.length === 2, `levende tekst «XL-BYGG Osterøy» meldt ved 2 elementer (fikk ${tekst.length})`);
   sjekk(lest.merknader.some((m) => /IKKE med i skjaerefilene/.test(m)), "levende tekst gir tydelig merknad");
