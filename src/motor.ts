@@ -52,6 +52,8 @@ export const MIN_DETALJ = 1.5;
  * bare brukes til a finne hva som ligger *under* fargene over.
  */
 const SPOR_MM = 4;
+/** et lag som med hullene fylt dekker saa mye av motivet, danner ytterkanten */
+const RAMME_FYLL = 0.995;
 /** Under denne blir det krevende, men mulig. */
 export const ADVAR_DETALJ = 3.0;
 /** Hva en oppspenning og en kjoring er verdt, malt i meter rull. */
@@ -433,6 +435,41 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
             (a, b) => pc.union(a as any, b as any) as MultiPoly,
             deler[i].flate, deler[j].flate);
           deler.splice(j, 1);
+        }
+      }
+
+      /**
+       * Fargen som danner ytterkanten legges i bunn som ett helt stykke.
+       *
+       * Eirik 16.11.2026, XL-logoen paa 309916: gullramme, svart rute
+       * innenfor, gull XL oppaa. Tegnet slik ligger den svarte ruten i bunn
+       * og gullet oppaa i to deler, og hele ytterkanten av den svarte maa
+       * treffe innerkanten av gullrammen. Bommer monteringen, kommer en tynn
+       * stripe fram paa en eller to sider. Legges gullet i bunn som et helt
+       * rektangel og den svarte oppaa med XL skaaret ut, finnes ingen slik
+       * kant: gullet ligger under alt, og en liten forskyvning gjoer bare
+       * rammen litt bredere paa den ene siden.
+       *
+       * Kjennetegn: et lag som ikke er nederst, men som med hullene fylt
+       * dekker hele motivet. Det flyttes til bunnen. Den lagvise
+       * oppbyggingen under fyller det deretter til et helt stykke, og
+       * laget som var nederst faar utskjaeringene fra fargene som ligger
+       * oppaa det. Ingenting forsvinner: det synlige bildet er det samme.
+       */
+      if ((l.lagvis ?? true) && deler.length > 1) {
+        const ytre = (f: MultiPoly) => f.map((p) => [p[0]]) as MultiPoly;
+        const alleFylt = kuttTrygt(l.navn, "ytterkant",
+          (...f) => pc.union(...(f as any[])) as MultiPoly, ...deler.map((d) => ytre(d.flate)));
+        const helt = areal(alleFylt);
+        const dekker = (d: Del) => areal(ytre(d.flate)) >= RAMME_FYLL * helt;
+        const bunn = deler[deler.length - 1];
+        const k = dekker(bunn) ? -1 : deler.findIndex((d) => dekker(d));
+        if (k >= 0) {
+          const [d] = deler.splice(k, 1);
+          deler.push(d);
+          advarsler.push(`${l.navn}: ${fargenavn(d)} danner ytterkanten og er lagt i bunn ` +
+            "som ett helt stykke. Fargene over ligger innenfor den, saa ingen kant maa treffe " +
+            "en annen kant ved montering.");
         }
       }
 

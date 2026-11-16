@@ -10,7 +10,8 @@
  * Ingenting her peker ut dekoren for hand. Reglene staar i dekorfinn.ts.
  */
 import { lesLett, tolk } from "./bilskisse.ts";
-import { finnDekor } from "./dekorfinn.ts";
+import type { TekstBoks } from "./bilskisse.ts";
+import { finnDekor, BILFARGER } from "./dekorfinn.ts";
 import { hentBaner, skrivPdf } from "./uttrekk.ts";
 import type { Bane } from "./uttrekk.ts";
 import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
@@ -85,6 +86,12 @@ export interface BilElement {
    * slik at listen holder folge med lagene i PDF-en.
    */
   bakgrunn?: BilFarge;
+  /**
+   * satt naar elementet trolig er det samme merket som et annet, sett fra
+   * en annen visning (for eksempel panseret i front- og toppvisning).
+   * Elementet er ikke fjernet. Appen boer la brukeren ta det ut.
+   */
+  sammeSom?: string;
 }
 
 export interface BilSkisseLest {
@@ -102,6 +109,11 @@ export interface BilSkisseLest {
   /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
   forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
   merknader: string[];
+  /**
+   * levende tekst i visningene. Den er ikke med i skjaerefilene. element
+   * er satt naar teksten staar ved et dekorelement.
+   */
+  levendeTekst: { tekst: string; vis: string; element: string | null }[];
 }
 
 export interface BilValg {
@@ -156,6 +168,16 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   }
   const funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
   const merknader = [...s.merknader, ...funn.merknader];
+  const levendeTekst = finnLevendeTekst(lett.levende, funn, malestokk);
+  for (const t of levendeTekst.filter((x) => x.element)) merknader.push(
+    `${t.element}: teksten «${t.tekst}» er levende tekst og er IKKE med i skjaerefilene. ` +
+    "Konverter teksten til kurver i skissen og les den inn paa nytt.");
+  // annen tekst i visningene kan vaere dekor eller arkinformasjon: en samlet melding
+  const loes = levendeTekst.filter((x) => !x.element);
+  if (loes.length) merknader.push(
+    `${loes.length} tekstlinjer i visningene er levende tekst og er ikke med, ` +
+    `blant annet ${loes.slice(0, 3).map((x) => `«${x.tekst.slice(0, 30)}»`).join(", ")}. ` +
+    "Er noe av dette dekor, maa det konverteres til kurver i skissen.");
 
   /**
    * Bilens farge i skissen: den fyllfargen som dekker mest. Paa begge
@@ -282,6 +304,33 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   }
   if (!elementer.length) merknader.push("Ingen dekor a produsere i denne skissen.");
 
+  /**
+   * Samme merke sett fra to visninger. Paa 309916 e-expert staar XL PROFF
+   * paa panseret baade i frontvisningen (978 x 55, sett skraatt ovenfra og
+   * derfor sammentrykt) og i toppvisningen (227 x 978). Det er ett merke.
+   * Kjennetegn: samme farger i samme forhold, samme lengste side, men den
+   * andre siden er kortere fordi flaten heller bort fra oss. To like merker
+   * paa to steder har begge sidene like og telles allerede som antall.
+   *
+   * Motoren fjerner det ikke selv. Den peker ut det minste som trolig samme
+   * som det stoerste og sier fra, saa et menneske tar det ut.
+   */
+  for (const a of elementer) for (const b of elementer) {
+    if (a === b || a.vis === b.vis || a.sammeSom || b.sammeSom) continue;
+    if (a.farger.length !== b.farger.length) continue;
+    const likFarge = a.farger.every((f) => {
+      const g = b.farger.find((x) => x.hex === f.hex);
+      return g && Math.abs(g.andel - f.andel) < 0.015;
+    });
+    const la = Math.max(a.breddeMm, a.hoydeMm), lb = Math.max(b.breddeMm, b.hoydeMm);
+    const ka = Math.min(a.breddeMm, a.hoydeMm), kb = Math.min(b.breddeMm, b.hoydeMm);
+    if (!likFarge || Math.abs(la - lb) / Math.max(la, lb) > 0.02 || ka >= kb * 0.8) continue;
+    a.sammeSom = b.navn;
+    merknader.push(`${a.navn} (${a.breddeMm} x ${a.hoydeMm} mm) ser ut til a vaere samme merke som ` +
+      `${b.navn} (${b.breddeMm} x ${b.hoydeMm} mm), sett fra en annen vinkel. ` +
+      "Ta det ut av jobben hvis det stemmer, ellers skjaeres det to ganger.");
+  }
+
   const forside = tegnBilSkisse(baner, {
     jobb: v.jobb, malestokk,
     visninger: funn.visninger.map((x) => ({ x0: x.x0, y0: x.y0, x1: x.x1, y1: x.y1 })),
@@ -293,8 +342,54 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     malestokk, malestokkTekst: s.malestokkTekst, avvikProsent: s.avvikProsent,
     lengdeM: s.lengdeM, breddeM: s.breddeM, hoydeM: s.hoydeM,
     visninger: funn.visninger.map((x) => ({ navn: x.navn, breddeEkteMm: x.breddeEkteMm, hoydeEkteMm: x.hoydeEkteMm })),
-    elementer, forside, merknader,
+    elementer, forside, merknader, levendeTekst,
   };
+}
+
+/**
+ * Levende tekst i en visning.
+ *
+ * Motoren leser bare baner. Tekst som ikke er konvertert til kurver har
+ * ingen baner og blir derfor ikke med, uten at noe ellers sier fra. Paa
+ * 309916 e-expert manglet «XL-BYGG Osteroy» og telefonnummeret paa to av
+ * tre steder: pinnen kom med, teksten ved siden av ikke. Det er det samme
+ * som aa fjerne noe fra logoen, og det skal aldri skje i stillhet.
+ *
+ * Tekst ved et dekorelement knyttes til det. Annen tekst i en visning
+ * meldes ogsaa, for den kan vaere dekor uten noe annet rundt seg. Tekst
+ * utenfor visningene er arkinformasjon, og usynlig tekst (Tr 3) er ikke
+ * tegnet. Tekst i skissens egne farger er maalpiler og merker.
+ */
+function finnLevendeTekst(levende: TekstBoks[], funn: ReturnType<typeof finnDekor>, malestokk: number) {
+  const NAER = 3 * MM;
+  const inni = (b: TekstBoks, o: { x0: number; y0: number; x1: number; y1: number }, pad = 0) =>
+    (b.x0 + b.x1) / 2 >= o.x0 - pad && (b.x0 + b.x1) / 2 <= o.x1 + pad &&
+    (b.y0 + b.y1) / 2 >= o.y0 - pad && (b.y0 + b.y1) / 2 <= o.y1 + pad;
+  const egne = new Set(BILFARGER);
+  const fn = (f?: number[]) => (f ?? []).map((x) => x.toFixed(2)).join(",");
+  const aktuelle = levende.filter((t) => !t.usynlig && !egne.has(fn(t.farge)) &&
+    funn.visninger.some((v) => inni(t, v)));
+  // samle bokstaver til linjer: samme grunnlinje og tett paa hverandre
+  const linjer: TekstBoks[][] = [];
+  for (const t of [...aktuelle].sort((a, b) => b.y0 - a.y0 || a.x0 - b.x0)) {
+    const l = linjer.find((g) => {
+      const s = g[g.length - 1];
+      return Math.abs(s.y0 - t.y0) < 0.5 && t.x0 - s.x1 < (s.y1 - s.y0) * 1.5;
+    });
+    if (l) l.push(t); else linjer.push([t]);
+  }
+  void malestokk;
+  return linjer.map((g) => {
+    const r = { x0: Math.min(...g.map((t) => t.x0)), y0: Math.min(...g.map((t) => t.y0)),
+                x1: Math.max(...g.map((t) => t.x1)), y1: Math.max(...g.map((t) => t.y1)) };
+    const midt = { ...g[0], ...r };
+    const avstand = (oo: { x0: number; y0: number; x1: number; y1: number }) => Math.hypot(
+      Math.max(0, oo.x0 - r.x1, r.x0 - oo.x1), Math.max(0, oo.y0 - r.y1, r.y0 - oo.y1));
+    const o = funn.omraader.find((oo) => avstand(oo) <= NAER);
+    const v = funn.visninger.find((vv) => inni(midt, vv));
+    return { tekst: g.map((t) => t.tekst).join("").replace(/\s+/g, " ").trim(),
+             vis: v?.navn ?? "ukjent", element: o ? `${o.vis} ${o.navn}` : null };
+  });
 }
 
 /**
