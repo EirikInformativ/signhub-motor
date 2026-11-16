@@ -25,6 +25,7 @@
 import * as pcModul from "polygon-clipping";
 import * as clipperModul from "clipper-lib";
 import type { Bane } from "./uttrekk.ts";
+import { konvekstSkall } from "./ramme.ts";
 const pc: any = (pcModul as any).default ?? pcModul;
 const ClipperLib: any = (clipperModul as any).default ?? clipperModul;
 
@@ -38,6 +39,8 @@ const GJENNOMSYN = 0.05;
 const GJENNOMSYN_TYKK = 0.25;
 /** knotter i det synlige under 2 x 0,5 x KLIPP_MIN_MM = 20 mm faar bare 10 mm rundt seg */
 const KNOTT_ANDEL = 0.5;
+/** en knott er mindre enn 4 x KLIPP_MIN_MM² = 1600 mm² (tappen ved speilfoten paa Kia er rundt 700) */
+const KNOTT_MAKS = 4;
 
 /** Segmentene som ringer, kurvene delt i rette biter. */
 export function ringerAv(segs: any[]): Ring[] {
@@ -108,6 +111,8 @@ export interface KlippResultat {
   gjennomsyn: number;
   /** baner som er forlenget inn under en bildel */
   forlenget: number;
+  /** baner der smaa synlige knotter ved kanten er kuttet bort */
+  knotter: number;
 }
 
 /**
@@ -119,7 +124,7 @@ export interface KlippResultat {
 export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) => boolean,
                                 luft: number, min: number): KlippResultat {
   const indeks = new Map(alle.map((b, i) => [b, i]));
-  let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0;
+  let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0, knotter = 0;
   const korte = new Set<Bane>();
   const ut = dekor.map((b) => {
     if (!b.fyll || b.strek) return b;
@@ -162,18 +167,34 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     try { kort = areal(pc.difference(skjult, utvid(synlig, min))) < a0 * 1e-4; } catch { /* bare melding */ }
     if (kort) korte.add(b);
     /**
-     * Det tillatte: det synlige utvidet med `luft`. Smaa knotter i det
-     * synlige (en flekk sort ved speilfoten paa Kia) ga en halvsirkel paa
-     * 50 mm radius oppaa A-en (Eirik 16.11.2026: «hvor kommer halvsirkelen
-     * fra?»). Det synlige aapnes derfor foerst (krympes og vokser tilbake
-     * med KNOTT_ANDEL x min), og knottene faar bare KNOTT_ANDEL x min rundt
-     * seg. Alt som synes er fortsatt med.
+     * Det tillatte: det synlige utvidet med `luft`, og saa det konvekse
+     * skallet rundt det, saa kuttlinjen blir rett (Eirik 16.11.2026: «forstaar
+     * ikke hvorfor ikke disse bare gjoeres bein i toppen»). Utvidet med en
+     * rund kant fikk toppen av A-en en dupp der beina moetes.
+     *
+     * Smaa knotter i det synlige tas ikke med: en flekk sort ved speilfoten
+     * paa Kia ga foerst en halvsirkel paa 50 mm radius, og saa en tapp oppaa
+     * A-en. Det synlige aapnes (krympes og vokser tilbake med KNOTT_ANDEL x
+     * min), og det som forsvinner er en knott naar biten er mindre enn
+     * KNOTT_MAKS x min². Stoerre biter er ekte dekor og blir staaende.
      */
     const r = min * KNOTT_ANDEL;
-    let tillatt: any;
+    let grunnlag = synlig;
     try {
       const aapnet = utvid(utvid(synlig, -r), r);
-      tillatt = utenHull(pc.union(utvid(aapnet.length ? aapnet : synlig, luft), utvid(synlig, r)));
+      if (aapnet.length) {
+        const rest = pc.difference(synlig, aapnet);
+        const store = rest.filter((p: any) => areal([p]) >= KNOTT_MAKS * min * min);
+        // avrundede hjoerner fra aapningen er ikke knotter; bare biter som betyr noe meldes
+        if (rest.some((p: any) => { const a = areal([p]); return a < KNOTT_MAKS * min * min && a > 0.25 * min * min; })) knotter++;
+        grunnlag = store.length ? pc.union(aapnet, store) : aapnet;
+      }
+    } catch { grunnlag = synlig; }
+    let tillatt: any;
+    try {
+      const pkt = utvid(grunnlag, luft).flatMap((poly: any) => poly[0].slice(0, -1) as Pt[]);
+      const skall = konvekstSkall(pkt);
+      tillatt = skall.length > 2 ? [[[...skall, skall[0]]]] : utenHull(utvid(grunnlag, luft));
     } catch { tillatt = utenHull(utvid(synlig, luft)); }
     let ny: any;
     try { ny = pc.intersection(egen, tillatt); } catch { return b; }
@@ -217,5 +238,5 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (korte.has(b)) { korte.delete(b); korte.add(nyBane); }
     return nyBane;
   });
-  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil };
+  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil, knotter };
 }

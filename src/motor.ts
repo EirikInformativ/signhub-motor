@@ -804,10 +804,19 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           : [[[[e.bbox[0] - 1, a], [e.bbox[2] + 1, a], [e.bbox[2] + 1, z], [e.bbox[0] - 1, z], [e.bbox[0] - 1, a]]]];
         const bit = pc.intersection(f as any, rute as any) as MultiPoly;
         const xs = bit.flatMap((p) => p[0].map((q) => q[0])), ys = bit.flatMap((p) => p[0].map((q) => q[1]));
-        const bb: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        /**
+         * Stykkene beholder hele elementets hoeyde paa tvers og faar
+         * rektangulaere rammer (Eirik 16.11.2026: «det er fordel at thrucuten
+         * matcher hverandre slik at det blir enklere aa treffe»). Da ligger
+         * thru-cut-kantene paa begge sider av skjoeten paa samme linje, og
+         * montoeren kan legge stykkene etter kanten.
+         */
+        const bb: [number, number, number, number] = langsX
+          ? [Math.min(...xs), e.bbox[1], Math.max(...xs), e.bbox[3]]
+          : [e.bbox[0], Math.min(...ys), e.bbox[2], Math.max(...ys)];
         biter.push({ ...e, navn: `${e.navn} skjoet ${i + 1} av ${n}`, bbox: bb,
           breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-          deler: [{ ...e.deler[0], flate: bit }], omriss: bit });
+          deler: [{ ...e.deler[0], flate: bit }], omriss: [] });
       }
       biterAv.set(e, biter);
     }

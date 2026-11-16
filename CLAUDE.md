@@ -283,9 +283,13 @@ Små, tynne synlige øyer (under 5 % av største synlige del og tynnere enn
 ikke kuttet. Går dekoren mindre enn `KLIPP_MIN_MM = 20` inn under en
 bildel, **forlenges den** til 50 mm under bildelen, i sin egen retning (en
 liggende stripe blir lengre, ikke tykkere), og det meldes. Lar den seg
-ikke forlenge, meldes det. Små knotter i det synlige (en sort flekk ved
-speilfoten ga en halvsirkel på 50 mm radius) får bare 10 mm rundt seg:
-det synlige åpnes med `KNOTT_ANDEL` før det utvides. `test/klipptest.ts`
+ikke forlenge, meldes det. **Kuttlinjen er rett** (Eirik 16.11.2026:
+«bein i toppen»): det tillatte er det konvekse skallet rundt det synlige
+utvidet med 50 mm, så A-en ikke får en dupp der beina møtes. **Små
+knotter styrer ikke kuttet**: en sort flekk ved speilfoten ga først en
+halvsirkel og så en tapp. Det synlige åpnes med `KNOTT_ANDEL`, og biter som
+forsvinner og er under `KNOTT_MAKS` x 20² mm² (1600 mm²) tas ikke med, med
+merknad. Større biter er dekor og står. `test/klipptest.ts`
 vokter kutt, forlengelse og knotter.
 Dette er ikke et unntak fra «motoren fjerner aldri noe»: alt som synes,
 står. Det meldes med spart areal. `test/kiatest.ts` vokter det.
@@ -591,8 +595,10 @@ for nesten ingenting. Samme kandidatregel som stripene, men med flere
 deler: skjøten legges i glippen (minst `TEKST_GLIPPE_MM = 3`) nærmest
 like lange stykker, og stykket før tar med `TEKST_PASS_MM = 10` av neste
 bokstav som passmerke. Montøren legger neste stykke så bokstaven dekker
-stubben. Kia: tekstarket fra 1273 til 399 mm, hele jobben fra 5,55 til
-4,40 m. `test/kiatest.ts` vokter det.
+stubben. Stykkene beholder hele tekstens høyde og får rektangulære
+rammer, så thru-cut på begge sider av skjøten ligger på samme linje og
+montøren kan treffe etter kanten. Kia: tekstarket fra 1273 til 406 mm,
+hele jobben fra 5,55 til 4,26 m. `test/kiatest.ts` vokter det.
 
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er

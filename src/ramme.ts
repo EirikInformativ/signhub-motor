@@ -66,6 +66,8 @@ export function rammeLokal(omriss: MultiPoly, bbox: [number, number, number, num
    * hjoerne rivner folien, og en lang innbuktning gjoer arket slapt.
    * Rammen er derfor det konvekse skallet rundt formen og den rette bunnen.
    */
+  // bunnen er alltid rett over hele bredden (Eirik 16.11.2026: «glemte at
+  // nedre strek skulle vaere bein»): skallet tar med begge bunnhjoernene
   const skall = konvekstSkall([...ut.flat(), [x0, -bleed], [x1, -bleed]]);
   return skall.length > 2 ? forenkle(skall, 0.05) : null;
 }
