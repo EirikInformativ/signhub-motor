@@ -532,16 +532,28 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * Kravet er bade tynt og lite. Et ekte element som er tynt skal fortsatt
      * meldes som kritisk, ikke fjernes i det stille.
      */
+    /**
+     * Og kravet er ogsa lite i forhold til elementet. Uten det fjernet
+     * regelen hele bokstaver nar en logo ble laget liten: pa «informativ»
+     * ved 25 mm bredde er hver bokstav under 1 mm tykk og under 10 mm², og
+     * hele den hvite teksten forsvant (funnet 16.11.2026). En rest fra
+     * subtraksjonen er en brokdel av elementet; en bokstav er det ikke.
+     * Smaa ekte elementer skal meldes som kritiske, ikke fjernes.
+     */
     const REST_MM = 1.0;
     const REST_MM2 = 10;
+    const REST_ANDEL = 0.005;
     const mmPerPt = (skala * 25.4) / 72;
+    const elementMm2 = areal(kuttet) * mmPerPt * mmPerPt;
     let rester = 0;
     for (const d of deler) {
       const beholdt: MultiPoly = [];
       for (const p of d.flate) {
         const t = (await tynnesteDetalj([p], skala)).tynnesteMm;
         const a2 = areal([p]) * mmPerPt * mmPerPt;
-        if (t > 0 && t < REST_MM && a2 < REST_MM2) { rester++; continue; }
+        if (t > 0 && t < REST_MM && a2 < REST_MM2 && a2 < REST_ANDEL * elementMm2) {
+          rester++; continue;
+        }
         beholdt.push(p);
       }
       d.flate = beholdt;
