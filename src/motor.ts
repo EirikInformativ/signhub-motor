@@ -525,42 +525,29 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const arealCm2 = (areal(kuttet) * skala * skala) / (MM * MM) / 100;
 
     /**
-     * Subtraksjonen mellom lagene etterlater av og til rester: harfine
-     * stykker som verken lar seg luke eller lime. De skal ikke skjaeres, og
-     * de skal ikke dra tynneste detalj ned og utlose falsk alarm.
-     *
-     * Kravet er bade tynt og lite. Et ekte element som er tynt skal fortsatt
-     * meldes som kritisk, ikke fjernes i det stille.
+     * Motoren fjerner ALDRI noe fra en logo (Eirik 16.11.2026: «det er det
+     * verste som kan skje»). Tidligere ble harfine biter under 1 mm og
+     * 10 mm² fjernet som «rester fra subtraksjonen», men regelen kunne ikke
+     * skille rester fra ekte detaljer: pa «informativ» ved 25 mm forsvant
+     * hele den hvite teksten, og ved 50 mm forsvant en detalj. Na blir alt
+     * staende og skjaeres, og tynne biter meldes i stedet, sa operatoren
+     * ser det og kan velge storre format.
      */
-    /**
-     * Og kravet er ogsa lite i forhold til elementet. Uten det fjernet
-     * regelen hele bokstaver nar en logo ble laget liten: pa «informativ»
-     * ved 25 mm bredde er hver bokstav under 1 mm tykk og under 10 mm², og
-     * hele den hvite teksten forsvant (funnet 16.11.2026). En rest fra
-     * subtraksjonen er en brokdel av elementet; en bokstav er det ikke.
-     * Smaa ekte elementer skal meldes som kritiske, ikke fjernes.
-     */
-    const REST_MM = 1.0;
-    const REST_MM2 = 10;
-    const REST_ANDEL = 0.005;
+    const SMAA_MM = 1.0;
+    const SMAA_MM2 = 10;
     const mmPerPt = (skala * 25.4) / 72;
-    const elementMm2 = areal(kuttet) * mmPerPt * mmPerPt;
-    let rester = 0;
+    let smaaBiter = 0;
     for (const d of deler) {
-      const beholdt: MultiPoly = [];
       for (const p of d.flate) {
         const t = (await tynnesteDetalj([p], skala)).tynnesteMm;
         const a2 = areal([p]) * mmPerPt * mmPerPt;
-        if (t > 0 && t < REST_MM && a2 < REST_MM2 && a2 < REST_ANDEL * elementMm2) {
-          rester++; continue;
-        }
-        beholdt.push(p);
+        if (t > 0 && t < SMAA_MM && a2 < SMAA_MM2) smaaBiter++;
       }
-      d.flate = beholdt;
     }
-    if (rester) {
-      advarsler.push(`${l.navn}: ${rester} harfine rester ble fjernet fra ` +
-        `skjaerefilene. De lot seg ikke luke.`);
+    if (smaaBiter) {
+      advarsler.push(`${l.navn}: ${smaaBiter} svaert sma og tynne biter ` +
+        `(under ${SMAA_MM} mm og ${SMAA_MM2} mm²). Ingenting er fjernet, men ` +
+        `de lar seg trolig ikke luke. Vurder storre format.`);
     }
 
     // males pa hver folie for seg, sa en tynn sekundaerfarge ikke gar under radaren

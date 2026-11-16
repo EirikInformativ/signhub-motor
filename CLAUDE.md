@@ -116,22 +116,25 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx kuttvakt.ts   # vakten rundt kuttingen per element og farge
     npx tsx malestokk.ts  # den trykte malestokken er fasit
     npx tsx skjultkutt.ts # ingen skjulte baner (Form XObject/klipp) i produksjonsfilene
+    npx tsx ingenfjernet.ts # motoren fjerner aldri noe fra logoen
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
     mftest    lilla 35,9 %   hvit 21,1 %   sort 43,0 %
     mflag     lag 0 lilla, lag 1 hvit, lag 2 sort   (øverst først)
-    mfjobb    primær 751-040 (lilla), tynneste detalj 3,14 mm, ok
+    mfjobb    primær 751-040 (lilla), tynneste detalj 0,85 mm, kritisk
               tre ark, 660 x 551 mm
+              (0,85 mm er en harfin bit etter lagdelingen. Den fjernes ikke
+              lenger, se «Motoren fjerner aldri noe» under. For 16.11.2026
+              ble den fjernet, og fasit var 3,14 mm.)
     stabel    ok
 
 Sort på 43,0 % beviser at stroke-ekspansjonen virker. Faller tallet til
 rundt 23 %, er streken ikke fanget opp. Faller det til 42,2 %, er nestingen
 tilbake på ett nivå og konturen rundt innmaten er borte.
 
-Tynneste detalj på 3,14 mm er innmaten i `A`, ikke bunnlaget. Faller det til
-2,44 mm, er hullene i bunnlaget ikke fjernet. Faller det til 0,85 mm og
-`kritisk`, er restfjerningen borte.
+Uten den harfine biten er tynneste detalj 3,14 mm, innmaten i `A`.
+Faller det til 2,44 mm, er hullene i bunnlaget ikke fjernet.
 
 Lilla skal være primær, ikke sort. Det finnes ingen regel om at mørkeste
 farge blir primær; øverste farge er primær.
@@ -141,10 +144,17 @@ stykke i bunn. Konturen oppstår som negative space i hvitt. Nestingen i
 `src/pdfbaner.ts` regnes med dybde, ikke ett nivå: like dybde er flate, odde
 dybde er hull. Begrunnelsen står i `prompt-claude-code-martine.md`, regel 9.
 
-Hårfine rester fra subtraksjonen mellom lagene fjernes fra skjærefilene når
-de er **både** tynnere enn 1,0 mm og mindre enn 10 mm², og det legges en
-advarsel. Et ekte element som er tynt skal fortsatt meldes som kritisk.
-Regel 10 i samme dokument.
+**Motoren fjerner aldri noe fra en logo** (Eirik 16.11.2026: «det er det
+verste som kan skje»). Den gamle regel 10 fjernet hårfine biter under
+1,0 mm og 10 mm² som «rester fra subtraksjonen». Den kunne ikke skille
+rester fra ekte detaljer: på «informativ» ved 25 mm forsvant hele den hvite
+teksten, og ved 50 mm forsvant en detalj. Nå står alt igjen og skjæres, og
+slike biter meldes i en advarsel som sier at ingenting er fjernet. Tynneste
+detalj måles på alt, så logoen meldes som kritisk når den er det.
+`test/ingenfjernet.ts` vokter dette.
+
+**Feilsignatur:** en advarsel som sier at noe er «fjernet fra
+skjaerefilene», eller detaljer som mangler i filen i forhold til logoen.
 
 **En bakgrunnsplate er ikke dekor, den er mellomrommet.** Rosen-logoen er
 tegnet på en hvit plate som utgjør 73 % av motivet i 13 biter etter at
