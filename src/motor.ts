@@ -180,6 +180,12 @@ export interface Folie {
    * hvit, skjaeres folien som den er; har den farge, printes den.
    */
   print?: boolean;
+  /**
+   * Helfolieringsfolie (Avery Carmine Red o.l.). Hele felt trenger ikke
+   * appliseres (Eirik 16.11.2026): stykkene thru-cuttes rett langs kanten,
+   * uten kiss og uten luking, og legges paa bilen uten applikasjonstape.
+   */
+  helfoliering?: boolean;
 }
 
 export interface Bestilling {
@@ -685,6 +691,11 @@ interface Elem {
    * og kiss-strek, saa montoeren ser hvor de skal (Eirik 16.11.2026).
    */
   markering?: { flate: MultiPoly; hex: string }[];
+  /**
+   * Printet element (Eirik 16.11.2026, Facebook-merket paa Vito): fargene
+   * som printes, hver for seg. Skjaerelinjen er hele elementet (deler[0]).
+   */
+  trykk?: { flate: MultiPoly; hex: string; spot?: Spot }[];
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -720,6 +731,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
   for (const l of b.linjer) {
     const forleng = await lesForleng(l.pdf);
+    let trykk: Elem["trykk"];
     const spotter = await lesSpot(l.pdf);
     const skjoter = await lesSkjoter(l.pdf);
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
@@ -791,7 +803,23 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * Maales for sammenslaingen under, som er nettopp det som skjuler
        * symptomet ved a gjore de mange lagene til ett.
        */
-      if (deler.length > 1 && new Set(deler.map((d) => d.folie.kode)).size === 1) {
+      /**
+       * Printes flere fargelag paa samme printmedium, er det ett printet
+       * element: fargene printes hver for seg, og skjaerelinjen er hele
+       * elementet (Eirik 16.11.2026: «facebook logo/tekst skal være print»).
+       */
+      const printKode = deler.find((d) => printes(d))?.folie.kode;
+      /**
+       * Printet element (Facebook-logoen paa Vito): hele elementet ligger paa
+       * printmediet. Et enkelt, helt konvekst stykke er Print+thru og
+       * haandteres som foer; alt annet printes med kiss langs formen.
+       */
+      if (printKode && deler.every((d) => d.folie.kode === printKode) &&
+          (deler.length > 1 || !heltKonveks(deler[0].flate))) {
+        trykk = deler.filter((d) => d.folie.kode === printKode && printes(d)).reverse()
+          .map((d) => ({ flate: d.flate, hex: d.hex, ...(d.spot ? { spot: d.spot } : {}) }));
+      }
+      if (deler.length > 1 && new Set(deler.map((d) => d.folie.kode)).size === 1 && !printKode) {
         advarsler.push(
           `${l.navn}: alle ${deler.length} fargelagene har samme foliekode ` +
           `${deler[0].folie.kode}. Motivet skjaeres da som en flate, og ` +
@@ -1038,7 +1066,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
                      bbox: boks, skala,
                      breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
-                     ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}) });
+                     ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}),
+                     ...(trykk?.length ? { trykk } : {}) });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -1367,8 +1396,11 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * Uten kiss trengs heller ingen regmarks, for det er bare én oppgave paa
      * summaen. Ingen bleed: kanten ER kuttet.
      */
-    const kunThru = folier.length === 1 &&
-      gruppe.every((e) => e.deler.length === 1 && (e.thruForm || heltKonveks(e.deler[0].flate)));
+    // helfolieringsfolie: hver flate er selve stykket, ogsaa naar den ikke er konveks
+    const helfol = folier.length === 1 && !!folier[0].helfoliering &&
+      gruppe.every((e) => e.deler.length === 1 && !e.trykk && e.deler[0].flate.every((p) => p.length === 1));
+    const kunThru = helfol || (folier.length === 1 &&
+      gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || heltKonveks(e.deler[0].flate))));
     /**
      * Printet folie: samme tette ark, men med regmarks og utfallende print.
      * Materialet sier om det KAN printes; innholdet avgjoer (Eirik
@@ -1441,7 +1473,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       ark.breddeMm = Math.ceil((x1 - x0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
       ark.arklengde = Math.ceil((y1 - y0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
       ark.regY = []; ark.regBokser = [];
-      if (ark.breddeMm > foliebredde) advarsler.push(`Feltet som skal appliseres er ${ark.breddeMm} mm bredt, ` +
+      if (!helfol && ark.breddeMm > foliebredde) advarsler.push(`Feltet som skal appliseres er ${ark.breddeMm} mm bredt, ` +
         `bredere enn folien (${foliebredde} mm).`);
     }
 
@@ -1471,6 +1503,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         bbox: e.bbox, skala: e.skala, breddeMm: e.breddeMm,
         hoydeMm: e.hoydeMm, antall: e.antall,
         ...(e.thruForm ? { thruForm: e.thruForm } : {}),
+        ...(e.trykk?.length ? { trykk: e.trykk.map((t) => ({ flate: t.flate, fyllOp: rgbOp(t.hex), ...(t.spot ? { spot: t.spot } : {}) })) } : {}),
         // markeringen av det som er lagt tett, bare paa primaerarket
         ...(rolleNr === 0 && e.markering?.length
           ? { markering: e.markering.map((m) => ({ flate: m.flate, fyllOp: rgbOp(m.hex) })) } : {}),
@@ -1495,7 +1528,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        */
       const varianter: { navn: string; valg: ArkValg }[] = kunThru
         ? [{ navn: rolle, valg: { thruCut: true, regmark: regThru, dobleRegmarks: regThru && !wildGar, ytreRamme: false, kunThru: true,
-            print: printThru, ...(spot ? { spot } : {}) } }]
+            print: printThru, ...(helfol ? { helfoliering: true } : {}), ...(spot ? { spot } : {}) } }]
         : rolleNr === 0
         ? [wildGar
             ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
@@ -1510,9 +1543,12 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * staar i navnet, saa produksjonen ser hva som skal appliseres foer
          * fila aapnes.
          */
+        const harTrykk = gruppe.some((e) => e.trykk?.length);
         const prosess = v.valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru")
-          : v.valg.kunThru ? (medKiss ? "Kiss+thru" : "Appliser+thru") : v.valg.thruCut ? "Kiss+thru" : "Kiss";
-        const felt = v.valg.kunThru && !regThru ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
+          : helfol && v.valg.kunThru ? "Thru"
+          : v.valg.kunThru ? (medKiss ? "Kiss+thru" : "Appliser+thru")
+          : harTrykk && v.valg.thruCut ? "Print+kiss+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        const felt = v.valg.kunThru && !regThru && !helfol ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
           navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,

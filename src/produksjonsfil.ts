@@ -16,6 +16,8 @@ import { PDFDocument, PDFName, PDFString, PDFRef } from "pdf-lib";
 import type { MultiPoly } from "./pdfbaner.ts";
 import { skjaereOps, separasjon } from "./skjaereform.ts";
 import { offsetRinger } from "./ramme.ts";
+import * as pcModul from "polygon-clipping";
+const pc: any = (pcModul as any).default ?? pcModul;
 
 export const MM = 72 / 25.4;
 const KAPPA = 0.5522847498307936;
@@ -84,6 +86,11 @@ export interface Motiv {
   thruForm?: MultiPoly;
   /** flater som vises med sitt fyll og kiss-strek (det som er lagt tett) */
   markering?: { flate: MultiPoly; fyllOp: string }[];
+  /**
+   * Printet element: fargene som printes (nederst foerst). flate er da
+   * skjaerelinjen (kiss), og den tegnes bare som strek.
+   */
+  trykk?: { flate: MultiPoly; fyllOp: string; spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } } }[];
 }
 
 export interface Plassering {
@@ -129,6 +136,18 @@ const PRINT_BLEED_MM = 2;
 function utfallende(flate: MultiPoly, d: number): MultiPoly {
   return flate.map((poly) => offsetRinger([poly[0].map(([x, y]) => [x, y] as [number, number])], d, true)
     .map((r) => [...r, r[0]] as [number, number][]));
+}
+
+/** Bare strek i et fargerom (kiss eller thru), i elementets enheter. */
+function strekOpsFlate(flate: MultiPoly, skala: number, cs: string, strek = 0.25): string {
+  let o = `/${cs} CS\n1 SCN\n${(strek / skala).toFixed(6)} w\n`;
+  for (const poly of flate) for (const r of poly) {
+    if (r.length < 3) continue;
+    o += `${f4(r[0][0])} ${f4(r[0][1])} m\n`;
+    for (const q of r.slice(1)) o += `${f4(q[0])} ${f4(q[1])} l\n`;
+    o += "h\nS\n";
+  }
+  return o;
 }
 
 /** Bare fyll, ingen strek: flatene i foliens farge. */
@@ -180,6 +199,8 @@ export interface ArkValg {
   print?: boolean;
   /** spotfargen fyllet skal printes i (fra skissen), ellers skjermfargen */
   spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } };
+  /** helfolieringsfolie: bare thru-cut langs stykkene, ingen applisering */
+  helfoliering?: boolean;
 }
 
 export async function byggProduksjonsfil(
@@ -205,6 +226,20 @@ export async function byggProduksjonsfil(
       ]))
     : separasjon(doc, valg.spot.navn, valg.spot.cmyk);
   if (valg.spot) folieFyll = `/CS2 cs\n${f4(valg.spot.tint)} scn`;
+  // spotfargene i printede elementer: ett fargerom per navn (CS3, CS4, ...)
+  const ekstraCs: [string, PDFRef][] = [];
+  const csFor = (sp: NonNullable<ArkValg["spot"]>) => {
+    const finnes = ekstraCs.findIndex(([n]) => n === sp.navn);
+    if (finnes >= 0) return `CS${3 + finnes}`;
+    const ref = sp.lab
+      ? doc.context.register(doc.context.obj([PDFName.of("Separation"), PDFName.of(sp.navn),
+          doc.context.obj([PDFName.of("Lab"), doc.context.obj({ WhitePoint: sp.lab.wp, Range: [-128, 127, -128, 127] })]),
+          doc.context.register(doc.context.obj({ FunctionType: 2, Domain: [0, 1], C0: [100, 0, 0], C1: sp.lab.c1, N: 1,
+            Range: [0, 100, -128, 127, -128, 127] }))]))
+      : separasjon(doc, sp.navn, sp.cmyk);
+    ekstraCs.push([sp.navn, ref]);
+    return `CS${3 + ekstraCs.length - 1}`;
+  };
 
   const ocg = (navn: string): PDFRef =>
     doc.context.register(doc.context.obj({
@@ -228,6 +263,25 @@ export async function byggProduksjonsfil(
     if (!harForm[i]) return;   // elementet finnes ikke i denne folien
     // Appliser+thru: bare fyll, saa det synes hvilken farge det er. Linjene
     // skjaeres fra Thru-cut-laget, slaatt sammen (Eirik 16.11.2026).
+    /**
+     * Printet element: fargene printes hver for seg, nederst foerst, og de
+     * fargede lagene printes PRINT_BLEED_MM ut forbi skjaerelinjen (bare
+     * utover, ikke inn i det hvite, som er mediet selv). Skjaerelinjen er
+     * hele elementet, som kiss i CutContour, uten fyll.
+     */
+    if (m.trykk?.length && !valg.kunThru) {
+      const bl = (PRINT_BLEED_MM * MM) / m.skala;
+      let alle: MultiPoly = [];
+      try { alle = pc.union(...(m.trykk.map((t) => t.flate).concat([m.flate]) as [any])); } catch { alle = m.flate; }
+      let o = "";
+      for (const t of m.trykk) {
+        let fl: MultiPoly = t.flate;
+        try { fl = pc.union(t.flate as any, pc.difference(utfallende(t.flate, bl) as any, alle as any)) as MultiPoly; } catch { /* uten utfall */ }
+        o += fyllOps(fl, t.spot ? `/${csFor(t.spot)} cs\n${f4(t.spot.tint)} scn` : t.fyllOp);
+      }
+      formOps[i] = o + strekOpsFlate(m.flate, m.skala, "CS1");
+      return;
+    }
     formOps[i] = valg.kunThru
       ? fyllOps(valg.print ? utfallende(m.flate, (PRINT_BLEED_MM * MM) / m.skala) : m.flate, folieFyll)
       : skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
@@ -392,6 +446,7 @@ export async function byggProduksjonsfil(
   cs.set(PDFName.of("CS0"), csThrough);
   cs.set(PDFName.of("CS1"), csCut);
   if (csSpot) cs.set(PDFName.of("CS2"), csSpot);
+  ekstraCs.forEach(([, ref], i) => cs.set(PDFName.of(`CS${3 + i}`), ref));
   res.set(PDFName.of("ColorSpace"), cs);
   const props = doc.context.obj({});
   props.set(PDFName.of("L0"), oc[0]);
@@ -408,7 +463,9 @@ export async function byggProduksjonsfil(
   }));
 
   const medKiss = motiver.some((m) => m.thruForm);
-  doc.setTitle(valg.kunThru && (valg.print || medKiss)
+  doc.setTitle(valg.helfoliering
+    ? `${jobb} | Thru | ${folieTekst} | Helfolieringsfolie: thru-cut langs stykkene, ingen applisering`
+    : valg.kunThru && (valg.print || medKiss)
     ? `${jobb} | ${valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru") : "Kiss+thru"} | ${folieTekst}` +
       (valg.spot ? ` | print i ${valg.spot.navn}` : "")
     : valg.kunThru
