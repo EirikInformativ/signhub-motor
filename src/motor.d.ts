@@ -56,6 +56,15 @@ export interface Folie {
    * selv: lyse folier ville forsvunnet mot hvitt papir.
    */
   graaBunn?: boolean;
+  /**
+   * Hva folien koster per m², med laminat naar den printes. Naar prisen
+   * finnes, regner motoren ut om fargen skal ut av oppsettet og legges tett
+   * med bare thru-cut (bitene legges over for hand). Utfallet meldes i
+   * `advarsler` med regnestykket.
+   */
+  prisM2?: number;
+  /** fargen printes paa folien (f.eks. hvit refleks). Tette ark blir da Print+thru med regmarks. */
+  print?: boolean;
 }
 
 /**
@@ -91,6 +100,10 @@ export interface Bestilling {
   folie?: Folie;
   linjer: Linje[];
   felt?: Felt;
+  /** timekost i produksjon til regnestykket for tett ark. Standard 900 kr. */
+  timekostKr?: number;
+  /** minutter det tar aa legge én bit over for hand. Standard 0,5. */
+  overteipMinPerBit?: number;
   /** overstyrer maal som foliebredde. La den vaere med mindre du vet hvorfor. */
   geo?: Partial<Geo>;
   /** kommer fra lastBilder(). Uten den lages ingen kundeskisse. */

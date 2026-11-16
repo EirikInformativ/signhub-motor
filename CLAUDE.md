@@ -124,6 +124,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx kiatest.ts    # spotfarger, sort ved siden av kuloer, bil inne i stripene
     npx tsx rammetest.ts  # formede, konvekse rammer med rett bunn
     npx tsx klipptest.ts  # kutt og forlengelse under bildelene
+    npx tsx tettark.ts    # dyr folie ut av oppsettet naar det loenner seg
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -667,6 +668,23 @@ hvis en linje skjæres to ganger eller to parallelle linjer ligger under
 **Feilsignatur:** et element tegnet to ganger (en fylt og en streket kopi),
 manglende kiss-boks rundt thru-cut-elementene, eller regmarks og kiss på et
 ark med bare hele stripestykker.
+
+**Tett ark for dyr folie** (Eirik 16.11.2026, Kia PV5: grønt printet på
+hvit 3M refleks, 498 kr/m² pluss laminat 45). I oppsettet må hver farge
+ligge i samme ramme som de andre, og rammene følger de store elementene.
+`tettArk` i `src/motor.ts` regner, for hver farge i en flerfarget gruppe
+som har `prisM2` på folien: folie i oppsett (arklengde x rullbredde x pris)
+mot folie tett pluss biter x `overteipMinPerBit` (standard 0,5 min, Eiriks
+anslag: ca. 5 min for de 10 bitene på Kia) x `timekostKr` (standard 900,
+full selvkost), minus det de andre fargene sparer når oppsettet blir
+kortere. Bare når alle bitene er hele, konvekse flater uten hull. Er tett
+billigst, tas fargen ut av elementene og hver bit blir et eget element.
+Begge utfall meldes med regnestykket og grensen i minutter. Uten pris
+røres ingenting. Med `print: true` blir det tette arket **Print+thru**:
+regmarks, fyllet printet `PRINT_BLEED_MM = 2` utenfor kuttet, kant i kant
+og sammenslåtte linjer som Appliser+thru. Kia: refleks fra 2,08 m² i
+oppsett til 0,43 m² tett (stripene kommer i tillegg i begge).
+`test/tettark.ts` vokter det.
 
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er

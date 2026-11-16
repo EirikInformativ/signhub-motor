@@ -15,6 +15,7 @@
 import { PDFDocument, PDFName, PDFString, PDFRef } from "pdf-lib";
 import type { MultiPoly } from "./pdfbaner.ts";
 import { skjaereOps, separasjon } from "./skjaereform.ts";
+import { offsetRinger } from "./ramme.ts";
 
 export const MM = 72 / 25.4;
 const KAPPA = 0.5522847498307936;
@@ -114,6 +115,13 @@ function sirkel(cx: number, cy: number, r: number, op: "f" | "S"): string {
   );
 }
 
+const PRINT_BLEED_MM = 2;
+/** Flatene utvidet med utfallende, i elementets egne enheter. */
+function utfallende(flate: MultiPoly, d: number): MultiPoly {
+  return flate.map((poly) => offsetRinger([poly[0].map(([x, y]) => [x, y] as [number, number])], d, true)
+    .map((r) => [...r, r[0]] as [number, number][]));
+}
+
 /** Bare fyll, ingen strek: flatene i foliens farge. */
 function fyllOps(flate: MultiPoly, fyllOp: string): string {
   let o = fyllOp + "\n";
@@ -159,6 +167,8 @@ export interface ArkValg {
    * Ingen ramme, ingen kiss, ingen regmarks.
    */
   kunThru?: boolean;
+  /** printet folie: regmarks, og fyllet printes 2 mm utenfor kuttet */
+  print?: boolean;
 }
 
 export async function byggProduksjonsfil(
@@ -194,7 +204,7 @@ export async function byggProduksjonsfil(
     // Appliser+thru: bare fyll, saa det synes hvilken farge det er. Linjene
     // skjaeres fra Thru-cut-laget, slaatt sammen (Eirik 16.11.2026).
     formOps[i] = valg.kunThru
-      ? fyllOps(m.flate, folieFyll)
+      ? fyllOps(valg.print ? utfallende(m.flate, (PRINT_BLEED_MM * MM) / m.skala) : m.flate, folieFyll)
       : skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
   });
 

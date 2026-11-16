@@ -66,6 +66,10 @@ const TEKST_GLIPPE_MM = 3;
 const TEKST_PASS_MM = 10;
 /** overmaal paa hver side av feltet som appliseres foer thru-cut */
 const APPLISER_OVERMAAL_MM = 20;
+/** timekost i produksjon til regnestykket for tett ark (full selvkost, 850 til 980) */
+const TIMEKOST_KR = 900;
+/** minutter per bit som legges over for hand (Eirik 16.11.2026: ca. 5 min for Kia) */
+const OVERTEIP_MIN_PER_BIT = 0.5;
 /** en side er rett naar formen ligger innenfor RETT_SIDE_MM av den langs minst RETT_SIDE_ANDEL av lengden; da rettes den helt ut */
 const RETT_SIDE_MM = 0.5;
 const RETT_SIDE_ANDEL = 0.97;
@@ -155,6 +159,14 @@ export interface Folie {
    * selv ut fra hvor lys folien er.
    */
   graaBunn?: boolean;
+  /**
+   * Hva folien koster per m², inkludert laminat naar den printes. Naar
+   * prisen finnes, regner motoren ut om fargen skal ut av oppsettet og
+   * legges tett (Eirik 16.11.2026, refleks paa Kia PV5).
+   */
+  prisM2?: number;
+  /** fargen printes paa folien (f.eks. hvit refleks) i stedet for aa vaere farget folie */
+  print?: boolean;
 }
 
 export interface Bestilling {
@@ -180,6 +192,10 @@ export interface Bestilling {
   geo?: Partial<Geo>;
   /** hva en oppspenning er verdt i meter rull. Standard 0,5. */
   oppspenningM?: number;
+  /** timekost i produksjon, til regnestykket for tett ark. Standard 900 kr. */
+  timekostKr?: number;
+  /** minutter det tar aa legge én bit over for hand. Standard 0,5. */
+  overteipMinPerBit?: number;
   /** bildene skissene trenger, fra assets.ts. Uten dem lages ingen kundeskisse. */
   bilder?: { disclaimer: Bilde; vannmerke: Bilde };
   kundeValg?: KundeValg;
@@ -303,6 +319,80 @@ function heltKonveks(f: MultiPoly): boolean {
   const as = Math.abs(arealRing([...skall, skall[0]]));
   return as > 0 && a / as >= 0.99;
 }
+/**
+ * Tett ark for dyr folie (Eirik 16.11.2026, Kia PV5: gront printet paa hvit
+ * refleks, 498 kr/m² pluss laminat 45). I oppsettet maa hver farge ligge i
+ * samme ramme som de andre, og rammene foelger de store elementene. Det gir
+ * mye folie rundt smaa biter. Alternativet: ta fargen ut av oppsettet, legg
+ * bitene tett med bare thru-cut, og legg dem over for hand.
+ *
+ * Regnestykket per farge med pris: folie i oppsettet (arklengde x
+ * rullbredde x pris) mot folie tett pluss antall biter x minutter per bit x
+ * timekost. Oppsettet blir ogsaa kortere for de andre fargene naar fargen tas
+ * ut; det regnes med naar deres pris er kjent. Bare naar alle bitene er hele,
+ * konvekse flater uten hull (bare thru-cut, ingenting aa luke). Begge utfall
+ * meldes med tallene.
+ */
+function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: string[]): Elem[] {
+  const timekost = b.timekostKr ?? TIMEKOST_KR, minPerBit = b.overteipMinPerBit ?? OVERTEIP_MIN_PER_BIT;
+  const nokkel = (e: Elem) => e.deler.map((d) => d.folie.kode).slice().sort().join("|");
+  let ut = elementer.slice();
+  const lengde = (es: Elem[], geo: Geo) => es.length ? pakkFritt(es.map((e) => ({ navn: e.navn, flate: [], bbox: e.bbox,
+    skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss })), geo).arklengde : 0;
+  const nokler = [...new Set(ut.filter((e) => e.deler.length > 1).map(nokkel))];
+  for (const k of nokler) {
+    const gruppe = ut.filter((e) => nokkel(e) === k);
+    const folier = gruppe[0].deler.map((d) => d.folie);
+    for (const f of folier.filter((x) => x.prisM2 && x.prisM2 > 0)) {
+      const rull = f.breddeMm ?? grunngeo.foliebredde;
+      const geo: Geo = { ...grunngeo, foliebredde: rull,
+        skjaerebredde: Math.min(rull - grunngeo.rullKant, rull <= grunngeo.wildMaksRull ? grunngeo.wildMaksSkjaer : grunngeo.summaMaksSkjaer) };
+      // bitene: hver flate av fargen for seg
+      const biter: Elem[] = [];
+      for (const e of gruppe) {
+        const d = e.deler.find((x) => x.folie.kode === f.kode);
+        if (!d) continue;
+        d.flate.forEach((poly, i) => {
+          const xs = poly[0].map((q) => q[0]), ys = poly[0].map((q) => q[1]);
+          const bb: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+          biter.push({ navn: `${e.navn} ${f.kode} bit ${i + 1}`, lagvis: false, bbox: bb, skala: e.skala,
+            breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
+            antall: e.antall, deler: [{ ...d, flate: [poly] }], omriss: [poly] });
+        });
+      }
+      if (!biter.length || !biter.every((x) => heltKonveks(x.deler[0].flate))) continue;
+      const uten = gruppe.map((e) => {
+        const deler = e.deler.filter((x) => x.folie.kode !== f.kode);
+        return { ...e, deler, lagvis: e.lagvis && deler.length > 1,
+          omriss: deler.length ? pc.union(...(deler.map((x) => x.flate) as [any])) as MultiPoly : [] };
+      }).filter((e) => e.deler.length);
+      const lMed = lengde(gruppe, geo), lUten = lengde(uten, geo);
+      const tettGeo: Geo = { ...geo, bleed: 0 };
+      const lTett = lengde(biter, tettGeo);
+      const antall = biter.reduce((s, x) => s + x.antall, 0);
+      const m2 = (l: number) => (l / 1000) * (rull / 1000);
+      const andre = folier.filter((x) => x.kode !== f.kode);
+      const sparAndre = andre.reduce((s, x) => s + (x.prisM2 ? m2(lMed - lUten) * x.prisM2 * ((x.breddeMm ?? rull) / rull) : 0), 0);
+      const kostOppsett = m2(lMed) * f.prisM2!;
+      const kostTett = m2(lTett) * f.prisM2! + (antall * minPerBit / 60) * timekost - sparAndre;
+      const kr = (v: number) => Math.round(v).toLocaleString("nb-NO");
+      const grense = (kostOppsett - (m2(lTett) * f.prisM2! - sparAndre)) / (timekost / 60);
+      const tall = `I oppsett ${kr(kostOppsett)} kr folie (${m2(lMed).toFixed(2).replace(".", ",")} m²). ` +
+        `Tett ${kr(m2(lTett) * f.prisM2!)} kr (${m2(lTett).toFixed(2).replace(".", ",")} m²) pluss ${antall} biter ` +
+        `x ${String(minPerBit).replace(".", ",")} min til ${kr(timekost)} kr/t = ${kr(antall * minPerBit / 60 * timekost)} kr` +
+        (sparAndre ? `, minus ${kr(sparAndre)} kr spart paa de andre fargene` : "") +
+        `. Grensen er ${Math.max(0, grense).toFixed(0)} minutter overteiping totalt.`;
+      if (kostTett < kostOppsett) {
+        ut = ut.filter((e) => !gruppe.includes(e)).concat(uten, biter);
+        advarsler.push(`${f.kode}: tatt ut av oppsettet og lagt tett med bare thru-cut. Bitene legges over for hand. ${tall}`);
+        break;   // gruppen er endret; neste farge vurderes ikke paa samme runde
+      }
+      advarsler.push(`${f.kode}: beholdt i oppsettet. ${tall}`);
+    }
+  }
+  return ut;
+}
+
 /** Endene en bilskisse har merket som skjult under bilen (PDF-noekkelord). */
 async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
   try {
@@ -321,11 +411,11 @@ async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
  * er rette, ellers gap) eller til kanten av feltet. Bare elementer i ett
  * eksemplar, saa én plassering er ett element.
  */
-function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }, geo: Geo, bredde: number): string[] {
+function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }, geo: Geo, fra: number, til: number): string[] {
   const ps = ark.plasseringer;
   const meld: string[] = [];
   // feltet er hele skjaerebredden, ikke bare det elementene bruker
-  const feltV = 0, feltH = bredde;
+  const feltV = fra, feltH = til;
   const feltO = Math.min(...ps.map((p) => p.y)), feltN = Math.max(...ps.map((p) => p.y + p.h));
   // arkretning for hver side av elementet
   const retning = (rot: boolean, side: string) => (rot
@@ -849,8 +939,11 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   // Elementer som deler nøyaktig samme sett folier pakkes sammen. Da far
   // fargene til samme logo identisk plassering pa hvert ark, som er det som
   // gjor at delene treffer hverandre nar folien legges pa.
+  // dyr folie: ut av oppsettet og tett, naar det er billigere enn tiden det
+  // tar aa legge bitene over for hand
+  const vurdert = tettArk(elementer, grunngeo, b, advarsler);
   const grupper = new Map<string, Elem[]>();
-  for (const e of elementer) {
+  for (const e of vurdert) {
     const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|");
     if (!grupper.has(nokkel)) grupper.set(nokkel, []);
     grupper.get(nokkel)!.push(e);
@@ -1118,13 +1211,17 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * summaen. Ingen bleed: kanten ER kuttet.
      */
     const kunThru = folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && heltKonveks(e.deler[0].flate));
+    // printet folie: samme tette ark, men med regmarks og utfallende print
+    const printThru = kunThru && !!folier[0].print;
     /**
      * Appliser+thru gaar bare paa summa og har ingen regmarks: hele
      * skjaerebredden brukes (Eirik 16.11.2026: «du bruker jo fortsatt ikke
      * full skjaerebredde»). Det er rullen minus rullkanten, innenfor summa,
      * minus overmaalet paa feltet.
      */
-    const geo: Geo = kunThru
+    const geo: Geo = printThru
+      ? { ...grunngeo, foliebredde, skjaerebredde, bleed: 0 }
+      : kunThru
       ? { ...grunngeo, foliebredde, bleed: 0, kissInset: 0, regClear: 0, regmarkD: 0, regmarkKiss: 0,
           skjaerebredde: Math.min(foliebredde - grunngeo.rullKant, grunngeo.summaMaksSkjaer) - 2 * APPLISER_OVERMAAL_MM }
       : { ...grunngeo, foliebredde, skjaerebredde };
@@ -1154,14 +1251,20 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
-    if (kunThru) advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo, ark.brukbarBredde));
+    if (kunThru) {
+      // feltet er skjaerebredden innenfor regmark-kolonnene (ingen paa Appliser+thru)
+      const reservert = geo.kissInset + geo.regClear + (geo.regmarkD + 2 * geo.regmarkKiss) + geo.regClear;
+      // med regmarks staar arkbredden og regmark-kolonnene fast: strekk innenfor dem
+      advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo, reservert,
+        printThru ? ark.breddeMm - reservert : reservert + ark.brukbarBredde));
+    }
     /**
      * Appliser+thru: arket ER feltet som skal appliseres. Det legges rundt
      * elementene med APPLISER_OVERMAAL_MM paa hver side og rundes opp til
      * hele 10 mm, og elementene flyttes inn fra nullpunktet tilsvarende.
      * Ingen regmark-marger, for det er ingen regmarks.
      */
-    if (kunThru && ark.plasseringer.length) {
+    if (kunThru && !printThru && ark.plasseringer.length) {
       const ps = ark.plasseringer;
       const x0 = Math.min(...ps.map((p) => p.x)), y0 = Math.min(...ps.map((p) => p.y));
       const x1 = Math.max(...ps.map((p) => p.x + p.w)), y1 = Math.max(...ps.map((p) => p.y + p.h));
@@ -1207,7 +1310,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * sier ikke maskin, bare: navn, prosess, materiale, skala.
        */
       const varianter: { navn: string; valg: ArkValg }[] = kunThru
-        ? [{ navn: rolle, valg: { thruCut: true, regmark: false, dobleRegmarks: false, ytreRamme: false, kunThru: true } }]
+        ? [{ navn: rolle, valg: { thruCut: true, regmark: printThru, dobleRegmarks: printThru && !wildGar, ytreRamme: false, kunThru: true, print: printThru } }]
         : rolleNr === 0
         ? [wildGar
             ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
@@ -1222,8 +1325,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * staar i navnet, saa produksjonen ser hva som skal appliseres foer
          * fila aapnes.
          */
-        const prosess = v.valg.kunThru ? "Appliser+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
-        const felt = v.valg.kunThru ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
+        const prosess = v.valg.print ? "Print+thru" : v.valg.kunThru ? "Appliser+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        const felt = v.valg.kunThru && !v.valg.print ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
           navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,
@@ -1246,7 +1349,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         rullforbrukM2: (geo.foliebredde * ark.arklengde) / 1e6,
         elementer: ark.plasseringer.length,
         roterte: ark.plasseringer.filter((p) => p.rotated).length,
-        regmarkSett: rolleNr === 0 && !kunThru ? ark.regY.length : 0,
+        regmarkSett: rolleNr === 0 && (!kunThru || printThru) ? ark.regY.length : 0,
         strategi: ark.strategi,
       });
     });
