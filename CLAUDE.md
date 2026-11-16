@@ -253,6 +253,20 @@ hjulbuene, som designeren har tegnet dem. Målrammene rundt dekoren vises
 bare med `visMaal`, ikke på kundeskissen: de gjorde den til en
 produksjonstegning. Skjærefilene bruker fortsatt hele banen.
 
+**Vindusrutene er gradienter, ikke hvite flater.** CCVision tegner rutene
+som en klippebane (`W n`) fulgt av `/Sh0 sh`, en aksial gradient i
+`DeviceN [/Black]` med en FunctionType 4 som tintTransform. Uten `sh` ble
+rutene hvite på kundeskissen, og på førersiden (Kia PV5 310079) så det ut
+som om den sorte A-en ikke var klippet langs ruten. `hentBaner` gir nå en
+bane med `gradient` for hver `sh`, fylt innenfor klippet, og
+`tegnBilSkisse` tegner den. Prosessfargene (Cyan, Magenta, Yellow, Black)
+i en Separation/DeviceN med CMYK-alternativ tolkes direkte, uansett
+tintTransform, så de aldri blir en reservefarge. Gradientbaner tas aldri
+med i et element. `test/kiatest.ts` vokter dette.
+
+**Feilsignatur:** hvite vindusruter på kundeskissen der originalen har
+tonede ruter.
+
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom
 ikke med: på 309916 manglet «XL-BYGG Osterøy» på to av tre steder, mens

@@ -6,7 +6,7 @@
  * Resultatet er en fil motoren kan behandle som en hvilken som helst logo.
  */
 import { PDFDocument, PDFName, PDFDict, PDFRawStream, decodePDFRawStream, PDFOperator } from "pdf-lib";
-import { csFraObj, rgbScn } from "./pdfbaner.ts";
+import { csFraObj, rgbScn, lesShading } from "./pdfbaner.ts";
 import type { Cs } from "./pdfbaner.ts";
 /** rgb 0..1 til samme cmyk-form som rg-grenen bruker */
 const rgbTilCmykArr = (v: [number, number, number]): number[] => {
@@ -40,6 +40,13 @@ export interface Bane {
    * banen.
    */
   klipp?: { segs: Seg[]; eo: boolean }[];
+  /**
+   * Satt naar banen er en gradient (`sh`): segs er klippebanen den fyller,
+   * p0/p1 (og r0/r1 for radial) er i sidekoordinater. Bare til
+   * kundeskissen; slike baner er aldri dekor og skjaeres aldri.
+   */
+  gradient?: { type: 2 | 3; p0: [number, number]; p1: [number, number]; r0: number; r1: number;
+               farger: [number, number, number][] };
 }
 
 function mul(a: Mat, b: Mat): Mat {
@@ -153,6 +160,29 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
       if (ventKlipp) { klipp = [...klipp, ventKlipp]; ventKlipp = null; }
       tom();
     } else if (op === "W" || op === "W*") { ventKlipp = { segs: segs.slice(), eo: op === "W*" }; }
+    else if (op === "sh" && navn && klipp.length) {
+      // gradienten fyller klippet som gjelder; den innerste klippebanen er
+      // flaten, de ytre klipper den som vanlig
+      const gr = lesShading(res, navn);
+      const flate = klipp[klipp.length - 1];
+      if (gr && flate.segs.length) {
+        const sk = Math.sqrt(Math.abs(cur[0] * cur[3] - cur[1] * cur[2])) || 1;
+        const c = gr.coords;
+        const p0 = app(cur, c[0], c[1]);
+        const p1 = gr.type === 2 ? app(cur, c[2], c[3]) : app(cur, c[3], c[4]);
+        const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+        for (const s of flate.segs as any[]) for (const p of s.t === "c" ? [s.a, s.b, s.c] : s.p ? [s.p] : []) {
+          b.x0 = Math.min(b.x0, p[0]); b.x1 = Math.max(b.x1, p[0]);
+          b.y0 = Math.min(b.y0, p[1]); b.y1 = Math.max(b.y1, p[1]);
+        }
+        const midt = gr.farger[gr.farger.length >> 1];
+        ut.push({ segs: flate.segs, farge: rgbTilCmykArr(midt), strekFarge: rgbTilCmykArr(midt),
+          fyll: true, strek: false, bredde: 0, boks: b,
+          ...(klipp.length > 1 ? { klipp: klipp.slice(0, -1) } : {}),
+          gradient: { type: gr.type, p0, p1, r0: gr.type === 3 ? c[2] * sk : 0, r1: gr.type === 3 ? c[5] * sk : 0,
+            farger: gr.farger } });
+      }
+    }
     else if (op === "Do" && navn && dybde < 6) {
       const xo = res?.lookup(PDFName.of("XObject"), PDFDict);
       const form: any = xo?.lookup(PDFName.of(navn));

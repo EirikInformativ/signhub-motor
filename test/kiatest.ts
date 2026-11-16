@@ -65,6 +65,17 @@ import { hentBaner } from "../src/uttrekk";
   // kundeskissen viser bilen slik den blir: klippebanene foelger med banene
   const { baner } = await hentBaner(new Uint8Array(fs.readFileSync("kia.pdf")));
   sjekk(baner.some((b) => b.klipp?.length), `klippebaner foelger med til kundeskissen (${baner.filter((b) => b.klipp?.length).length} baner)`);
+  // vindusrutene er gradienter (sh) i DeviceN [/Black], klippet til ruten.
+  // Uten dem ble rutene hvite paa foerersiden.
+  const gr = baner.filter((b) => b.gradient);
+  sjekk(gr.length >= 4, `vindusrutene leses som gradienter (${gr.length})`);
+  sjekk(gr.every((b) => {
+    const f = b.gradient!.farger; const a = f[0], z = f[f.length - 1];
+    return Math.abs(a[0] - z[0]) > 0.5 && f.every((c) => Math.abs(c[0] - c[1]) < 0.02 && Math.abs(c[1] - c[2]) < 0.02);
+  }), "gradientene gaar fra hvitt til sort i graatoner (prosess-sort, ikke reservefarge)");
+  const elBaner = l.elementer.length;
+  sjekk(elBaner === 10 && l.elementer.every((e: any) => !e.farger.some((f: any) => !/^#(00B528|000000)$/i.test(f.hex))),
+    "ingen gradient havner i et element");
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: Kia PV5 leses riktig");

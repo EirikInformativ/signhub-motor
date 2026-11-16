@@ -105,6 +105,17 @@ export function tegnBilSkisse(baner: Bane[], v: BilSkisseValg): { jpeg: Uint8Arr
       else if (seg.t === "c") g.bezierCurveTo(X(seg.a[0]), Y(seg.a[1]), X(seg.b[0]), Y(seg.b[1]), X(seg.c[0]), Y(seg.c[1]));
       else g.closePath();
     }
+    if (b.gradient) {
+      // vindusruter o.l. er gradienter klippet til flaten (Kia PV5 310079)
+      const gr = b.gradient;
+      const lg = gr.type === 2
+        ? g.createLinearGradient(X(gr.p0[0]), Y(gr.p0[1]), X(gr.p1[0]), Y(gr.p1[1]))
+        : g.createRadialGradient(X(gr.p0[0]), Y(gr.p0[1]), gr.r0 * s, X(gr.p1[0]), Y(gr.p1[1]), gr.r1 * s);
+      gr.farger.forEach((f, i) => lg.addColorStop(i / (gr.farger.length - 1),
+        `rgb(${Math.round(f[0] * 255)},${Math.round(f[1] * 255)},${Math.round(f[2] * 255)})`));
+      g.fillStyle = lg; g.fill();
+      return;
+    }
     if (b.fyll) { g.fillStyle = farge; g.fill(); }
     if (b.strek) { g.strokeStyle = strekFarge; g.lineWidth = Math.max(0.35, b.bredde * s); g.stroke(); }
   };

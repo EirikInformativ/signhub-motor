@@ -238,7 +238,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const T = 0.6;
     const likBoks = (b: Bane) => o.liste.some((x) => Math.abs(x.x0 - b.boks.x0) < T &&
       Math.abs(x.y0 - b.boks.y0) < T && Math.abs(x.x1 - b.boks.x1) < T && Math.abs(x.y1 - b.boks.y1) < T);
-    const valgte = baner.filter((b) => andel(b, o) >= 0.9 && !erBil(b) && likBoks(b));
+    const valgte = baner.filter((b) => !b.gradient && andel(b, o) >= 0.9 && !erBil(b) && likBoks(b));
     if (!valgte.length) continue;
     const deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }

@@ -361,6 +361,23 @@ function csFraVerdi(obj: any, res: PDFDict | undefined): Cs | null {
         } };
       }
 
+      /**
+       * Prosessfargene (Cyan, Magenta, Yellow, Black) i et CMYK-alternativ
+       * er seg selv, uansett hva tintTransform er. Illustrator lagrer
+       * gradienter i DeviceN [/Black] med en FunctionType 4 (Kia PV5
+       * 310079: vindusrutene). Uten dette ble den sorte gradienten en
+       * tilfeldig reservefarge.
+       */
+      const PROSESS = ["Cyan", "Magenta", "Yellow", "Black"];
+      const navnene = fam === "Separation" ? [merke] : navnListe(del);
+      if (alt === CS_CMYK && navnene.length === antall && navnene.every((x) => PROSESS.includes(x))) {
+        return { n: antall, tilRgb: (v) => {
+          const c = [0, 0, 0, 0];
+          navnene.forEach((x, i) => { c[PROSESS.indexOf(x)] = klem(v[i] ?? 0, 0, 1); });
+          return CS_CMYK.tilRgb(c);
+        } };
+      }
+
       // tintTransform lar seg ikke tolke: gi separasjonen sin egen farge,
       // interpolert fra hvitt ved tint 0.
       const base = reserveFarge(merke);
@@ -382,6 +399,42 @@ export function rgbScn(cs: Cs | null, tall: number[]): [number, number, number] 
     const f = cs.tilRgb(v);
     if (!f || f.some((x) => typeof x !== "number" || Number.isNaN(x))) return null;
     return [klem(f[0], 0, 1), klem(f[1], 0, 1), klem(f[2], 0, 1)];
+  } catch { return null; }
+}
+
+/**
+ * En gradient (`sh`, ShadingType 2 aksial eller 3 radial) som koordinater i
+ * shadingens eget rom og fargene samplet langs den som rgb. Brukes bare av
+ * kundeskissen: vindusrutene paa en CCVision-skisse er gradienter klippet
+ * til ruten, og uten dem ble rutene hvite (Kia PV5 310079, foererside).
+ */
+export interface Gradient {
+  type: 2 | 3;
+  coords: number[];
+  farger: [number, number, number][];
+}
+
+export function lesShading(res: PDFDict | undefined, navn: string): Gradient | null {
+  try {
+    const sres = res?.lookup(PDFName.of("Shading"), PDFDict);
+    const d = dictAv(sres?.lookup(PDFName.of(navn)));
+    if (!d) return null;
+    const type = tallAv(d, "ShadingType");
+    if (type !== 2 && type !== 3) return null;
+    const coords = tallListe(d, "Coords");
+    if (!coords || coords.length !== (type === 2 ? 4 : 6)) return null;
+    const cs = csFraVerdi(d.lookup(PDFName.of("ColorSpace")), res);
+    const fn = lagFn(d.lookup(PDFName.of("Function")));
+    if (!cs || !fn) return null;
+    const dom = tallListe(d, "Domain") ?? [0, 1];
+    const farger: [number, number, number][] = [];
+    const N = 16;
+    for (let i = 0; i <= N; i++) {
+      const rgb = rgbScn(cs, fn(dom[0] + (dom[1] - dom[0]) * (i / N)));
+      if (!rgb) return null;
+      farger.push(rgb);
+    }
+    return { type, coords, farger };
   } catch { return null; }
 }
 
