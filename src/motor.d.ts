@@ -235,6 +235,8 @@ export interface BilElement {
   bakgrunn?: BilFarge;
   /** trolig samme merke som dette elementet, sett fra en annen visning. Ikke fjernet. */
   sammeSom?: string;
+  /** passmerke: strimmel som viser hvor naboen skal ligge, rives av etter montering */
+  passmerke?: { mot: string; hex: string; lengdeMm: number };
 }
 
 export interface BilSkisseLest {
