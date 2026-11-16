@@ -88,6 +88,8 @@ export interface Motiv {
 
 export interface Plassering {
   x: number; y: number; w: number; h: number; rotated: boolean; id: number;
+  /** snudd 180° i boksen (i tillegg til rotated): formnesting av tette grupper */
+  snu?: boolean;
   /**
    * Thru-cut-rammen naar den foelger formen, i mm paa arket med y nedover.
    * Uten den er rammen rektangelet x, y, w, h.
@@ -247,9 +249,10 @@ export async function byggProduksjonsfil(
   const iElement = (p: Plassering, innhold: string) => {
     const m = motiver[p.id], b = m.bbox, s = m.skala;
     const lx = (p.x + geo.bleed) * MM, lb = ytop(p.y + p.h - geo.bleed);
-    return p.rotated
+    const snu = p.snu ? `q\n-1 0 0 -1 ${f4(2 * (p.x + p.w / 2) * MM)} ${f4(2 * ytop(p.y + p.h / 2))} cm\n` : "";
+    return snu + (p.rotated
       ? `q\n0 ${s.toFixed(6)} ${(-s).toFixed(6)} 0 ${f4(lx + s * (b[3] - b[1]) + s * b[1])} ${f4(lb - s * b[0])} cm\n${innhold}Q\n`
-      : `q\n${s.toFixed(6)} 0 0 ${s.toFixed(6)} ${f4(lx - s * b[0])} ${f4(lb - s * b[1])} cm\n${innhold}Q\n`;
+      : `q\n${s.toFixed(6)} 0 0 ${s.toFixed(6)} ${f4(lx - s * b[0])} ${f4(lb - s * b[1])} cm\n${innhold}Q\n`) + (p.snu ? "Q\n" : "");
   };
 
   const W = ark.breddeMm * MM;
@@ -265,6 +268,11 @@ export async function byggProduksjonsfil(
     const b = m.bbox, s = m.skala;
     const lx = (p.x + geo.bleed) * MM;
     const lb = ytop(p.y + p.h - geo.bleed);
+    if (p.snu) {
+      // 180° om boksens midtpunkt
+      const cx = (p.x + p.w / 2) * MM, cy = ytop(p.y + p.h / 2);
+      ops.push(`q\n-1 0 0 -1 ${f4(2 * cx)} ${f4(2 * cy)} cm\n`);
+    }
     if (p.rotated) {
       const tx = lx + s * (b[3] - b[1]);
       ops.push(`q\n0 ${s.toFixed(6)} ${(-s).toFixed(6)} 0 ` +
@@ -273,6 +281,7 @@ export async function byggProduksjonsfil(
       ops.push(`q\n${s.toFixed(6)} 0 0 ${s.toFixed(6)} ` +
                `${f4(lx - s * b[0])} ${f4(lb - s * b[1])} cm\n${formOps[p.id]}Q\n`);
     }
+    if (p.snu) ops.push("Q\n");
   }
   ops.push("Q\nEMC\n");
 

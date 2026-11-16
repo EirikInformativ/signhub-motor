@@ -704,6 +704,21 @@ er to oppgaver. Det tette er fortsatt **med i oppsettet** som markering:
 fyll i fargen og kiss-strek, bare paa primaerarket (`markering` paa
 elementet), saa montoeren ser hvor bitene skal.
 
+**Logogruppene og stripene er aldri paa samme ark** (Eirik 16.11.2026: «vi
+hadde jo en kongefil for stripene»). Gruppene kiss-cuttes, lukes og legges
+over paa det sorte oppsettet; stripene har sin egen fil (Appliser+thru, eller
+Print+thru paa printmedium). Gruppenoekkelen faar `|tett`, og slike grupper
+slaas aldri sammen med andre. Arket med logogrupper **nestes paa formen**
+(`nestForm` i `src/pakk.ts`): thru-formen utvidet med halve gapet rastreres
+konservativt paa et rutenett (`NEST_RES = 2.5` mm), proeves i fire retninger
+(`snu` paa plasseringen er 180°), med flere rekkefoelger, og brukes bare naar
+den gir kortere ark. Kia: logoarket 474 mm, stripearket 447 mm.
+
+**Skyline etterfylles** (`komprimer` i `src/pakk.ts`): et element som ble
+liggende oeverst fordi skyline ikke ser hull under et overheng, flyttes til
+den laveste ledige plassen. Kia: tekstarket fra 406 til 325 mm («- RØR» og
+«åtg.no» opp ved siden av de lange tekstene).
+
 **Printfila bruker spotfargen fra skissen, ikke skjermfargen.** `csFraObj`
 gir `spot` (navn og alternativ, ogsaa Lab som Illustrators Pantone-bibliotek
 bruker) paa Separation-rom, `hentBaner` legger den paa banen, og `skrivPdf`

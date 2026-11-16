@@ -349,7 +349,8 @@ function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: str
   const nokkel = (e: Elem) => e.deler.map((d) => d.folie.kode).slice().sort().join("|");
   let ut = elementer.slice();
   const lengde = (es: Elem[], geo: Geo) => es.length ? pakkFritt(es.map((e) => ({ navn: e.navn, flate: [], bbox: e.bbox,
-    skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss })), geo).arklengde : 0;
+    skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
+    ...(e.thruForm ? { thruForm: e.thruForm } : {}) })), geo).arklengde : 0;
   const nokler = [...new Set(ut.filter((e) => e.deler.length > 1).map(nokkel))];
   for (const k of nokler) {
     const gruppe = ut.filter((e) => nokkel(e) === k);
@@ -1044,7 +1045,12 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   const vurdert = tettArk(elementer, grunngeo, b, advarsler);
   const grupper = new Map<string, Elem[]>();
   for (const e of vurdert) {
-    const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|");
+    /**
+     * De tette logogruppene faar eget ark (Eirik 16.11.2026): de kiss-cuttes,
+     * lukes og legges over paa det sorte oppsettet, mens stripene har sin
+     * egen fil (Appliser+thru). De skal aldri paa samme ark.
+     */
+    const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|") + (e.thruForm ? "|tett" : "");
     if (!grupper.has(nokkel)) grupper.set(nokkel, []);
     grupper.get(nokkel)!.push(e);
   }
@@ -1221,6 +1227,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     for (const liten of noklene) {
       for (const stor of noklene) {
         if (liten === stor || !grupper.has(liten) || !grupper.has(stor)) continue;
+        if (liten.endsWith("|tett") || stor.endsWith("|tett")) continue;
         const a = foliesett(grupper.get(liten)!), c = foliesett(grupper.get(stor)!);
         if (a.size >= c.size) continue;
         if (![...a].every((k) => c.has(k))) continue;
@@ -1356,6 +1363,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
+      ...(e.thruForm ? { thruForm: e.thruForm } : {}),
       ...(kunThru ? { sider: e.thruForm ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
         : retteSider(e.deler[0].flate, e.bbox, e.skala) } : {}),
     }));

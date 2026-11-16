@@ -7,6 +7,8 @@
  */
 import type { Motiv, Ark, Plassering, Geo } from "./produksjonsfil.ts";
 import { rammeLokal, profil, offsetRinger, forNaer } from "./ramme.ts";
+import * as pcModul from "polygon-clipping";
+const pc: any = (pcModul as any).default ?? pcModul;
 import type { P } from "./ramme.ts";
 
 interface Item { w: number; h: number; id: number; navn: string }
@@ -80,7 +82,50 @@ function pakkEn(items: Item[], brukbar: number, gap: number, rot: boolean) {
     sky.legg(r.x, r.y, r.w, r.h);
     ut.push({ x: r.x, y: r.y, w: r.w - gap, h: r.h - gap, rotated: r.r, id: it.id });
   }
+  komprimer(ut, brukbar, gap, rot);
   return { ut, h: Math.max(...ut.map((p) => p.y + p.h)) };
+}
+
+/**
+ * Skyline kan ikke legge noe under et element som henger over et hull
+ * (Eirik 16.11.2026, Kia: «- RØR» og «åtg.no» havnet i en egen rad
+ * nederst, mens det var plass oppe til hoeyre ved de to lange tekstene).
+ * Etterpaa proeves hvert element, oeverst foerst, flyttet til den laveste
+ * ledige plassen: i hjoernene langs kantene til de andre elementene og
+ * arket, med gap. Det flyttes bare naar toppen blir lavere.
+ */
+function komprimer(ut: Plassering[], brukbar: number, gap: number, rot: boolean) {
+  const fri = (x: number, y: number, w: number, h: number, ikke: Plassering) => {
+    if (x < -1e-9 || y < -1e-9 || x + w > brukbar + 1e-6) return false;
+    for (const q of ut) {
+      if (q === ikke) continue;
+      const dx = Math.max(x - (q.x + q.w), q.x - (x + w));
+      const dy = Math.max(y - (q.y + q.h), q.y - (y + h));
+      if (dx < gap - 1e-6 && dy < gap - 1e-6) return false;
+    }
+    return true;
+  };
+  for (let runde = 0; runde < 4; runde++) {
+    let flyttet = false;
+    for (const p of ut.slice().sort((a, b) => (b.y + b.h) - (a.y + a.h))) {
+      const xs = [0, ...ut.filter((q) => q !== p).map((q) => q.x + q.w + gap)];
+      const ys = [0, ...ut.filter((q) => q !== p).map((q) => q.y + q.h + gap)];
+      let best: { x: number; y: number; w: number; h: number; r: boolean } | null = null;
+      for (const r of rot ? [false, true] : [false]) {
+        const w = r ? p.h : p.w, h = r ? p.w : p.h;
+        for (const y of ys) for (const x of xs) {
+          if (y + h >= (best ? best.y + best.h : p.y + p.h) - 1e-6) continue;
+          if (fri(x, y, w, h, p)) best = { x, y, w, h, r };
+        }
+      }
+      if (best) {
+        p.x = best.x; p.y = best.y;
+        if (best.r) { p.rotated = !p.rotated; p.w = best.w; p.h = best.h; }
+        flyttet = true;
+      }
+    }
+    if (!flyttet) break;
+  }
 }
 
 export function sjekk(ps: Plassering[], brukbar: number, gap: number): string[] {
@@ -126,6 +171,13 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
   }
 
   let best: { ut: Plassering[]; h: number; navn: string } | null = null;
+  /**
+   * Tette logogrupper (Eirik 16.11.2026: «husk at elementene kan
+   * roteres»): nestes paa selve formen, i alle fire retninger, saa de
+   * griper inn i hverandre.
+   */
+  const nest = motiver.length && motiver.every((m) => m.thruForm?.length)
+    ? nestForm(motiver, items, brukbar, geo, tillatRotasjon) : null;
   for (const st of STRATEGIER) {
     for (const rot of tillatRotasjon ? [true, false] : [false]) {
       const r = pakkEn(items.slice().sort(st.key), brukbar, geo.gap, rot);
@@ -158,7 +210,10 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
     if (p && p.h < best.h - 1) { best = p; formet = true; }
   }
 
-  const feil = formet ? sjekkFormet(best.ut, geo.gap) : sjekk(best.ut, brukbar, geo.gap);
+  // formnestingen brukes bare naar den gir kortere ark enn rammene
+  const nestet = !!nest && nest.h < best.h - 1;
+  if (nestet) { best = nest!; formet = false; }
+  const feil = formet ? sjekkFormet(best.ut, geo.gap) : nestet ? [] : sjekk(best.ut, brukbar, geo.gap);
   // Arket blir bare sa bredt som jobben faktisk trenger. Resten av rullen
   // ligger urort, og forbrukstallet blir aerlig.
   const brukt = Math.max(...best.ut.map((p) => p.x + p.w));
@@ -348,4 +403,111 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
     }
   }
   return best;
+}
+
+
+/**
+ * Formnesting paa rutenett. Hver form utvidet med halve gapet rastreres
+ * konservativt (en rute er opptatt hvis formen beroerer den), saa to former
+ * som ikke deler rute, ligger minst et gap fra hverandre. Hver form proeves i
+ * fire retninger og legges der toppen blir lavest (saa lengst til venstre).
+ */
+const NEST_RES = 2.5;
+const MM = 72 / 25.4;
+function nestForm(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, rot: boolean):
+  { ut: Plassering[]; h: number; navn: string } | null {
+  const r = NEST_RES, halv = geo.gap / 2;
+  const kol = Math.ceil((brukbar + 2 * halv) / r) + 1;
+  const sumH = items.reduce((s, it) => s + Math.max(it.w, it.h) + geo.gap, 0);
+  const rader = Math.ceil(sumH / r) + 2;
+  const opptatt = new Uint8Array(kol * rader);
+  const pre = new Int32Array(rader * (kol + 1));
+  const oppdater = (j: number) => {
+    let a = 0; const o = j * (kol + 1);
+    for (let i = 0; i < kol; i++) { a += opptatt[j * kol + i]; pre[o + i + 1] = a; }
+  };
+  type Var = { w: number; h: number; rot: boolean; snu: boolean; spenn: [number, number, number][]; rader: number };
+  const varianter = (it: Item): Var[] => {
+    const m = motiver[it.id], b = m.bbox, k = m.skala / MM, bl = geo.bleed;
+    const ut: Var[] = [];
+    for (const rr of rot ? [false, true] : [false]) for (const snu of [false, true]) {
+      const w = rr ? m.hoydeMm + 2 * bl : m.breddeMm + 2 * bl, h = rr ? m.breddeMm + 2 * bl : m.hoydeMm + 2 * bl;
+      const til = ([X, Y]: number[]): [number, number] => {
+        let u = rr ? bl + (b[3] - Y) * k : bl + (X - b[0]) * k;
+        let v = rr ? h - bl - (X - b[0]) * k : h - bl - (Y - b[1]) * k;
+        if (snu) { u = w - u; v = h - v; }
+        return [u, v];
+      };
+      const ringer = m.thruForm!.map((poly) => poly[0].map(til));
+      // utvidet med halve gapet, forskjoevet saa ruten starter i -halv
+      const utv = offsetRinger(ringer, halv).map((rg) => rg.map(([x, y]) => [x + halv, y + halv] as [number, number]));
+      const hoyde = h + 2 * halv;
+      const nr = Math.ceil(hoyde / r);
+      const spenn: [number, number, number][] = [];
+      for (let j = 0; j < nr; j++) {
+        const y0 = j * r, y1 = y0 + r;
+        let biter: any;
+        try {
+          biter = pc.intersection(utv.map((rg) => [[...rg, rg[0]]]) as any,
+            [[[-1e3, y0], [1e5, y0], [1e5, y1], [-1e3, y1], [-1e3, y0]]] as any);
+        } catch { biter = []; }
+        for (const poly of biter) {
+          const xs = poly[0].map((q: number[]) => q[0]);
+          spenn.push([j, Math.max(0, Math.floor(Math.min(...xs) / r)), Math.ceil(Math.max(...xs) / r)]);
+        }
+      }
+      ut.push({ w, h, rot: rr, snu, spenn, rader: nr });
+    }
+    return ut;
+  };
+  const kolliderer = (v: Var, c: number, rad: number) => {
+    for (const [j, a, e] of v.spenn) {
+      const jj = rad + j;
+      if (jj >= rader) return true;
+      const aa = c + a, ee = Math.min(kol, c + e);
+      if (ee <= aa) continue;
+      const o = jj * (kol + 1);
+      if (pre[o + ee] - pre[o + aa] > 0) return true;
+    }
+    return false;
+  };
+  const cache = new Map<Item, Var[]>();
+  const varAv = (it: Item) => cache.get(it) ?? cache.set(it, varianter(it)).get(it)!;
+  let beste: { ut: Plassering[]; h: number; navn: string } | null = null;
+  // flere rekkefoelger og to maater aa velge plass paa; den korteste vinner
+  for (const st of STRATEGIER) for (const tyngde of [false, true]) {
+  opptatt.fill(0); pre.fill(0);
+  const ut: Plassering[] = [];
+  let ok = true;
+  for (const it of items.slice().sort(st.key)) {
+    let valgt: { c: number; rad: number; v: Var; topp: number } | null = null;
+    for (const v of varAv(it)) {
+      if (v.w > brukbar + 1e-6) continue;
+      const maksC = Math.floor((brukbar - v.w) / r);
+      for (let c = 0; c <= maksC; c++) {
+        for (let rad = 0; rad + v.rader <= rader; rad++) {
+          // tyngde: laveste overkant (rad) foerst, ellers laveste underkant
+          const maal = (tyngde ? rad * r : rad * r + v.h);
+          if (valgt && maal >= valgt.topp - 1e-9) break;
+          if (!kolliderer(v, c, rad)) {
+            if (!valgt || maal < valgt.topp - 1e-9) valgt = { c, rad, v, topp: maal };
+            break;
+          }
+        }
+      }
+    }
+    if (!valgt) { ok = false; break; }
+    const { c, rad, v } = valgt;
+    for (const [j, a, e] of v.spenn) {
+      const jj = rad + j;
+      for (let i = c + a; i < Math.min(kol, c + e); i++) opptatt[jj * kol + i] = 1;
+      oppdater(jj);
+    }
+    ut.push({ x: c * r, y: rad * r, w: v.w, h: v.h, rotated: v.rot, id: it.id, ...(v.snu ? { snu: true } : {}) });
+  }
+  if (!ok) continue;
+  const h = Math.max(...ut.map((p) => p.y + p.h));
+  if (!beste || h < beste.h - 1e-9) beste = { ut, h, navn: `formnesting, fire retninger, ${st.navn}${tyngde ? ", tyngde" : ""}` };
+  }
+  return beste;
 }

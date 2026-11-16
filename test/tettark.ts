@@ -28,6 +28,12 @@ const sjekk = (ok: boolean, t: string) => { console.log(`${ok ? "ok  " : "FEIL"}
   // bitene til én logo er én gruppe: kiss rundt bitene, thru utenfor (Print+kiss+thru)
   const print = r.filer.filter((f: any) => / Print\+kiss\+thru 751-068 100%\.pdf$/.test(f.navn));
   sjekk(print.length === 1, `én Print+kiss+thru-fil for refleksen (${r.filer.map((f: any) => f.navn).join(", ")})`);
+  // stripene har sin egen fil; logogruppene skal over paa det sorte oppsettet
+  // og kjoeres aldri paa samme ark som stripene (Eirik 16.11.2026)
+  sjekk(r.filer.some((f: any) => / Print\+thru 751-068 100%\.pdf$/.test(f.navn)), "stripene paa eget ark (Print+thru)");
+  const tettArket = r.ark.filter((a: any) => a.foliekode === "751-068").map((a: any) => a.lengdeMm);
+  sjekk(tettArket.length === 2 && Math.min(...tettArket) < 500,
+    `logogruppene nestet paa formen, med rotasjon (${tettArket.map((x: number) => x.toFixed(0)).join(" og ")} mm)`);
   const tekst = async (f: any) => {
     const b = f.bytes ?? await f._bygg();
     const d = await PDFDocument.load(b);
