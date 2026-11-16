@@ -6,9 +6,9 @@
  * tettere. Bunnen skal alltid vaere bein, for den er grunnlinjen montoeren
  * retter elementet inn etter.
  *
- * Formen: elementets omriss med hullene fylt, utvidet med bleed, og alt
- * under det fylt ned til en rett bunn (skygge rett ned). Et baand langs hele
- * bunnen holder rammen i ett stykke, ogsaa naar delene staar fritt.
+ * Formen: det konvekse skallet rundt elementets omriss utvidet med bleed
+ * og den rette bunnen. Konvekst fordi thru-cut ikke kan ha innvendige
+ * hjoerner: der rivner folien, og arket blir slapt.
  *
  * Pakkingen legger rammene paa et hoeydeprofil i stedet for paa rektangler:
  * et element med lav kant kan legges inntil et hoeyt, og et smalt element
@@ -61,29 +61,24 @@ export function rammeLokal(omriss: MultiPoly, bbox: [number, number, number, num
   if (!ut.length) return null;
   const xs = ut.flat().map((p) => p[0]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
-  const bunn = -bleed;
-  // skygge rett ned fra hver kant, og et baand langs bunnen
-  const deler: any[] = [[[[x0, bunn], [x1, bunn], [x1, bunn + bleed], [x0, bunn + bleed], [x0, bunn]]]];
-  for (const r of ut) {
-    deler.push([lukk(r)]);
-    for (let i = 0; i < r.length; i++) {
-      const a = r[i], b = r[(i + 1) % r.length];
-      if (Math.abs(a[0] - b[0]) < 1e-6) continue;
-      deler.push([[a, b, [b[0], bunn], [a[0], bunn], a]]);
-    }
-  }
-  let samlet: any;
-  try { samlet = pc.union(...(deler as [any])); } catch { return null; }
-  // ett stykke: ta den stoerste ytterringen (baandet binder dem sammen)
-  let best: P[] | null = null, bestA = -1;
-  for (const poly of samlet) {
-    const r = poly[0] as P[];
-    let a = 0;
-    for (let i = 0; i < r.length - 1; i++) a += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
-    if (Math.abs(a) > bestA) { bestA = Math.abs(a); best = r; }
-  }
-  if (!best) return null;
-  return forenkle(best.slice(0, -1), 0.05);
+  /**
+   * Thru-cut kan ikke vaere konkav (Eirik 16.11.2026): i et innvendig
+   * hjoerne rivner folien, og en lang innbuktning gjoer arket slapt.
+   * Rammen er derfor det konvekse skallet rundt formen og den rette bunnen.
+   */
+  const skall = konvekstSkall([...ut.flat(), [x0, -bleed], [x1, -bleed]]);
+  return skall.length > 2 ? forenkle(skall, 0.05) : null;
+}
+
+/** Konvekst skall (monotone chain), mot klokka. */
+export function konvekstSkall(pk: P[]): P[] {
+  const p = pk.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const kryss = (o: P, a: P, b: P) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const ned: P[] = [], opp: P[] = [];
+  for (const q of p) { while (ned.length >= 2 && kryss(ned[ned.length - 2], ned[ned.length - 1], q) <= 0) ned.pop(); ned.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (opp.length >= 2 && kryss(opp[opp.length - 2], opp[opp.length - 1], q) <= 0) opp.pop(); opp.push(q); }
+  return [...ned.slice(0, -1), ...opp.slice(0, -1)];
 }
 
 /**

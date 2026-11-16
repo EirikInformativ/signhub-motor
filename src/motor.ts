@@ -58,6 +58,10 @@ const RAMME_FYLL = 0.995;
 const SKJOT_MM = 10;
 /** en stripe er minst saa mange ganger lengre enn hoy */
 const STRIPE_FORHOLD = 8;
+/** tekst skjoetes i mellomrom mellom bokstaver paa minst saa mye */
+const TEKST_GLIPPE_MM = 3;
+/** saa mye av neste bokstav stykket foer skjoeten tar med som passmerke */
+const TEKST_PASS_MM = 10;
 /** hull smalere enn dette i snitt kan ingen kniv skjaere: tegnefeil */
 const GLIPPE_MM = 0.1;
 
@@ -739,18 +743,62 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * fordi stripene paa sidene (2,6 m) uansett gjorde arket langt.
      */
     const biterAv = new Map<Elem, Elem[]>();
+    const erTekst = new Set<Elem>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
       const f = e.deler.length === 1 ? e.deler[0].flate : [];
-      if (!(f.length === 1 && f[0].length === 1 && lang > maksLengde && lang >= STRIPE_FORHOLD * kort)) continue;
-      const n = Math.ceil(lang / maksLengde);
+      if (!(f.length && lang > maksLengde && lang >= STRIPE_FORHOLD * kort)) continue;
       const langsX = e.breddeMm >= e.hoydeMm;
       const [b0, b1] = langsX ? [e.bbox[0], e.bbox[2]] : [e.bbox[1], e.bbox[3]];
-      const steg = (b1 - b0) / n;
-      const ov = ((SKJOT_MM / 2) * MM) / e.skala;
+      const mmTil = (mm: number) => (mm * MM) / e.skala;
+      const lengdeMm = (a: number, z: number) => ((z - a) * e.skala) / MM;
+      /** stykkene som [fra, til] langs elementet */
+      let stykker: [number, number][] | null = null;
+      if (f.length === 1 && f[0].length === 1) {
+        // en stripe: like lange stykker med SKJOT_MM overlapp
+        const n = Math.ceil(lang / maksLengde);
+        const steg = (b1 - b0) / n, ov = mmTil(SKJOT_MM / 2);
+        stykker = [];
+        for (let i = 0; i < n; i++) stykker.push([Math.max(b0, b0 + i * steg - ov), Math.min(b1, b0 + (i + 1) * steg + ov)]);
+      } else {
+        /**
+         * En tekst skjoetes i mellomrommet mellom to bokstaver (Eirik
+         * 16.11.2026: «det er jo plenty av mellomrom mellom bokstaver»).
+         * Stykket foer skjoeten tar med TEKST_PASS_MM av neste bokstav som
+         * passmerke: montoeren legger neste stykke slik at bokstaven dekker
+         * stubben. Skjoeten synes ikke paa bilen.
+         */
+        const iv = f.map((poly) => {
+          const v = poly[0].map((q) => (langsX ? q[0] : q[1]));
+          return [Math.min(...v), Math.max(...v)] as [number, number];
+        }).sort((a, b) => a[0] - b[0]);
+        const glipper: [number, number][] = [];
+        let slutt = iv[0][1];
+        for (const [a, z] of iv.slice(1)) {
+          if (a - slutt >= mmTil(TEKST_GLIPPE_MM)) glipper.push([slutt, a]);
+          slutt = Math.max(slutt, z);
+        }
+        const pass = mmTil(TEKST_PASS_MM);
+        for (let n = Math.ceil(lang / maksLengde); n <= 6 && glipper.length && !stykker; n++) {
+          const kutt: [number, number][] = [];
+          for (let i = 1; i < n; i++) {
+            const maal = b0 + (i * (b1 - b0)) / n;
+            const best = glipper.slice().sort((x, y) => Math.abs((x[0] + x[1]) / 2 - maal) - Math.abs((y[0] + y[1]) / 2 - maal))[0];
+            if (!kutt.some((k) => k === best)) kutt.push(best);
+          }
+          kutt.sort((x, y) => x[0] - y[0]);
+          const forslag: [number, number][] = [];
+          let fra = b0;
+          for (const [, g1] of kutt) { forslag.push([fra, g1 + pass]); fra = g1; }
+          forslag.push([fra, b1]);
+          if (forslag.every(([a, z]) => lengdeMm(a, z) <= maksLengde)) { stykker = forslag; erTekst.add(e); }
+        }
+      }
+      if (!stykker || stykker.length < 2) continue;
+      const n = stykker.length;
       const biter: Elem[] = [];
       for (let i = 0; i < n; i++) {
-        const a = Math.max(b0, b0 + i * steg - ov), z = Math.min(b1, b0 + (i + 1) * steg + ov);
+        const [a, z] = stykker[i];
         const rute: MultiPoly = langsX
           ? [[[[a, e.bbox[1] - 1], [z, e.bbox[1] - 1], [z, e.bbox[3] + 1], [a, e.bbox[3] + 1], [a, e.bbox[1] - 1]]]]
           : [[[[e.bbox[0] - 1, a], [e.bbox[2] + 1, a], [e.bbox[2] + 1, z], [e.bbox[0] - 1, z], [e.bbox[0] - 1, a]]]];
@@ -775,8 +823,11 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     for (const [e, biter] of biterAv) {
       const lang = Math.max(e.breddeMm, e.hoydeMm);
       advarsler.push(hel.has(e)
-        ? `${e.navn}: ${lang.toFixed(0)} mm lang stripe skjaeres hel; skjoeting ville ikke gjort arket kortere.`
-        : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
+        ? `${e.navn}: ${lang.toFixed(0)} mm lang ${erTekst.has(e) ? "tekst" : "stripe"} skjaeres hel; skjoeting ville ikke gjort arket kortere.`
+        : erTekst.has(e)
+          ? `${e.navn}: ${lang.toFixed(0)} mm lang tekst er skjoetet i ${biter.length} stykker i mellomrommet mellom bokstavene. ` +
+            `Hvert stykke tar med ${TEKST_PASS_MM} mm av neste bokstav som passmerke: legg neste stykke slik at bokstaven dekker stubben.`
+          : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
     }
     grupper.set(nokkel, sett());
   }

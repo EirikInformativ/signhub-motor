@@ -36,6 +36,8 @@ export const KLIPP_MIN_MM = 20;
 const GJENNOMSYN = 0.05;
 /** et gjennomsyn er tynnere enn 2 x 0,25 x KLIPP_MIN_MM = 10 mm */
 const GJENNOMSYN_TYKK = 0.25;
+/** knotter i det synlige under 2 x 0,5 x KLIPP_MIN_MM = 20 mm faar bare 10 mm rundt seg */
+const KNOTT_ANDEL = 0.5;
 
 /** Segmentene som ringer, kurvene delt i rette biter. */
 export function ringerAv(segs: any[]): Ring[] {
@@ -100,10 +102,12 @@ export interface KlippResultat {
   /** areal tatt bort og areal foer, i tegnede enheter i andre */
   fjernet: number;
   foer: number;
-  /** baner (etter kuttet) som gaar for kort inn under en bildel */
+  /** baner (etter kuttet) som gaar for kort inn under en bildel og ikke lot seg forlenge */
   kortForbi: Bane[];
   /** baner der smaa gjennomsyn under bilen er sett bort fra */
   gjennomsyn: number;
+  /** baner som er forlenget inn under en bildel */
+  forlenget: number;
 }
 
 /**
@@ -115,7 +119,7 @@ export interface KlippResultat {
 export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) => boolean,
                                 luft: number, min: number): KlippResultat {
   const indeks = new Map(alle.map((b, i) => [b, i]));
-  let fjernet = 0, foer = 0, gjennomsyn = 0;
+  let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0;
   const korte = new Set<Bane>();
   const ut = dekor.map((b) => {
     if (!b.fyll || b.strek) return b;
@@ -126,11 +130,12 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     const egen = flate(ringerAv(b.segs as any[]));
     if (!egen || !egen.length) return b;
     const a0 = areal(egen);
-    let skjult: any;
+    let skjult: any, dekkSamlet: any;
     try {
       const dekkFlater = dekk.map((o) => flate(ringerAv(o.segs as any[]))).filter((f) => f && f.length);
       if (!dekkFlater.length) return b;
-      skjult = pc.intersection(egen, pc.union(...(dekkFlater as [any])));
+      dekkSamlet = pc.union(...(dekkFlater as [any]));
+      skjult = pc.intersection(egen, dekkSamlet);
     } catch { return b; }
     if (areal(skjult) < a0 * 1e-3) return b;                // ingenting av betydning er dekket
     let synlig: any;
@@ -153,13 +158,50 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     foer += a0;
     // naar dekoren minst `min` inn under bildelen? Ligger noe av det skjulte
     // lenger inn enn `min`, rekker den langt nok et sted
-    try { if (areal(pc.difference(skjult, utvid(synlig, min))) < a0 * 1e-4) korte.add(b); } catch { /* bare melding */ }
+    let kort = false;
+    try { kort = areal(pc.difference(skjult, utvid(synlig, min))) < a0 * 1e-4; } catch { /* bare melding */ }
+    if (kort) korte.add(b);
+    /**
+     * Det tillatte: det synlige utvidet med `luft`. Smaa knotter i det
+     * synlige (en flekk sort ved speilfoten paa Kia) ga en halvsirkel paa
+     * 50 mm radius oppaa A-en (Eirik 16.11.2026: «hvor kommer halvsirkelen
+     * fra?»). Det synlige aapnes derfor foerst (krympes og vokser tilbake
+     * med KNOTT_ANDEL x min), og knottene faar bare KNOTT_ANDEL x min rundt
+     * seg. Alt som synes er fortsatt med.
+     */
+    const r = min * KNOTT_ANDEL;
+    let tillatt: any;
+    try {
+      const aapnet = utvid(utvid(synlig, -r), r);
+      tillatt = utenHull(pc.union(utvid(aapnet.length ? aapnet : synlig, luft), utvid(synlig, r)));
+    } catch { tillatt = utenHull(utvid(synlig, luft)); }
     let ny: any;
-    try { ny = pc.intersection(egen, utenHull(utvid(synlig, luft))); } catch { return b; }
+    try { ny = pc.intersection(egen, tillatt); } catch { return b; }
+    /**
+     * Gaar dekoren for kort inn under bildelen, forlenges den (Eirik
+     * 16.11.2026: «forlenge den selv»). Det skjulte vokser `luft` videre
+     * inn under bildelen, men bare i dekorens egen retning: en liggende
+     * form vokser sidelengs innenfor sin egen hoeyde, en staaende opp og ned
+     * innenfor sin egen bredde. Slik blir enden av en stripe lengre, ikke
+     * tykkere. Det lagt til ligger under bildelen og synes ikke.
+     */
+    if (kort) {
+      try {
+        const bb = { x0: Math.min(...egen.flat(2).map((q: Pt) => q[0])), x1: Math.max(...egen.flat(2).map((q: Pt) => q[0])),
+                     y0: Math.min(...egen.flat(2).map((q: Pt) => q[1])), y1: Math.max(...egen.flat(2).map((q: Pt) => q[1])) };
+        const L = luft;
+        // dekorens retning: en liggende form vokser sidelengs, en staaende opp og ned
+        const kryss = bb.x1 - bb.x0 >= bb.y1 - bb.y0
+          ? [[[[bb.x0 - L, bb.y0], [bb.x1 + L, bb.y0], [bb.x1 + L, bb.y1], [bb.x0 - L, bb.y1], [bb.x0 - L, bb.y0]]]]
+          : [[[[bb.x0, bb.y0 - L], [bb.x1, bb.y0 - L], [bb.x1, bb.y1 + L], [bb.x0, bb.y1 + L], [bb.x0, bb.y0 - L]]]];
+        const tillegg = pc.intersection(utvid(skjult, L), dekkSamlet, kryss, utenHull(utvid(synlig, L)));
+        if (areal(tillegg) > 0) { ny = pc.union(ny, tillegg); lagtTil++; korte.delete(b); }
+      } catch { /* forlengelsen er en bonus; uten den meldes det */ }
+    }
     const a1 = areal(ny);
-    if (!ny.length || a0 - a1 < a0 * 1e-3) return b;
+    if (!ny.length || Math.abs(a0 - a1) < a0 * 1e-3) return b;
     const nyBane = { ...b } as Bane;
-    fjernet += a0 - a1;
+    fjernet += Math.max(0, a0 - a1);
     const segs: any[] = [];
     for (const poly of ny) for (const r of poly) {
       segs.push({ t: "m", p: r[0] });
@@ -175,5 +217,5 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (korte.has(b)) { korte.delete(b); korte.add(nyBane); }
     return nyBane;
   });
-  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn };
+  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil };
 }

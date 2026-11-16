@@ -48,6 +48,24 @@ for (const p of formet.plasseringer) {
   const utenfor = pc.difference([[[...r, r[0]]]], [[[...p.kiss!, p.kiss![0]]]]);
   sjekk(!utenfor.length, `${p.id === 0 ? "triangel" : "kvadrat"}: kiss-boksen ligger utenfor rammen`);
 }
+// thru-cut kan ikke vaere konkav: rivner og blir slapt (Eirik 16.11.2026)
+for (const p of formet.plasseringer) {
+  const r = p.ramme!;
+  let pos = 0, neg = 0;
+  for (let i = 0; i < r.length; i++) {
+    const a = r[i], b = r[(i + 1) % r.length], c = r[(i + 2) % r.length];
+    const k = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (k > 1e-6) pos++; else if (k < -1e-6) neg++;
+  }
+  sjekk(!(pos && neg), `${p.id === 0 ? "triangel" : "kvadrat"}: rammen er konveks`);
+}
+// en form med innbuktning (U) faar likevel en konveks ramme
+{
+  const u = motiv("U", [[0, 0], [300, 0], [300, 300], [200, 300], [200, 100], [100, 100], [100, 300], [0, 300]], 1);
+  const pu = pakkFritt([u, kv], geo).plasseringer.find((p) => p.id === 0)!;
+  const r = pu.ramme ?? [];
+  sjekk(!r.length || !r.some(([x, y]) => x > pu.x + 100 && x < pu.x + 200 && y > pu.y + 20), "U-en faar ingen innbuktning i rammen");
+}
 // triangelet faar en skraa ramme, ikke et rektangel
 const t = formet.plasseringer.find((p) => p.id === 0)!;
 sjekk(t.ramme!.length >= 3 && t.ramme!.length < 12 && !t.ramme!.some(([x, y]) => Math.abs(x - t.x) < 1 && Math.abs(y - t.y) < 1),

@@ -122,7 +122,8 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx bilfarger.ts  # bilens deler er ikke dekor, svart logo-flate er ikke lakk
     npx tsx lagbunn.ts    # ytterkanten i bunn, levende tekst og doble merker meldes
     npx tsx kiatest.ts    # spotfarger, sort ved siden av kuloer, bil inne i stripene
-    npx tsx rammetest.ts  # formede rammer med rett bunn
+    npx tsx rammetest.ts  # formede, konvekse rammer med rett bunn
+    npx tsx klipptest.ts  # kutt og forlengelse under bildelene
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -280,7 +281,12 @@ med hullene fylt, så håndtak og speil inne i dekoren aldri blir hull.
 Små, tynne synlige øyer (under 5 % av største synlige del og tynnere enn
 10 mm) er gjennomsyn, for eksempel sort A mellom hjulbue og dekk, og styrer
 ikke kuttet. Går dekoren mindre enn `KLIPP_MIN_MM = 20` inn under en
-bildel, meldes det: montøren skjærer til for hånd og trenger overlapp.
+bildel, **forlenges den** til 50 mm under bildelen, i sin egen retning (en
+liggende stripe blir lengre, ikke tykkere), og det meldes. Lar den seg
+ikke forlenge, meldes det. Små knotter i det synlige (en sort flekk ved
+speilfoten ga en halvsirkel på 50 mm radius) får bare 10 mm rundt seg:
+det synlige åpnes med `KNOTT_ANDEL` før det utvides. `test/klipptest.ts`
+vokter kutt, forlengelse og knotter.
 Dette er ikke et unntak fra «motoren fjerner aldri noe»: alt som synes,
 står. Det meldes med spart areal. `test/kiatest.ts` vokter det.
 
@@ -564,9 +570,10 @@ Like filnavn (samme folie og prosess på to ark) får `del 1 av 2`.
 
 **Rammene følger elementets form, bunnen er alltid rett** (Eirik
 16.11.2026). Thru-cut-rammen og kiss-cut-boksen var rektangler. Nå lager
-`src/ramme.ts` rammen av elementets omriss (alle fargene, hullene fylt)
-utvidet med bleed, med alt under fylt ned til en rett bunn og et bånd
-langs bunnen så rammen er ett stykke. Kiss-boksen er rammen utvidet med
+`src/ramme.ts` rammen som det konvekse skallet rundt elementets omriss
+(alle fargene) utvidet med bleed og den rette bunnen. **Thru-cut kan
+aldri være konkav** (Eirik 16.11.2026): i et innvendig hjørne rivner
+folien, og en innbuktning gjør arket slapt. Kiss-boksen er rammen utvidet med
 `boksKiss`. Bunnen er grunnlinjen montøren retter inn etter. `pakk.ts`
 pakker rammene på et høydeprofil, speilvendt så toppene lager daler, og
 speiler oppsettet tilbake. Formede rammer brukes bare når arket blir minst
@@ -574,8 +581,18 @@ speiler oppsettet tilbake. Formede rammer brukes bare når arket blir minst
 til 5,30 m. `test/rammetest.ts` vokter rett bunn, kiss utenfor rammen og
 gapet mellom rammene.
 
-**Feilsignatur:** en ramme uten rett bunn, eller to rammer nærmere hverandre
-enn `gap`.
+**Feilsignatur:** en ramme uten rett bunn, en konkav ramme, eller to rammer
+nærmere hverandre enn `gap`.
+
+**Lange tekster skjøtes i mellomrommet mellom bokstavene** (Eirik
+16.11.2026). En tekst lengre enn det som får plass på tvers (Kia: «RØR -
+ELEKTRO - ENERGI», 1233 mm) måtte ligge på langs og ga et ark på 1273 mm
+for nesten ingenting. Samme kandidatregel som stripene, men med flere
+deler: skjøten legges i glippen (minst `TEKST_GLIPPE_MM = 3`) nærmest
+like lange stykker, og stykket før tar med `TEKST_PASS_MM = 10` av neste
+bokstav som passmerke. Montøren legger neste stykke så bokstaven dekker
+stubben. Kia: tekstarket fra 1273 til 399 mm, hele jobben fra 5,55 til
+4,40 m. `test/kiatest.ts` vokter det.
 
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er

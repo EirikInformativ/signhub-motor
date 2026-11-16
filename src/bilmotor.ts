@@ -256,6 +256,9 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       `${(r.fjernet / MM / MM * malestokk * malestokk / 1e6).toFixed(2).replace(".", ",")} m² folie ` +
       `(${(r.fjernet / r.foer * 100).toFixed(0)} % av de kuttede delene). Alt som synes paa bilen er med` +
       (r.gjennomsyn ? ", bortsett fra smaa gjennomsyn mellom bildelene (for eksempel mellom hjulbue og dekk)." : "."));
+    if (r.forlenget) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gikk mindre enn ${KLIPP_MIN_MM} mm inn ` +
+      `under bilens deler og er forlenget til ${KLIPP_LUFT_MM} mm (${r.forlenget} ${r.forlenget === 1 ? "del" : "deler"}), ` +
+      "saa montoeren har noe aa skjaere til etter. Det som er lagt til, ligger under bildelen og synes ikke.");
     if (r.kortForbi.length) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gaar mindre enn ` +
       `${KLIPP_MIN_MM} mm inn under bilens deler (${r.kortForbi.length} ${r.kortForbi.length === 1 ? "del" : "deler"}). ` +
       "Montoeren trenger noe aa skjaere til etter. Forleng dekoren i skissen.");
