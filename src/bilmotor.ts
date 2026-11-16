@@ -209,6 +209,20 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   const elementer: BilElement[] = [];
   /** banene som faktisk ligger i hvert elements PDF, til passmerkene */
   const brukteBaner = new Map<BilElement, Bane[]>();
+  /**
+   * Hvert omraade deles i delene sine foer det blir elementer (Eirik
+   * 16.11.2026, Kia PV5 310079): teksten «RØR - ELEKTRO - ENERGI» staar ved
+   * A-en, den gronne trekanten over den lange stripen, og «åtg.no» over
+   * stripen bak. Holdes de sammen, maa hele rammen skjaeres, og det er
+   * nesten bare luft. De skal skjaeres hver for seg.
+   *
+   * Regelen: delene slaas bare sammen naar de ligger naer hverandre
+   * (DEL_GLIPPE_MM) OG den felles rammen ikke er stort mer enn delene selv
+   * (DEL_LUFT). Bokstavene i en tekst og delene av ÅTG gir felles ramme
+   * 1,3 til 1,4 ganger delene; A-en med stripen gir 2,7. En logo holdes
+   * sammen, mens tekst og striper som bare staar ved siden av, skilles.
+   */
+  const arbeid: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
   for (const o of funn.omraader) {
     /**
      * Bilens egne streker og flater ligger ofte inne i rammen til en stor
@@ -226,6 +240,13 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       Math.abs(x.y0 - b.boks.y0) < T && Math.abs(x.x1 - b.boks.x1) < T && Math.abs(x.y1 - b.boks.y1) < T);
     const valgte = baner.filter((b) => andel(b, o) >= 0.9 && !erBil(b) && likBoks(b));
     if (!valgte.length) continue;
+    const deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
+    if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
+    deler.forEach((d, k) => arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d }));
+    merknader.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
+      "(tekst og striper som bare staar ved siden av hverandre).");
+  }
+  for (const { o, valgte } of arbeid) {
     // ogsaa her skal en feil si hvilket element den gjelder, ikke bare hvilken farge
     const lesTrygt = async (bytes: Uint8Array) => {
       try {
@@ -371,6 +392,105 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     visninger: funn.visninger.map((x) => ({ navn: x.navn, breddeEkteMm: x.breddeEkteMm, hoydeEkteMm: x.hoydeEkteMm })),
     elementer, forside, merknader, levendeTekst,
   };
+}
+
+
+/** En bane delt i delbaner, en per «m», med egen ramme. */
+function delbaner(b: Bane): { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] {
+  const ut: { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] = [];
+  let cur: any[] = [];
+  const lukk = () => {
+    if (!cur.length) return;
+    const pts: [number, number][] = [];
+    for (const s of cur) { if (s.p) pts.push(s.p); if (s.a) pts.push(s.a, s.b, s.c); }
+    if (pts.length) ut.push({ kilde: b, segs: cur, boks: {
+      x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
+      x1: Math.max(...pts.map((p) => p[0])), y1: Math.max(...pts.map((p) => p[1])) } });
+    cur = [];
+  };
+  for (const s of b.segs as any[]) { if (s.t === "m") lukk(); cur.push(s); }
+  lukk();
+  return ut;
+}
+
+/**
+ * Grupperer delbanene i deler som ligger naermere hverandre enn `glippe`
+ * (tegnede enheter), og setter hver del sammen igjen til baner. Delbaner fra
+ * samme bane i samme del blir samme bane igjen, saa hull i bokstaver (som
+ * fylles etter partallsregelen) blir staaende som hull.
+ */
+export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
+  const d = baner.flatMap(delbaner);
+  const p = d.map((_, i) => i);
+  const f = (i: number): number => (p[i] === i ? i : (p[i] = f(p[i])));
+  const av = (a: Bane["boks"], b: Bane["boks"]) => Math.hypot(
+    Math.max(0, a.x0 - b.x1, b.x0 - a.x1), Math.max(0, a.y0 - b.y1, b.y0 - a.y1));
+  for (let i = 0; i < d.length; i++)
+    for (let j = i + 1; j < d.length; j++)
+      if (av(d[i].boks, d[j].boks) <= glippe) p[f(i)] = f(j);
+  const grupper = new Map<number, typeof d>();
+  d.forEach((x, i) => { const r = f(i); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
+  return [...grupper.values()].map((g) => {
+    const perKilde = new Map<Bane, typeof d>();
+    for (const x of g) { if (!perKilde.has(x.kilde)) perKilde.set(x.kilde, []); perKilde.get(x.kilde)!.push(x); }
+    // behold tegnerekkefoelgen
+    return baner.filter((b) => perKilde.has(b)).map((b) => {
+      const xs = perKilde.get(b)!;
+      return { ...b, segs: xs.flatMap((x) => x.segs), boks: {
+        x0: Math.min(...xs.map((x) => x.boks.x0)), y0: Math.min(...xs.map((x) => x.boks.y0)),
+        x1: Math.max(...xs.map((x) => x.boks.x1)), y1: Math.max(...xs.map((x) => x.boks.y1)) } } as Bane;
+    });
+  });
+}
+
+/** delene innenfor denne avstanden (ekte mm) kan hoere sammen */
+const DEL_GLIPPE_MM = 50;
+/** under denne avstanden er det samme del (bokstav og hull, ring og A) */
+const DEL_FIN_MM = 10;
+/** felles ramme over dette ganger delenes egne rammer: for mye luft */
+const DEL_LUFT = 2;
+
+function samleDeler(baner: Bane[], fin: number, glippe: number): Bane[][] {
+  let g = delIDeler(baner, fin);
+  const ramme = (bs: Bane[]) => ({
+    x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
+    x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
+  const ar = (r: Bane["boks"]) => (r.x1 - r.x0) * (r.y1 - r.y0);
+  const av = (a: Bane["boks"], b: Bane["boks"]) => Math.hypot(
+    Math.max(0, a.x0 - b.x1, b.x0 - a.x1), Math.max(0, a.y0 - b.y1, b.y0 - a.y1));
+  for (;;) {
+    let best: [number, number, number] | null = null;
+    for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) {
+      const ri = ramme(g[i]), rj = ramme(g[j]);
+      const d = av(ri, rj);
+      if (d > glippe) continue;
+      const felles = ar(ramme([...g[i], ...g[j]]));
+      if (felles > DEL_LUFT * (ar(ri) + ar(rj))) continue;
+      if (!best || d < best[2]) best = [i, j, d];
+    }
+    if (!best) break;
+    const [i, j] = best;
+    // samme bane delt paa to deler blir en bane igjen
+    const samlet = [...g[i], ...g[j]];
+    g = g.filter((_, k) => k !== i && k !== j);
+    g.push(slaaSammenBaner(samlet, baner));
+  }
+  return g;
+}
+
+/** Baner som kommer fra samme opprinnelige bane slaas sammen, i tegnerekkefoelge. */
+function slaaSammenBaner(deler: Bane[], original: Bane[]): Bane[] {
+  const ut: Bane[] = [];
+  for (const o of original) {
+    const mine = deler.filter((d) => d.farge === o.farge && d.strek === o.strek && d.fyll === o.fyll &&
+      d.bredde === o.bredde && d.segs.every((s: any) => (o.segs as any[]).includes(s)));
+    if (!mine.length) continue;
+    const segs = (o.segs as any[]).filter((s) => mine.some((m) => (m.segs as any[]).includes(s)));
+    ut.push({ ...o, segs, boks: {
+      x0: Math.min(...mine.map((m) => m.boks.x0)), y0: Math.min(...mine.map((m) => m.boks.y0)),
+      x1: Math.max(...mine.map((m) => m.boks.x1)), y1: Math.max(...mine.map((m) => m.boks.y1)) } } as Bane);
+  }
+  return ut;
 }
 
 /** passmerkets bredde og hvor langt det gaar inn under nabo-elementet, i ekte mm */
