@@ -652,6 +652,11 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   `KANT_FORTRINN` (10 %) kortere ark. Glipper under `KANT_GLIPPE_MM` (5 mm)
   mellom to thru-linjer lukkes: den korteste kanten flyttes ut til den
   lengste (`kantRekt`), saa den lange linjen er rett.
+- Kant i kant vinner ogsaa naar arket blir inntil `KANT_TOLERANSE_MM`
+  (10 mm) lengre. `pakkKant` snur et element 180° (`snu`) saa en rett kant
+  vender mot naboens rette kant: striper som smalner av, med én rett lang
+  kant, legges parvis med felles thru-linje. `slaaSammenLinjer` og
+  `strekkUt` tar hensyn til `snu`.
 - Et helt felt (én farge, konvekst, ikke stripe) dreies til minste ramme
   (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
 - `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i

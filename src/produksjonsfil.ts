@@ -576,9 +576,14 @@ export function slaaSammenLinjer(motiver: Motiv[], ark: Ark, geo: Geo): Pkt[][] 
   for (const p of ark.plasseringer) {
     const m = motiver[p.id];
     const b = m.bbox, k = m.skala / MM, bl = geo.bleed;
-    const til = ([X, Y]: number[]): Pkt => p.rotated
+    const til0 = ([X, Y]: number[]): Pkt => p.rotated
       ? [p.x + bl + (b[3] - Y) * k, p.y + p.h - bl - (X - b[0]) * k]
       : [p.x + bl + (X - b[0]) * k, p.y + p.h - bl - (Y - b[1]) * k];
+    // snudd 180° innenfor plasseringen, som iElement
+    const til = (q: number[]): Pkt => {
+      const [x, y] = til0(q);
+      return p.snu ? [2 * p.x + p.w - x, 2 * p.y + p.h - y] : [x, y];
+    };
     for (const poly of m.flate) for (const r of poly) {
       for (let i = 0; i < r.length - 1; i++) {
         const a = til(r[i]), c = til(r[i + 1]);

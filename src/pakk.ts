@@ -197,7 +197,10 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
   let kant = false;
   if (motiver.length && motiver.every((m) => m.sider)) {
     const k = pakkKant(motiver, items, brukbar, geo.gap, tillatRotasjon);
-    if (k && k.h < best.h + 1e-6) { best = k; kant = true; }
+    // enveis thru er verdt litt lengde: kant i kant vinner ogsaa naar arket
+    // blir inntil KANT_TOLERANSE_MM lengre (Eirik 16.11.2026: «bruk alltid
+    // enveisthru der det er mulig»)
+    if (k && k.h <= best.h + KANT_TOLERANSE_MM) { best = k; kant = true; }
   }
 
   /**
@@ -392,6 +395,7 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
     for (const r of rot ? [true, false] : [false]) {
       const sky = new Skyline(brukbar);
       const ut: Plassering[] = [];
+      const padUt: ReturnType<typeof retning>[] = [];
       let ok = true;
       for (const it of items.slice().sort(st.key)) {
         const m = motiver[it.id];
@@ -403,9 +407,27 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
           if (f && (!valgt || f.top < valgt.top - 1e-9)) valgt = { x: f.x, y: f.y, w, h, rr, top: f.top, p };
         }
         if (!valgt) { ok = false; break; }
+        /**
+         * Snudd 180° bytter venstre og hoeyre side (og topp og bunn). En
+         * stripe som smalner av har bare én rett lang kant; ligger naboen
+         * til venstre med sin rette kant mot oss, snus stripen saa dens
+         * rette kant vender mot naboens, og linjen skjaeres én gang (Eirik
+         * 16.11.2026: «holder jo at en av de lange kantene er helt bein»).
+         * Ellers snus den saa den rette kanten vender mot hoeyre, klar for
+         * neste.
+         */
+        let snu = false;
+        const p0 = valgt.p, p1 = { pl: p0.pr, pr: p0.pl, pt: p0.pb, pb: p0.pt };
+        if (p0.pl !== p1.pl) {
+          const naboRett = ut.some((q, qi) => Math.abs(q.x + q.w + padUt[qi].pr - valgt!.x) < 1e-6 && padUt[qi].pr === 0 &&
+            q.y < valgt!.y + valgt!.h && valgt!.y < q.y + q.h);
+          snu = naboRett ? p1.pl === 0 : p1.pr === 0;
+        }
+        const p = snu ? p1 : p0;
         sky.legg(valgt.x, valgt.y, valgt.w, valgt.h);
-        ut.push({ x: valgt.x + valgt.p.pl, y: valgt.y + valgt.p.pt,
-          w: valgt.rr ? it.h : it.w, h: valgt.rr ? it.w : it.h, rotated: valgt.rr, id: it.id });
+        padUt.push(p);
+        ut.push({ x: valgt.x + p.pl, y: valgt.y + p.pt,
+          w: valgt.rr ? it.h : it.w, h: valgt.rr ? it.w : it.h, rotated: valgt.rr, id: it.id, ...(snu ? { snu: true } : {}) });
       }
       if (!ok || !ut.length) continue;
       const h = Math.max(...ut.map((p) => p.y + p.h));
@@ -425,6 +447,8 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
 const NEST_RES = 2.5;
 /** Formede rammer maa gi saa mye kortere ark for aa slaa kant i kant. */
 const KANT_FORTRINN = 0.1;
+/** Kant i kant vinner selv om arket blir inntil saa mye lengre. */
+const KANT_TOLERANSE_MM = 10;
 const MM = 72 / 25.4;
 function nestForm(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, rot: boolean):
   { ut: Plassering[]; h: number; navn: string } | null {

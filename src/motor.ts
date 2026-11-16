@@ -709,14 +709,17 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
   const feltV = fra, feltH = til;
   const feltO = Math.min(...ps.map((p) => p.y)), feltN = Math.max(...ps.map((p) => p.y + p.h));
   // arkretning for hver side av elementet
-  const retning = (rot: boolean, side: string) => (rot
+  const retning0 = (rot: boolean, side: string) => (rot
     ? ({ venstre: "N", hoyre: "O", bunn: "H", topp: "V" } as any)[side]
     : ({ venstre: "V", hoyre: "H", bunn: "N", topp: "O" } as any)[side]) as "V" | "H" | "O" | "N";
+  const motsatt = { V: "H", H: "V", O: "N", N: "O" } as const;
+  // snudd 180° (pakkKant): hver side vender motsatt vei paa arket
+  const retning = (rot: boolean, side: string, snu = false) => (snu ? motsatt[retning0(rot, side)] : retning0(rot, side)) as "V" | "H" | "O" | "N";
   const rettMot = (q: any, mot: "V" | "H" | "O" | "N") => {
     const sd = motiver[q.id].sider; if (!sd) return false;
     // siden av naboen som vender mot oss, i naboens egen retning
     const arkSide = { V: "H", H: "V", O: "N", N: "O" }[mot];
-    const idx = (["venstre", "hoyre", "bunn", "topp"] as const).findIndex((x) => retning(q.rotated, x) === arkSide);
+    const idx = (["venstre", "hoyre", "bunn", "topp"] as const).findIndex((x) => retning(q.rotated, x, q.snu) === arkSide);
     return idx >= 0 && sd[idx];
   };
   for (const p of ps) {
@@ -724,7 +727,7 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
     if (!e.forleng?.size || e.antall !== 1 || e.deler.length !== 1) continue;
     let totalt = 0;
     for (const side of e.forleng) {
-      const r = retning(p.rotated, side);
+      const r = retning(p.rotated, side, p.snu);
       const andre = ps.filter((q) => q !== p);
       const overlappY = (q: any) => q.y < p.y + p.h - 1e-6 && p.y < q.y + q.h - 1e-6;
       const overlappX = (q: any) => q.x < p.x + p.w - 1e-6 && p.x < q.x + q.w - 1e-6;
