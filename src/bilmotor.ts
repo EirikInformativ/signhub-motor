@@ -18,7 +18,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
@@ -354,7 +354,12 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       if (se.lav) forleng.push(liggende ? "venstre" : "bunn");
       if (se.hoy) forleng.push(liggende ? "hoyre" : "topp");
     }
-    let pdf = await skrivPdf(valgte, undefined, forleng);
+    // bilens naturlige skjoeter langs en stripe: der skal den skjoetes (Vito)
+    const fylte = raa.filter((b) => b.fyll);
+    const skjot = fylte.length >= 1 && fylte.length <= 2 ? skjoterLangs(fylte.slice().sort((a, b) =>
+      (b.boks.x1 - b.boks.x0) * (b.boks.y1 - b.boks.y0) - (a.boks.x1 - a.boks.x0) * (a.boks.y1 - a.boks.y0))[0],
+      baner, (x) => alleDekor.has(x), (SKJOT_TOL_MM / malestokk) * MM, (SKJOT_KANT_MM / malestokk) * MM) : [];
+    let pdf = await skrivPdf(valgte, undefined, forleng, skjot);
     let brukte = valgte;
     let per = await lesTrygt(pdf);
     let tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
@@ -412,7 +417,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
        */
       const igjen = valgte.filter((b) => !horerTilPlaten(b, platehex));
       if (igjen.length && igjen.length < valgte.length) {
-        pdf = await skrivPdf(igjen, undefined, forleng);
+        pdf = await skrivPdf(igjen, undefined, forleng, skjot);
         brukte = igjen;
         // alt som meldes utledes na av den fila som faktisk leveres
         per = await lesTrygt(pdf);
@@ -704,6 +709,9 @@ const DEL_GLIPPE_MM = 50;
 const DEL_FIN_MM = 10;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
+/** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
+const SKJOT_TOL_MM = 15;
+const SKJOT_KANT_MM = 200;
 /** tekst med grunnlinjer som avviker mer enn dette, er ikke samme tekst (grader) */
 const TEKST_VINKEL = 5;
 /** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */

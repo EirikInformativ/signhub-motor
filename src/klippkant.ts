@@ -332,3 +332,58 @@ export function enderVedKant(b: Bane, alle: Bane[], erDekor: (x: Bane) => boolea
   const lav = kryss.some((k) => Math.abs(k - u0) < tol), hoy = kryss.some((k) => Math.abs(k - u1) < tol);
   return lav || hoy ? { ux: st.ux, uy: st.uy, lav, hoy } : undefined;
 }
+
+
+/**
+ * Bilens naturlige skjoeter langs en stripe (Eirik 16.11.2026, Vito:
+ * stripen skjoetes i doerskjoeten, «viktig da med god overlapp slik at vi
+ * kan bruke bilens naturlige skjoet»). En skjoet er en av bilens linjer som
+ * krysser hele stripen paa tvers: den krysser baade nedre kvartil, midten og
+ * oevre kvartil av stripens bredde paa samme sted (innenfor tol). Linjer
+ * naer endene (under kant) teller ikke. Gir stedene som andel av lengden,
+ * maalt fra enden med lavest x (liggende stripe) eller lavest y (staaende).
+ */
+export function skjoterLangs(b: Bane, alle: Bane[], erDekor: (x: Bane) => boolean, tol: number, kant: number): number[] {
+  if (!b.fyll) return [];
+  const egen = flate(ringerAv(b.segs as any[]));
+  if (!egen) return [];
+  // stripen kan ha knekk i endene (Vito: smaa haker opp ved hjulbuene); da
+  // gjelder rammens lange akse
+  const bw = b.boks.x1 - b.boks.x0, bh = b.boks.y1 - b.boks.y0;
+  const st = stripeRetning(egen) ?? (Math.max(bw, bh) >= 8 * Math.min(bw, bh) ? (bw >= bh ? { ux: 1, uy: 0 } : { ux: 0, uy: 1 }) : null);
+  if (!st) return [];
+  const pk = (egen.flat(2) as Pt[]);
+  const u = pk.map((q) => q[0] * st.ux + q[1] * st.uy), v = pk.map((q) => -q[0] * st.uy + q[1] * st.ux);
+  const u0 = Math.min(...u), u1 = Math.max(...u);
+  // bredden maales paa midten av stripen, ikke paa hakene i endene
+  const midt = pk.filter((q, i) => u[i] > u0 + 0.2 * (u1 - u0) && u[i] < u1 - 0.2 * (u1 - u0));
+  const vv = (midt.length ? midt : pk).map((q) => -q[0] * st.uy + q[1] * st.ux);
+  const v0 = Math.min(...vv), v1 = Math.max(...vv);
+  const nivaa = [0.25, 0.5, 0.75].map((t) => v0 + t * (v1 - v0));
+  const kryss: number[][] = nivaa.map(() => []);
+  for (const o of alle) {
+    if (o === b || erDekor(o) || o.gradient || !overlapper(o.boks, b.boks)) continue;
+    for (const r of ringerAv(o.segs as any[])) {
+      const lukket = [...r, r[0]];
+      for (let i = 0; i < lukket.length - 1; i++) {
+        const [a, c] = [lukket[i], lukket[i + 1]];
+        const va = -a[0] * st.uy + a[1] * st.ux, vc = -c[0] * st.uy + c[1] * st.ux;
+        nivaa.forEach((vm, k) => {
+          if ((va - vm) * (vc - vm) > 0 || va === vc) return;
+          const t = (vm - va) / (vc - va);
+          kryss[k].push((a[0] + t * (c[0] - a[0])) * st.ux + (a[1] + t * (c[1] - a[1])) * st.uy);
+        });
+      }
+    }
+  }
+  const ut: number[] = [];
+  for (const k of kryss[1]) {
+    if (k < u0 + kant || k > u1 - kant) continue;
+    if (!kryss[0].some((x) => Math.abs(x - k) < tol) || !kryss[2].some((x) => Math.abs(x - k) < tol)) continue;
+    if (ut.some((x) => Math.abs(x - k) < tol)) continue;
+    ut.push(k);
+  }
+  // andel fra enden med lavest x (eller y), uansett hvilken vei retningen peker
+  const snu = Math.abs(st.ux) >= Math.abs(st.uy) ? st.ux < 0 : st.uy < 0;
+  return ut.map((k) => { const f = (k - u0) / (u1 - u0); return snu ? 1 - f : f; }).sort((a, b) => a - b);
+}

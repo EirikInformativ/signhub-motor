@@ -59,6 +59,8 @@ const SPOR_MM = 4;
 const RAMME_FYLL = 0.995;
 /** overlapp i skjoeten paa lange striper, mm */
 const SKJOT_MM = 10;
+/** stykket gaar minst saa langt forbi bilens skjoet (Eirik 16.11.2026: «minimum 3 cm») */
+const SKJOT_BIL_MM = 30;
 /** en stripe er minst saa mange ganger lengre enn hoy */
 const STRIPE_FORHOLD = 8;
 /** tekst skjoetes i mellomrom mellom bokstaver paa minst saa mye */
@@ -469,6 +471,15 @@ const naerHex = (a: string, b: string) => {
   return Math.max(...x.map((v, i) => Math.abs(v - y[i]))) <= 3 / 255;
 };
 
+/** Bilens skjoeter langs en stripe (PDF-noekkelord fra bilskissen). */
+async function lesSkjoter(pdf: Uint8Array): Promise<number[]> {
+  try {
+    const d = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
+    const m = /signhub-skjot:([\d.,]+)/.exec(d.getKeywords() ?? "");
+    return m ? m[1].split(",").map(Number).filter((x) => x > 0 && x < 1) : [];
+  } catch { return []; }
+}
+
 /** Endene en bilskisse har merket som skjult under bilen (PDF-noekkelord). */
 async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
   try {
@@ -662,6 +673,8 @@ interface Elem {
   omriss: MultiPoly;
   /** sider (i elementets retning) som ligger under bilen og kan forlenges paa arket */
   forleng?: Set<string>;
+  /** bilens naturlige skjoeter langs en stripe, som andel av lengden (bilskisse) */
+  skjoter?: number[];
   /**
    * Tett gruppe (tettArk): thru-cut-linjen rundt bitene, i elementets
    * enheter. Bitene selv kiss-cuttes.
@@ -708,6 +721,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   for (const l of b.linjer) {
     const forleng = await lesForleng(l.pdf);
     const spotter = await lesSpot(l.pdf);
+    const skjoter = await lesSkjoter(l.pdf);
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
     // som star igjen nar hvitt er visket bort.
     const g0 = await medNavn<Geometri | GeometriPerFarge>(l.navn, () =>
@@ -1024,7 +1038,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
                      bbox: boks, skala,
                      breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
-                     ...(forleng.size ? { forleng } : {}) });
+                     ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}) });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -1083,6 +1097,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      */
     const biterAv = new Map<Elem, Elem[]>();
     const erTekst = new Set<Elem>();
+    const bilskjot = new Set<Elem>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
       const f = e.deler.length === 1 ? e.deler[0].flate : [];
@@ -1093,7 +1108,39 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       const lengdeMm = (a: number, z: number) => ((z - a) * e.skala) / MM;
       /** stykkene som [fra, til] langs elementet */
       let stykker: [number, number][] | null = null;
-      if (f.length === 1 && f[0].length === 1) {
+      /**
+       * Har bilen en naturlig skjoet langs stripen (doerskjoeten), skjoetes
+       * stripen der, og hvert stykke gaar minst SKJOT_BIL_MM inn paa den
+       * andre siden (Eirik 16.11.2026, Vito: «minimum 3 cm»). Montoeren
+       * legger skjoeten i bilens egen skjoet. Det velges faerrest mulig
+       * skjoeter som gir stykker som faar plass paa tvers.
+       */
+      if (f.length === 1 && f[0].length === 1 && e.skjoter?.length) {
+        const ov = mmTil(SKJOT_BIL_MM);
+        const steder = e.skjoter.map((x) => b0 + x * (b1 - b0));
+        const ok = (kutt: number[]) => {
+          const g = [b0, ...kutt, b1];
+          return g.slice(1).every((z, i) => lengdeMm(Math.max(b0, g[i] - (i ? ov : 0)), Math.min(b1, z + (i < g.length - 2 ? ov : 0))) <= maksLengde);
+        };
+        // alle delmengder av skjoetene, faerrest og jevnest foerst
+        let beste: number[] | null = null;
+        const n = steder.length;
+        for (let maske = 1; maske < (1 << Math.min(n, 10)); maske++) {
+          const kutt = steder.filter((_, i) => maske & (1 << i));
+          if (!ok(kutt)) continue;
+          const g = [b0, ...kutt, b1];
+          const ujevn = Math.max(...g.slice(1).map((z, i) => z - g[i]));
+          const bg = beste ? [b0, ...beste, b1] : null;
+          if (!beste || kutt.length < beste.length ||
+              (kutt.length === beste.length && ujevn < Math.max(...bg!.slice(1).map((z, i) => z - bg![i])))) beste = kutt;
+        }
+        if (beste) {
+          const g = [b0, ...beste, b1];
+          stykker = g.slice(1).map((z, i) => [Math.max(b0, g[i] - (i ? ov : 0)), Math.min(b1, z + (i < g.length - 2 ? ov : 0))] as [number, number]);
+          bilskjot.add(e);
+        }
+      }
+      if (!stykker && f.length === 1 && f[0].length === 1) {
         // en stripe: like lange stykker med SKJOT_MM overlapp
         const n = Math.ceil(lang / maksLengde);
         const steg = (b1 - b0) / n, ov = mmTil(SKJOT_MM / 2);
@@ -1179,7 +1226,10 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         : erTekst.has(e)
           ? `${e.navn}: ${lang.toFixed(0)} mm lang tekst er skjoetet i ${biter.length} stykker i mellomrommet mellom bokstavene. ` +
             `Hvert stykke tar med ${TEKST_PASS_MM} mm av neste bokstav som passmerke: legg neste stykke slik at bokstaven dekker stubben.`
-          : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
+          : bilskjot.has(e)
+            ? `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker i bilens egen skjoet. ` +
+              `Hvert stykke gaar ${SKJOT_BIL_MM} mm inn paa den andre siden av skjoeten.`
+            : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
     }
     grupper.set(nokkel, sett());
   }
