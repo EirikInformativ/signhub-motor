@@ -894,6 +894,21 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     if (f._bygg) { f.bytes = await f._bygg(); delete f._bygg; }
   }
 
+  /**
+   * To ark kan faa samme navn: samme folie og samme prosess i to
+   * fargegrupper. Paa 309916 ble sort primaer baade paa arket med gull og
+   * paa arket med bare PROFF, og den ene fila skrev over den andre. Navnet
+   * faar da «del 1 av 2» foer skalaen, slik filnavnsystemet sier.
+   */
+  const like = new Map<string, any[]>();
+  for (const f of filer as any[]) if (f.slag === "produksjon") {
+    if (!like.has(f.navn)) like.set(f.navn, []);
+    like.get(f.navn)!.push(f);
+  }
+  for (const [navn, fs] of like) if (fs.length > 1) fs.forEach((f, i) => {
+    f.navn = navn.replace(/ 100%\.pdf$/, ` del ${i + 1} av ${fs.length} 100%.pdf`);
+  });
+
   if (utenWild.length) {
     advarsler.push(`For bredt for wild: ${utenWild.join(", ")}. ` +
       `Wild tar rull opp til ${grunngeo.wildMaksRull} mm og skjaerer ` +
