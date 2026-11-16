@@ -115,6 +115,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx platetest.ts  # bakgrunnsplaten holdes utenfor valgene
     npx tsx kuttvakt.ts   # vakten rundt kuttingen per element og farge
     npx tsx malestokk.ts  # den trykte malestokken er fasit
+    npx tsx skjultkutt.ts # ingen skjulte baner (Form XObject/klipp) i produksjonsfilene
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -347,6 +348,16 @@ ligger i repoet: `sepatest.ts`, `fargetest.ts`, `wildgrense.ts`,
 `breddetest.ts`, `smaltest.ts`, `blandet.ts`, `enfil.ts`, `farge2.ts`,
 `fvtest.ts`, `fvfarge.ts`, `prikk.ts`, `senter.ts` og `test_motor.ts`.
 De feiler på manglende fil, ikke på kode.
+
+**Ingen skjulte baner i produksjonsfilene.** Composer, som leser
+wild-fila, skjaerer alle baner, ogsaa usynlige. Motivet ble tidligere lagt
+inn som Form XObject, og BBox-en paa en Form XObject tolkes som en
+klippebane rundt logoen. Den ble skaaret som en ekstra rute paa logoens
+storrelse (funnet 16.11.2026). `byggProduksjonsfil` tegner derfor banene
+rett inn paa siden med `skjaereOps()`. `test/skjultkutt.ts` feiler hvis en
+produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
+
+**Feilsignatur:** en ekstra rute paa logoens storrelse i wild-skjaeringen.
 
 ## Ikke endre
 

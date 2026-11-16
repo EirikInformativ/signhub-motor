@@ -44,15 +44,20 @@ export interface Skjaereform {
  * flate: geometrien i kildens punktkoordinater
  * skala: hvor mange ganger formen forstorres naar den plasseres
  */
-export function byggSkjaereform(
-  doc: PDFDocument,
+/**
+ * Selve skjaerebanene som innholdsoperatorer, uten Form XObject rundt.
+ * Brukes i produksjonsfilene: en Form XObject har en BBox, og programmer
+ * som Composer tolker den som en klippebane og skjaerer den som en ekstra
+ * rute pa logoens storrelse (funnet 16.11.2026). Banene tegnes derfor rett
+ * inn pa siden. Operatorene forutsetter at kallstedet har satt cm og q/Q.
+ */
+export function skjaereOps(
   flate: MultiPoly,
-  bbox: [number, number, number, number],
   skala: number,
   fyllOp = "0 0 0 0 k",
   strekPt = 0.25,
   csNavn = "CSX"
-): Skjaereform {
+): { ops: string; ringer: number } {
   const ops: string[] = [
     fyllOp + "\n",
     `/${csNavn} CS\n1 SCN\n${(strekPt / Math.max(skala, 1e-9)).toFixed(6)} w\n`,
@@ -68,6 +73,20 @@ export function byggSkjaereform(
     // hullene skal ikke fylles, derfor partall-oddetall
     ops.push("B*\n");
   }
+  return { ops: ops.join(""), ringer };
+}
+
+export function byggSkjaereform(
+  doc: PDFDocument,
+  flate: MultiPoly,
+  bbox: [number, number, number, number],
+  skala: number,
+  fyllOp = "0 0 0 0 k",
+  strekPt = 0.25,
+  csNavn = "CSX"
+): Skjaereform {
+  const { ops: innhold, ringer } = skjaereOps(flate, skala, fyllOp, strekPt, csNavn);
+  const ops = [innhold];
 
   const cut = separasjon(doc, "CutContour", [0, 1, 0, 0]);
   const strm = doc.context.flateStream(ops.join(""));

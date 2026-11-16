@@ -14,7 +14,7 @@
  */
 import { PDFDocument, PDFName, PDFString, PDFRef } from "pdf-lib";
 import type { MultiPoly } from "./pdfbaner.ts";
-import { byggSkjaereform, separasjon } from "./skjaereform.ts";
+import { skjaereOps, separasjon } from "./skjaereform.ts";
 
 export const MM = 72 / 25.4;
 const KAPPA = 0.5522847498307936;
@@ -135,13 +135,17 @@ export async function byggProduksjonsfil(
     }));
   const oc = [ocg("Design"), ocg("Thru-cut"), ocg("Kiss-cut"), ocg("Regmark")];
 
-  const xobj = doc.context.obj({});
+  /**
+   * Motivet tegnes rett inn pa siden, ikke som Form XObject. En Form
+   * XObject har en BBox som Composer tolker som klippebane og skjaerer som
+   * en ekstra rute pa logoens storrelse (funnet 16.11.2026, test/skjultkutt.ts).
+   */
   const harForm: boolean[] = [];
+  const formOps: string[] = [];
   motiver.forEach((m, i) => {
     harForm[i] = m.flate.length > 0;
     if (!harForm[i]) return;   // elementet finnes ikke i denne folien
-    const sf = byggSkjaereform(doc, m.flate, m.bbox, m.skala, folieFyll, geo.strek);
-    xobj.set(PDFName.of(`Fm${i}`), sf.ref);
+    formOps[i] = skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
   });
 
   const W = ark.breddeMm * MM;
@@ -160,10 +164,10 @@ export async function byggProduksjonsfil(
     if (p.rotated) {
       const tx = lx + s * (b[3] - b[1]);
       ops.push(`q\n0 ${s.toFixed(6)} ${(-s).toFixed(6)} 0 ` +
-               `${f4(tx + s * b[1])} ${f4(lb - s * b[0])} cm\n/Fm${p.id} Do\nQ\n`);
+               `${f4(tx + s * b[1])} ${f4(lb - s * b[0])} cm\n${formOps[p.id]}Q\n`);
     } else {
       ops.push(`q\n${s.toFixed(6)} 0 0 ${s.toFixed(6)} ` +
-               `${f4(lx - s * b[0])} ${f4(lb - s * b[1])} cm\n/Fm${p.id} Do\nQ\n`);
+               `${f4(lx - s * b[0])} ${f4(lb - s * b[1])} cm\n${formOps[p.id]}Q\n`);
     }
   }
   ops.push("Q\nEMC\n");
@@ -237,7 +241,6 @@ export async function byggProduksjonsfil(
 
   const res = (page.node as any).Resources() ?? doc.context.obj({});
   page.node.set(PDFName.of("Resources"), res);
-  res.set(PDFName.of("XObject"), xobj);
   const cs = doc.context.obj({});
   cs.set(PDFName.of("CS0"), csThrough);
   cs.set(PDFName.of("CS1"), csCut);

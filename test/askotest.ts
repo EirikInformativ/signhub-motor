@@ -74,6 +74,15 @@ async function arkAreal(bytes: Uint8Array): Promise<number> {
   };
   for (let i = 0; i < doc.getPageCount(); i++) {
     const side: any = doc.getPage(i);
+    // Motivet ligger i Design-laget pa selve siden (fra 16.11.2026; for
+    // det la det i Form XObjects). Bare Design-laget telles, ikke ruter og
+    // regmarks. Gamle filer med XObjects leses fortsatt.
+    const c: any = side.node.Contents();
+    if (c) {
+      const tekst = new TextDecoder("latin1").decode(decodePDFRawStream(c).decode());
+      const i = tekst.indexOf("/OC /L0 BDC");
+      if (i >= 0) les(tekst.slice(i, tekst.indexOf("EMC", i)));
+    }
     const xo: any = side.node.Resources()?.lookup(PDFName.of("XObject"));
     if (xo?.keys) for (const k of xo.keys()) {
       try {
