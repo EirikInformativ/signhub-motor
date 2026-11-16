@@ -686,6 +686,33 @@ og sammenslåtte linjer som Appliser+thru. Kia: refleks fra 2,08 m² i
 oppsett til 0,43 m² tett (stripene kommer i tillegg i begge).
 `test/tettark.ts` vokter det.
 
+**Den tette gruppen er én logo om gangen** (Eirik 16.11.2026, etter Kia
+PV5). Bitene til ett element tas ut sammen: kiss rundt hver bit, og
+thru-cut `TETT_THRU_MM = 3` utenfor, rundt hele gruppen (skallet om bitene)
+**minus det som skal vaere sort**, saa thru-cut aldri gaar inn over en annen
+farge. Montoeren stripper én logo og legger den samlet. Fila heter
+`Print+kiss+thru` (eller `Kiss+thru` uten print) og har regmarks, fordi det
+er to oppgaver. Det tette er fortsatt **med i oppsettet** som markering:
+fyll i fargen og kiss-strek, bare paa primaerarket (`markering` paa
+elementet), saa montoeren ser hvor bitene skal.
+
+**Printfila bruker spotfargen fra skissen, ikke skjermfargen.** `csFraObj`
+gir `spot` (navn og alternativ, ogsaa Lab som Illustrators Pantone-bibliotek
+bruker) paa Separation-rom, `hentBaner` legger den paa banen, og `skrivPdf`
+skriver `signhub-spot:<k-verdi>=<navn>@<tint>@<cmyk>[@<hvitpunkt>@<Lab>]` i
+element-PDF-ens noekkelord. `kjorJobb` kobler laget til spotfargen paa hex og
+fyller med `/CS2 cs` i en Separation med samme navn og alternativ. Kia:
+PANTONE 7481 C med Lab 62,75 / -73 / 36. Mangler spotfargen, meldes det.
+
+**Materialet sier om det kan printes, innholdet avgjoer** (Eirik
+16.11.2026). `print: true` paa folien betyr printmedium (3M refleks hvit,
+kanskje 3106). Er laget hvitt, skjaeres folien som den er (Appliser+thru);
+har det farge, printes det. `printes()` i `src/motor.ts`.
+
+**Feilsignatur:** gronne biter som ligger hver for seg paa det tette arket,
+en thru-cut som gaar over sort, `rg` i stedet for `/CS2 cs` paa et printark
+med spotfarge i skissen, eller hvitt paa refleks som blir Print+thru.
+
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er
 `Kiss+thru` på primærfargen, `Kiss` på fargene som legges oppå, og

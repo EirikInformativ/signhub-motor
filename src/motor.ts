@@ -13,7 +13,8 @@ import type { MultiPoly, Geometri, GeometriPerFarge } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
 import { PDFDocument } from "pdf-lib";
-import { konvekstSkall } from "./ramme.ts";
+import { konvekstSkall, offsetRinger } from "./ramme.ts";
+import { cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { byggProduksjonsfil, STD_GEO, MM } from "./produksjonsfil.ts";
@@ -68,6 +69,12 @@ const TEKST_PASS_MM = 10;
 const APPLISER_OVERMAAL_MM = 20;
 /** timekost i produksjon til regnestykket for tett ark (full selvkost, 850 til 980) */
 const TIMEKOST_KR = 900;
+/**
+ * Den tette gruppen per logo (Eirik 16.11.2026): bitene kiss-cuttes, og
+ * thru-cut gaar saa mange mm utenfor og foelger formen, aldri over det som
+ * skal vaere sort.
+ */
+const TETT_THRU_MM = 3;
 /** minutter per bit som legges over for hand (Eirik 16.11.2026: ca. 5 min for Kia) */
 const OVERTEIP_MIN_PER_BIT = 0.5;
 /** en side er rett naar formen ligger innenfor RETT_SIDE_MM av den langs minst RETT_SIDE_ANDEL av lengden; da rettes den helt ut */
@@ -165,7 +172,11 @@ export interface Folie {
    * legges tett (Eirik 16.11.2026, refleks paa Kia PV5).
    */
   prisM2?: number;
-  /** fargen printes paa folien (f.eks. hvit refleks) i stedet for aa vaere farget folie */
+  /**
+   * Folien er et printmedium (f.eks. 3M refleks hvit). Om laget printes
+   * eller skjaeres, avgjoeres av innholdet (Eirik 16.11.2026): er fargen
+   * hvit, skjaeres folien som den er; har den farge, printes den.
+   */
   print?: boolean;
 }
 
@@ -347,29 +358,55 @@ function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: str
       const rull = f.breddeMm ?? grunngeo.foliebredde;
       const geo: Geo = { ...grunngeo, foliebredde: rull,
         skjaerebredde: Math.min(rull - grunngeo.rullKant, rull <= grunngeo.wildMaksRull ? grunngeo.wildMaksSkjaer : grunngeo.summaMaksSkjaer) };
-      // bitene: hver flate av fargen for seg
+      /**
+       * Bitene til én logo holdes sammen (Eirik 16.11.2026): de stripes én
+       * logo om gangen. Hver bit kiss-cuttes, og thru-cut gaar TETT_THRU_MM
+       * utenfor og foelger formen, men aldri inn over det som skal vaere
+       * sort (de andre fargene i samme element).
+       */
       const biter: Elem[] = [];
+      let antall = 0, alleHele = true;
       for (const e of gruppe) {
         const d = e.deler.find((x) => x.folie.kode === f.kode);
         if (!d) continue;
-        d.flate.forEach((poly, i) => {
-          const xs = poly[0].map((q) => q[0]), ys = poly[0].map((q) => q[1]);
-          const bb: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-          biter.push({ navn: `${e.navn} ${f.kode} bit ${i + 1}`, lagvis: false, bbox: bb, skala: e.skala,
-            breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-            antall: e.antall, deler: [{ ...d, flate: [poly] }], omriss: [poly] });
-        });
+        if (!d.flate.every((poly) => heltKonveks([poly]))) { alleHele = false; break; }
+        antall += d.flate.length * e.antall;
+        const u = (TETT_THRU_MM * MM) / e.skala;
+        let form: MultiPoly;
+        try {
+          const ytre = pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly;
+          const ut = offsetRinger(ytre.map((poly) => poly[0].map(([x, y]) => [x, y] as [number, number])), u)
+            .map((r) => [[...r, r[0]]]) as MultiPoly;
+          /**
+           * Én gruppe er ett stykke: thru-cut rundt hele logoens biter, ikke
+           * rundt hver bit for seg, ellers faller de fra hverandre og maa
+           * plasseres én og én. Skallet rundt bitene, minus det som er sort.
+           */
+          const skall = konvekstSkall(ut.flat(2).map((q) => [q[0], q[1]] as [number, number]));
+          form = [[[...skall, skall[0]]]] as MultiPoly;
+          const andre = e.deler.filter((x) => x !== d).map((x) => x.flate);
+          if (andre.length) form = pc.difference(form as any, ...(andre as any)) as MultiPoly;
+          // bitene ligger alltid innenfor: det som er tatt bort, var sort
+          form = pc.union(form as any, d.flate as any) as MultiPoly;
+        } catch { alleHele = false; break; }
+        const xs = form.flatMap((poly) => poly[0].map((q) => q[0])), ys = form.flatMap((poly) => poly[0].map((q) => q[1]));
+        const bb: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        biter.push({ navn: `${e.navn} ${f.kode}`, lagvis: false, bbox: bb, skala: e.skala,
+          breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
+          antall: e.antall, deler: [{ ...d }], omriss: form, thruForm: form });
       }
-      if (!biter.length || !biter.every((x) => heltKonveks(x.deler[0].flate))) continue;
+      if (!biter.length || !alleHele) continue;
+      // oppsettet beholder fargen som markering: fyll og kiss-strek, saa
+      // montoeren ser hvor bitene skal (Eirik 16.11.2026)
       const uten = gruppe.map((e) => {
+        const d = e.deler.find((x) => x.folie.kode === f.kode);
         const deler = e.deler.filter((x) => x.folie.kode !== f.kode);
         return { ...e, deler, lagvis: e.lagvis && deler.length > 1,
-          omriss: deler.length ? pc.union(...(deler.map((x) => x.flate) as [any])) as MultiPoly : [] };
+          markering: [...(e.markering ?? []), ...(d ? [{ flate: d.flate, hex: d.folie.hex ?? d.hex }] : [])] };
       }).filter((e) => e.deler.length);
       const lMed = lengde(gruppe, geo), lUten = lengde(uten, geo);
       const tettGeo: Geo = { ...geo, bleed: 0 };
       const lTett = lengde(biter, tettGeo);
-      const antall = biter.reduce((s, x) => s + x.antall, 0);
       const m2 = (l: number) => (l / 1000) * (rull / 1000);
       const andre = folier.filter((x) => x.kode !== f.kode);
       const sparAndre = andre.reduce((s, x) => s + (x.prisM2 ? m2(lMed - lUten) * x.prisM2 * ((x.breddeMm ?? rull) / rull) : 0), 0);
@@ -384,7 +421,9 @@ function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: str
         `. Grensen er ${Math.max(0, grense).toFixed(0)} minutter overteiping totalt.`;
       if (kostTett < kostOppsett) {
         ut = ut.filter((e) => !gruppe.includes(e)).concat(uten, biter);
-        advarsler.push(`${f.kode}: tatt ut av oppsettet og lagt tett med bare thru-cut. Bitene legges over for hand. ${tall}`);
+        advarsler.push(`${f.kode}: tatt ut av oppsettet og lagt tett, én gruppe per logo med kiss rundt bitene og ` +
+          `thru-cut ${TETT_THRU_MM} mm utenfor. Oppsettet viser hvor bitene skal (fyll og kiss-strek). ` +
+          `Bitene legges over for hand. ${tall}`);
         break;   // gruppen er endret; neste farge vurderes ikke paa samme runde
       }
       advarsler.push(`${f.kode}: beholdt i oppsettet. ${tall}`);
@@ -392,6 +431,31 @@ function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: str
   }
   return ut;
 }
+
+/**
+ * Spotfargene skissen hadde, fra element-PDF-ens noekkelord (skrivPdf):
+ * noekkelen er hexen laget faar naar `k`-verdien leses.
+ */
+async function lesSpot(pdf: Uint8Array): Promise<{ hex: string; spot: Spot }[]> {
+  try {
+    const d = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
+    const k = d.getKeywords() ?? "";
+    const ut: { hex: string; spot: Spot }[] = [];
+    for (const m of k.matchAll(/signhub-spot:([\d.,]+)=(\S+)/g)) {
+      const c = m[1].split(",").map(Number);
+      const [navn, tint, alt, wp, c1] = m[2].split("@");
+      if (c.length !== 4 || !navn || !alt) continue;
+      ut.push({ hex: tilHex(cmykTilRgb(c[0], c[1], c[2], c[3])),
+        spot: { navn: decodeURIComponent(navn), tint: Number(tint), cmyk: alt.split(",").map(Number),
+          ...(wp && c1 ? { lab: { wp: wp.split(",").map(Number), c1: c1.split(",").map(Number) } } : {}) } });
+    }
+    return ut;
+  } catch { return []; }
+}
+const naerHex = (a: string, b: string) => {
+  const x = hexTilRgb(a), y = hexTilRgb(b);
+  return Math.max(...x.map((v, i) => Math.abs(v - y[i]))) <= 3 / 255;
+};
 
 /** Endene en bilskisse har merket som skjult under bilen (PDF-noekkelord). */
 async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
@@ -558,7 +622,20 @@ const filnavnDel = (s: string) =>
 
 const ROLLER = ["primær", "sekundær", "tertiær", "kvartær", "kvintær"];
 
-interface Del { folie: Folie; flate: MultiPoly; hex: string }
+interface Del {
+  folie: Folie; flate: MultiPoly; hex: string;
+  /** spotfargen laget hadde i skissen, til printfila */
+  spot?: Spot;
+}
+type Spot = { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } };
+
+/** Er laget hvitt? Paa et printmedium skjaeres det da, det printes ikke. */
+function erHvitHex(hex: string): boolean {
+  const [r, g, b] = hexTilRgb(hex);
+  return Math.min(r, g, b) > 0.94;
+}
+/** Printes laget? Bare paa printmedium, og bare naar det har farge. */
+const printes = (d: Del) => !!d.folie.print && !erHvitHex(d.hex);
 
 interface Elem {
   navn: string;
@@ -573,6 +650,16 @@ interface Elem {
   omriss: MultiPoly;
   /** sider (i elementets retning) som ligger under bilen og kan forlenges paa arket */
   forleng?: Set<string>;
+  /**
+   * Tett gruppe (tettArk): thru-cut-linjen rundt bitene, i elementets
+   * enheter. Bitene selv kiss-cuttes.
+   */
+  thruForm?: MultiPoly;
+  /**
+   * Fargene som er tatt ut og lagt tett, vist i oppsettet med sin fyllfarge
+   * og kiss-strek, saa montoeren ser hvor de skal (Eirik 16.11.2026).
+   */
+  markering?: { flate: MultiPoly; hex: string }[];
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -608,6 +695,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
   for (const l of b.linjer) {
     const forleng = await lesForleng(l.pdf);
+    const spotter = await lesSpot(l.pdf);
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
     // som star igjen nar hvitt er visket bort.
     const g0 = await medNavn<Geometri | GeometriPerFarge>(l.navn, () =>
@@ -648,7 +736,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
             ? (pc.union(venter as any, lag.flate as any) as MultiPoly) : lag.flate;
           return;
         }
-        deler.push({ folie: v, flate: lag.flate, hex: lag.hex });
+        const sp = spotter.find((x) => naerHex(x.hex, lag.hex))?.spot;
+        deler.push({ folie: v, flate: lag.flate, hex: lag.hex, ...(sp ? { spot: sp } : {}) });
       });
       if (!deler.length) throw new Error(`${l.navn}: alle farger er slatt av.`);
       // fargene som er slatt av smelter inn i den storste som star igjen
@@ -1210,16 +1299,24 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * Uten kiss trengs heller ingen regmarks, for det er bare én oppgave paa
      * summaen. Ingen bleed: kanten ER kuttet.
      */
-    const kunThru = folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && heltKonveks(e.deler[0].flate));
-    // printet folie: samme tette ark, men med regmarks og utfallende print
-    const printThru = kunThru && !!folier[0].print;
+    const kunThru = folier.length === 1 &&
+      gruppe.every((e) => e.deler.length === 1 && (e.thruForm || heltKonveks(e.deler[0].flate)));
+    /**
+     * Printet folie: samme tette ark, men med regmarks og utfallende print.
+     * Materialet sier om det KAN printes; innholdet avgjoer (Eirik
+     * 16.11.2026): hvitt skjaeres, farge printes.
+     */
+    const printThru = kunThru && gruppe.some((e) => printes(e.deler[0]));
+    // tette grupper (tettArk) har kiss rundt bitene: to oppgaver, saa regmarks
+    const medKiss = kunThru && gruppe.some((e) => e.thruForm);
+    const regThru = printThru || medKiss;
     /**
      * Appliser+thru gaar bare paa summa og har ingen regmarks: hele
      * skjaerebredden brukes (Eirik 16.11.2026: «du bruker jo fortsatt ikke
      * full skjaerebredde»). Det er rullen minus rullkanten, innenfor summa,
      * minus overmaalet paa feltet.
      */
-    const geo: Geo = printThru
+    const geo: Geo = regThru
       ? { ...grunngeo, foliebredde, skjaerebredde, bleed: 0 }
       : kunThru
       ? { ...grunngeo, foliebredde, bleed: 0, kissInset: 0, regClear: 0, regmarkD: 0, regmarkKiss: 0,
@@ -1234,6 +1331,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * folie, ingenting trekkes fra.
      */
     if (kunThru) for (const e of gruppe) {
+      if (e.thruForm) continue;
       const d = e.deler[0];
       const tol = (RETT_SIDE_MM * MM) / e.skala, b = e.bbox;
       const sider = retteSider(d.flate, b, e.skala);
@@ -1247,7 +1345,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
-      ...(kunThru ? { sider: retteSider(e.deler[0].flate, e.bbox, e.skala) } : {}),
+      ...(kunThru ? { sider: e.thruForm ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
+        : retteSider(e.deler[0].flate, e.bbox, e.skala) } : {}),
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
@@ -1256,7 +1355,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       const reservert = geo.kissInset + geo.regClear + (geo.regmarkD + 2 * geo.regmarkKiss) + geo.regClear;
       // med regmarks staar arkbredden og regmark-kolonnene fast: strekk innenfor dem
       advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo, reservert,
-        printThru ? ark.breddeMm - reservert : reservert + ark.brukbarBredde));
+        regThru ? ark.breddeMm - reservert : reservert + ark.brukbarBredde));
     }
     /**
      * Appliser+thru: arket ER feltet som skal appliseres. Det legges rundt
@@ -1264,7 +1363,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * hele 10 mm, og elementene flyttes inn fra nullpunktet tilsvarende.
      * Ingen regmark-marger, for det er ingen regmarks.
      */
-    if (kunThru && !printThru && ark.plasseringer.length) {
+    if (kunThru && !regThru && ark.plasseringer.length) {
       const ps = ark.plasseringer;
       const x0 = Math.min(...ps.map((p) => p.x)), y0 = Math.min(...ps.map((p) => p.y));
       const x1 = Math.max(...ps.map((p) => p.x + p.w)), y1 = Math.max(...ps.map((p) => p.y + p.h));
@@ -1296,12 +1395,28 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        */
       const [fr, fg, fb2] = hexTilRgb(folie.hex ?? "#000000");
       const fyllOp = `${fr.toFixed(4)} ${fg.toFixed(4)} ${fb2.toFixed(4)} rg`;
+      const rgbOp = (hex: string) => { const [a, c, d] = hexTilRgb(hex); return `${a.toFixed(4)} ${c.toFixed(4)} ${d.toFixed(4)} rg`; };
       const motiver: Motiv[] = gruppe.map((e) => ({
         navn: e.navn,
         flate: e.deler.find((d) => d.folie.kode === folie.kode)?.flate ?? [],
         bbox: e.bbox, skala: e.skala, breddeMm: e.breddeMm,
         hoydeMm: e.hoydeMm, antall: e.antall,
+        ...(e.thruForm ? { thruForm: e.thruForm } : {}),
+        // markeringen av det som er lagt tett, bare paa primaerarket
+        ...(rolleNr === 0 && e.markering?.length
+          ? { markering: e.markering.map((m) => ({ flate: m.flate, fyllOp: rgbOp(m.hex) })) } : {}),
       }));
+      /**
+       * Printfila bruker spotfargen fra skissen (Eirik 16.11.2026: «ikke
+       * skjermfarger, men den faktiske fargekoden»), naar alle lagene i
+       * folien har samme spotfarge.
+       */
+      const spotter = gruppe.map((e) => e.deler.find((d) => d.folie.kode === folie.kode)).filter(Boolean)
+        .filter((d) => printes(d!)).map((d) => d!.spot);
+      const spot = printThru && spotter.length && spotter.every((x) => x && x.navn === spotter[0]!.navn)
+        ? spotter[0]! : undefined;
+      if (printThru && !spot) advarsler.push(`${folie.kode}: skissen har ingen spotfarge for det som printes; ` +
+        `printfila bruker skjermfargen ${folie.hex ?? ""}. Sjekk fargen foer print.`);
 
       /**
        * Én fil per folie (Eirik 16.11.2026). Wild-fila kan kjores pa bade
@@ -1310,7 +1425,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * sier ikke maskin, bare: navn, prosess, materiale, skala.
        */
       const varianter: { navn: string; valg: ArkValg }[] = kunThru
-        ? [{ navn: rolle, valg: { thruCut: true, regmark: printThru, dobleRegmarks: printThru && !wildGar, ytreRamme: false, kunThru: true, print: printThru } }]
+        ? [{ navn: rolle, valg: { thruCut: true, regmark: regThru, dobleRegmarks: regThru && !wildGar, ytreRamme: false, kunThru: true,
+            print: printThru, ...(spot ? { spot } : {}) } }]
         : rolleNr === 0
         ? [wildGar
             ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
@@ -1325,8 +1441,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * staar i navnet, saa produksjonen ser hva som skal appliseres foer
          * fila aapnes.
          */
-        const prosess = v.valg.print ? "Print+thru" : v.valg.kunThru ? "Appliser+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
-        const felt = v.valg.kunThru && !v.valg.print ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
+        const prosess = v.valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru")
+          : v.valg.kunThru ? (medKiss ? "Kiss+thru" : "Appliser+thru") : v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        const felt = v.valg.kunThru && !regThru ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
           navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,

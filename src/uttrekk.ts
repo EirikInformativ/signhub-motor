@@ -51,6 +51,8 @@ export interface Bane {
    * Slike ender kan forlenges paa arket (kjorJobb, Appliser+thru).
    */
   skjultEnde?: { ux: number; uy: number; lav: boolean; hoy: boolean };
+  /** fyllet er en navngitt spotfarge: navn, CMYK-alternativ ved full tint, og tinten */
+  spot?: { navn: string; cmyk: number[]; tint: number; lab?: { wp: number[]; c1: number[] } };
   gradient?: { type: 2 | 3; p0: [number, number]; p1: [number, number]; r0: number; r1: number;
                farger: [number, number, number][] };
 }
@@ -97,6 +99,8 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
     return p;
   };
   let fyllCs: Cs | null = null, strekCs: Cs | null = null;
+  let spot: Bane["spot"] | null = null;
+  const spStabel: (Bane["spot"] | null)[] = [];
   const csStabel: [Cs | null, Cs | null][] = [];
   const tom = () => { segs = []; boks = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }; };
 
@@ -107,23 +111,28 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
     if (t.startsWith("(")) continue;
     const op = t;
 
-    if (op === "q") { mStabel.push(cur); fStabel.push(farge); sStabel.push(strekFarge); wStabel.push(bredde); csStabel.push([fyllCs, strekCs]); kStabel.push(klipp); }
+    if (op === "q") { mStabel.push(cur); fStabel.push(farge); sStabel.push(strekFarge); wStabel.push(bredde); csStabel.push([fyllCs, strekCs]); kStabel.push(klipp); spStabel.push(spot); }
     else if (op === "Q") {
       cur = mStabel.pop() ?? cur; farge = fStabel.pop() ?? farge;
       strekFarge = sStabel.pop() ?? strekFarge; bredde = wStabel.pop() ?? bredde;
       const c = csStabel.pop(); if (c) { fyllCs = c[0]; strekCs = c[1]; }
       klipp = kStabel.pop() ?? klipp;
+      spot = spStabel.length ? spStabel.pop()! : spot;
     }
     // spotfarger (cs/scn, CS/SCN), se bilskisse.ts: Kia PV5 310079
-    else if (op === "cs" && navn) fyllCs = csFraObj(res, navn);
+    else if (op === "cs" && navn) { fyllCs = csFraObj(res, navn); spot = null; }
     else if (op === "CS" && navn) strekCs = csFraObj(res, navn);
-    else if ((op === "scn" || op === "sc") && fyllCs) { const v = rgbScn(fyllCs, tall); if (v) farge = rgbTilCmykArr(v); }
+    else if ((op === "scn" || op === "sc") && fyllCs) {
+      const v = rgbScn(fyllCs, tall); if (v) farge = rgbTilCmykArr(v);
+      spot = fyllCs.spot && tall.length ? { ...fyllCs.spot, tint: Math.min(1, Math.max(0, tall[tall.length - 1])) } : null;
+    }
     else if ((op === "SCN" || op === "SC") && strekCs) { const v = rgbScn(strekCs, tall); if (v) strekFarge = rgbTilCmykArr(v); }
     else if (op === "cm" && tall.length >= 6) cur = mul(tall.slice(-6) as Mat, cur);
     else if (op === "w" && tall.length >= 1) bredde = tall[tall.length - 1];
-    else if (op === "k" && tall.length >= 4) farge = tall.slice(-4);
-    else if (op === "g" && tall.length >= 1) farge = [0, 0, 0, 1 - tall[tall.length - 1]];
+    else if (op === "k" && tall.length >= 4) { farge = tall.slice(-4); spot = null; }
+    else if (op === "g" && tall.length >= 1) { farge = [0, 0, 0, 1 - tall[tall.length - 1]]; spot = null; }
     else if (op === "rg" && tall.length >= 3) {
+      spot = null;
       const v = tall.slice(-3); const kk = 1 - Math.max(v[0], v[1], v[2]);
       farge = kk >= 1 ? [0, 0, 0, 1] : [(1 - v[0] - kk) / (1 - kk), (1 - v[1] - kk) / (1 - kk), (1 - v[2] - kk) / (1 - kk), kk];
     }
@@ -160,7 +169,7 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
         const sk = Math.sqrt(Math.abs(cur[0] * cur[3] - cur[1] * cur[2])) || 1;
         ut.push({ segs, farge: farge.slice(), strekFarge: strekFarge.slice(),
           fyll: FYLL.has(op), strek: STREK.has(op), bredde: bredde * sk, boks,
-          ...(klipp.length ? { klipp } : {}) });
+          ...(klipp.length ? { klipp } : {}), ...(spot && FYLL.has(op) ? { spot } : {}) });
       }
       // klippet gjelder fra og med neste maling
       if (ventKlipp) { klipp = [...klipp, ventKlipp]; ventKlipp = null; }
@@ -250,6 +259,21 @@ export async function skrivPdf(baner: Bane[], marg = 6, forleng: string[] = []):
   // copyBytesInto, sa raa operatorer maa inn gjennom PDFOperator.of.
   (side as any).pushOperators(...linjer.map((l) => PDFOperator.of(l as any)));
   // ender som kan forlenges paa arket (skjult under bilen), leses av kjorJobb
-  if (forleng.length) doc.setKeywords([`signhub-forleng:${forleng.join(",")}`]);
+  /**
+   * Spotfargene fyllene hadde i skissen (Eirik 16.11.2026: printfila skal
+   * bruke fargekoden fra skissen, ikke skjermfargen). Noekkelen er
+   * CMYK-verdien som skrives som `k` over, saa kjorJobb kan koble laget
+   * tilbake til spotnavnet.
+   */
+  const spotter = new Map<string, string>();
+  for (const b of baner) if (b.spot && b.fyll) {
+    const f = `${nr(b.farge[0])},${nr(b.farge[1])},${nr(b.farge[2])},${nr(b.farge[3])}`;
+    spotter.set(f, `${encodeURIComponent(b.spot.navn)}@${nr(b.spot.tint)}@${b.spot.cmyk.map(nr).join(",")}` +
+      (b.spot.lab ? `@${b.spot.lab.wp.map(nr).join(",")}@${b.spot.lab.c1.map(nr).join(",")}` : ""));
+  }
+  const nokkelord: string[] = [];
+  if (forleng.length) nokkelord.push(`signhub-forleng:${forleng.join(",")}`);
+  for (const [f, v] of spotter) nokkelord.push(`signhub-spot:${f}=${v}`);
+  if (nokkelord.length) doc.setKeywords(nokkelord);
   return doc.save();
 }

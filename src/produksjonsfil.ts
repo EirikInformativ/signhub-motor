@@ -77,6 +77,13 @@ export interface Motiv {
    * kant uten mellomrom, og skjaerelinjen deres blir én (Appliser+thru).
    */
   sider?: [boolean, boolean, boolean, boolean];
+  /**
+   * Tett gruppe: thru-cut-linjen rundt bitene, i elementets enheter.
+   * Bitene (flate) kiss-cuttes; linjen her thru-cuttes.
+   */
+  thruForm?: MultiPoly;
+  /** flater som vises med sitt fyll og kiss-strek (det som er lagt tett) */
+  markering?: { flate: MultiPoly; fyllOp: string }[];
 }
 
 export interface Plassering {
@@ -169,6 +176,8 @@ export interface ArkValg {
   kunThru?: boolean;
   /** printet folie: regmarks, og fyllet printes 2 mm utenfor kuttet */
   print?: boolean;
+  /** spotfargen fyllet skal printes i (fra skissen), ellers skjermfargen */
+  spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } };
 }
 
 export async function byggProduksjonsfil(
@@ -180,6 +189,20 @@ export async function byggProduksjonsfil(
   const doc = await PDFDocument.create();
   const csThrough = separasjon(doc, "Through", [1, 0, 0, 0]);
   const csCut = separasjon(doc, "CutContour", [0, 1, 0, 0]);
+  /**
+   * Spotfargen printes med navnet og alternativet fra skissen. Hadde skissen
+   * Lab-alternativ (Pantone-bibliotek i Illustrator), beholdes det; CMYK er
+   * reserve.
+   */
+  const csSpot = !valg.spot ? null : valg.spot.lab
+    ? doc.context.register(doc.context.obj([
+        PDFName.of("Separation"), PDFName.of(valg.spot.navn),
+        doc.context.obj([PDFName.of("Lab"), doc.context.obj({ WhitePoint: valg.spot.lab.wp, Range: [-128, 127, -128, 127] })]),
+        doc.context.register(doc.context.obj({ FunctionType: 2, Domain: [0, 1], C0: [100, 0, 0], C1: valg.spot.lab.c1, N: 1,
+          Range: [0, 100, -128, 127, -128, 127] })),
+      ]))
+    : separasjon(doc, valg.spot.navn, valg.spot.cmyk);
+  if (valg.spot) folieFyll = `/CS2 cs\n${f4(valg.spot.tint)} scn`;
 
   const ocg = (navn: string): PDFRef =>
     doc.context.register(doc.context.obj({
@@ -206,7 +229,28 @@ export async function byggProduksjonsfil(
     formOps[i] = valg.kunThru
       ? fyllOps(valg.print ? utfallende(m.flate, (PRINT_BLEED_MM * MM) / m.skala) : m.flate, folieFyll)
       : skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
+    // det som er lagt tett: fyll og kiss-strek, saa montoeren ser hvor det skal
+    if (!valg.kunThru) for (const mk of m.markering ?? []) formOps[i] += skjaereOps(mk.flate, m.skala, mk.fyllOp, geo.strek, "CS1").ops;
   });
+  /** Bane i elementets enheter som strek i gitt fargerom (kiss eller thru). */
+  const strekOps = (flate: MultiPoly, skala: number, cs: string) => {
+    let o = `/${cs} CS\n1 SCN\n${(geo.strek / skala).toFixed(6)} w\n`;
+    for (const poly of flate) for (const r of poly) {
+      if (r.length < 3) continue;
+      o += `${f4(r[0][0])} ${f4(r[0][1])} m\n`;
+      for (const q of r.slice(1)) o += `${f4(q[0])} ${f4(q[1])} l\n`;
+      o += "h\nS\n";
+    }
+    return o;
+  };
+  /** Samme transform som Design-laget: elementets enheter til arket. */
+  const iElement = (p: Plassering, innhold: string) => {
+    const m = motiver[p.id], b = m.bbox, s = m.skala;
+    const lx = (p.x + geo.bleed) * MM, lb = ytop(p.y + p.h - geo.bleed);
+    return p.rotated
+      ? `q\n0 ${s.toFixed(6)} ${(-s).toFixed(6)} 0 ${f4(lx + s * (b[3] - b[1]) + s * b[1])} ${f4(lb - s * b[0])} cm\n${innhold}Q\n`
+      : `q\n${s.toFixed(6)} 0 0 ${s.toFixed(6)} ${f4(lx - s * b[0])} ${f4(lb - s * b[1])} cm\n${innhold}Q\n`;
+  };
 
   const W = ark.breddeMm * MM;
   const H = ark.arklengde * MM;
@@ -240,12 +284,26 @@ export async function byggProduksjonsfil(
    */
   if (valg.kunThru) {
     ops.push(`/OC /L1 BDC\nq\n/CS0 CS\n1 SCN\n${f4(geo.strek)} w\n`);
-    for (const bane of slaaSammenLinjer(motiver, ark, geo)) {
+    // tette grupper har sin egen thru-linje og slaas ikke sammen med andre
+    for (const bane of slaaSammenLinjer(motiver.map((m) => (m.thruForm ? { ...m, flate: [] } : m)), ark, geo)) {
       let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
       for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
       ops.push(o + "S\n");
     }
+    for (const p of ark.plasseringer) {
+      const m = motiver[p.id];
+      if (m.thruForm) ops.push(iElement(p, strekOps(m.thruForm, m.skala, "CS0")));
+    }
     ops.push("Q\nEMC\n");
+    // kiss rundt hver bit i de tette gruppene
+    if (motiver.some((m) => m.thruForm)) {
+      ops.push("/OC /L3 BDC\nq\n");
+      for (const p of ark.plasseringer) {
+        const m = motiver[p.id];
+        if (m.thruForm) ops.push(iElement(p, strekOps(m.flate, m.skala, "CS1")));
+      }
+      ops.push("Q\nEMC\n");
+    }
   }
 
   // Thru-cut (ved kunThru er elementenes egen strek thru-cutten)
@@ -324,6 +382,7 @@ export async function byggProduksjonsfil(
   const cs = doc.context.obj({});
   cs.set(PDFName.of("CS0"), csThrough);
   cs.set(PDFName.of("CS1"), csCut);
+  if (csSpot) cs.set(PDFName.of("CS2"), csSpot);
   res.set(PDFName.of("ColorSpace"), cs);
   const props = doc.context.obj({});
   props.set(PDFName.of("L0"), oc[0]);
@@ -339,7 +398,11 @@ export async function byggProduksjonsfil(
     D: doc.context.obj({ Order: oc, ON: oc, OFF: [], BaseState: PDFName.of("ON") }),
   }));
 
-  doc.setTitle(valg.kunThru
+  const medKiss = motiver.some((m) => m.thruForm);
+  doc.setTitle(valg.kunThru && (valg.print || medKiss)
+    ? `${jobb} | ${valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru") : "Kiss+thru"} | ${folieTekst}` +
+      (valg.spot ? ` | print i ${valg.spot.navn}` : "")
+    : valg.kunThru
     ? `${jobb} | Appliser+thru | ${folieTekst} | Appliser folie paa ${ark.breddeMm.toFixed(0)} x ${ark.arklengde.toFixed(0)} mm, legg arket i nullpunktet og thru-cut`
     : `${jobb} | ${variant} | ${folieTekst}`);
   doc.setSubject(`Folie ${folieTekst}. Ark ${ark.breddeMm.toFixed(0)} x ` +

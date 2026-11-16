@@ -116,6 +116,14 @@ export interface Cs {
   /** antall komponenter scn tar */
   n: number;
   tilRgb(v: number[]): [number, number, number] | null;
+  /**
+   * Navngitt spotfarge (Separation) med CMYK-alternativ: navnet og
+   * alternativet ved full tint. Printfila bruker dette, ikke skjermfargen
+   * (Eirik 16.11.2026, Kia PV5: PANTONE 7481 C).
+   */
+  spot?: { navn: string; cmyk: number[]; lab?: { wp: number[]; c1: number[] } };
+  /** satt paa Lab-fargerom: hvitpunktet, saa en spotfarge kan beholde Lab-alternativet */
+  labWp?: [number, number, number];
 }
 
 const klem = (v: number, lo: number, hi: number) =>
@@ -341,7 +349,7 @@ function csFraVerdi(obj: any, res: PDFDict | undefined): Cs | null {
       const wp = tallListe(dictAv(obj.lookup(1)), "WhitePoint");
       const w: [number, number, number] =
         wp && wp.length === 3 && wp[1] > 0 ? [wp[0], wp[1], wp[2]] : D50;
-      return { n: 3, tilRgb: (v) => labTilRgb(v[0], v[1], v[2], w) };
+      return { n: 3, labWp: w, tilRgb: (v) => labTilRgb(v[0], v[1], v[2], w) };
     }
 
     if (fam === "Separation" || fam === "DeviceN") {
@@ -351,11 +359,28 @@ function csFraVerdi(obj: any, res: PDFDict | undefined): Cs | null {
       const alt = csFraVerdi(obj.lookup(2), res);
       const fn = lagFn(obj.lookup(3));
       const merke = fam === "Separation"
-        ? String(del ?? "").replace(/^\//, "")
+        ? String(del ?? "").replace(/^\//, "").replace(/#([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
         : navnListe(del).join("+");
 
       if (alt && fn && antall === 1) {
-        return { n: 1, tilRgb: (v) => {
+        let spot: Cs["spot"];
+        if (!["Cyan", "Magenta", "Yellow", "Black", "All", "None"].includes(merke)) {
+          try {
+            const u = fn(1);
+            if (alt === CS_CMYK && u.length >= 4) spot = { navn: merke, cmyk: u.slice(0, 4).map((x) => klem(x, 0, 1)) };
+            else if (u.length >= alt.n) {
+              // Lab (Kia PV5: PANTONE 7481 C) eller rgb: CMYK som reserve, Lab beholdes
+              const rgb = alt.tilRgb(u.slice(0, alt.n));
+              if (rgb) {
+                const k = 1 - Math.max(...rgb);
+                const cmyk = k >= 1 ? [0, 0, 0, 1] : [0, 1, 2].map((i) => (1 - rgb[i] - k) / (1 - k)).concat([k]);
+                spot = { navn: merke, cmyk: cmyk.map((x) => klem(x, 0, 1)),
+                  ...(alt.labWp ? { lab: { wp: alt.labWp, c1: u.slice(0, 3) } } : {}) };
+              }
+            }
+          } catch { /* uten spotnavn */ }
+        }
+        return { n: 1, ...(spot ? { spot } : {}), tilRgb: (v) => {
           const u = fn(klem(v[0], 0, 1));
           return u.length >= alt.n ? alt.tilRgb(u.slice(0, alt.n)) : null;
         } };
