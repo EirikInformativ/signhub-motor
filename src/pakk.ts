@@ -194,9 +194,10 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
    * de andre beholder halve gapet hver, saa mellomrommet mot en skraa kant
    * aldri blir mindre enn gap/2.
    */
+  let kant = false;
   if (motiver.length && motiver.every((m) => m.sider)) {
     const k = pakkKant(motiver, items, brukbar, geo.gap, tillatRotasjon);
-    if (k && k.h < best.h + 1e-6) best = k;
+    if (k && k.h < best.h + 1e-6) { best = k; kant = true; }
   }
 
   /**
@@ -213,7 +214,10 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
   // formnestingen brukes bare naar den gir kortere ark enn rammene
   const nestet = !!nest && nest.h < best.h - 1;
   if (nestet) { best = nest!; formet = false; }
-  const feil = formet ? sjekkFormet(best.ut, geo.gap) : nestet ? [] : sjekk(best.ut, brukbar, geo.gap);
+  // kant i kant: mellomrommet er bygget inn per side (0 eller gap/2), saa
+  // rektangelsjekken med fullt gap ville meldt falsk. Der sjekkes bare overlapp.
+  const feil = formet ? sjekkFormet(best.ut, geo.gap) : nestet ? []
+    : sjekk(best.ut, brukbar, kant ? 0 : geo.gap);
   // Arket blir bare sa bredt som jobben faktisk trenger. Resten av rullen
   // ligger urort, og forbrukstallet blir aerlig.
   const brukt = Math.max(...best.ut.map((p) => p.x + p.w));
