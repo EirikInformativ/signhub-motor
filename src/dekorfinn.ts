@@ -43,6 +43,8 @@ const svart = (b: Boks) => !!b.farge && b.farge.length === 4 && (
 /** over denne andelen bilgraatt er klyngen en del av bilen */
 const BILGRAA_ANDEL = 0.25;
 
+/** Hvit flate paa moerk bil stoerre enn dette er dekor uansett tegnerekkefoelge. */
+const STOR_LYS_MM = 300;
 /** Kuloeren som dekker mer enn denne andelen av det fylte, er bilens lakk. */
 const LAKK_ANDEL = 0.3;
 
@@ -189,9 +191,16 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
   return rader;
 }
 
-export function finnDekor(lest: LettLest, malestokk: number,
+export function finnDekor(lest0: LettLest, malestokk: number,
                           dim: { L: number | null; B: number | null; H: number | null }): DekorFunn {
   const merknader: string[] = [];
+  /**
+   * Innsatte bilder (foto) er ikke baner og kan ikke skjaeres. De holdes
+   * utenfor dekoren og meldes, saa et foto paa bilen aldri forsvinner i
+   * stillhet (Vito 304160: generatorbildet paa sidene).
+   */
+  const bilder = lest0.bokser.filter((b) => b.bilde);
+  const lest: LettLest = { ...lest0, bokser: lest0.bokser.filter((b) => !b.bilde) };
   const forkastet: { hva: string; grunn: string }[] = [];
 
   /**
@@ -300,6 +309,11 @@ export function finnDekor(lest: LettLest, malestokk: number,
   }
 
   const iVisning = (b: Boks) => visninger.some((v) => andelInni(b, v) >= 0.5);
+  const fotoer = bilder.filter((b) => iVisning(b) &&
+    Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= MINSTE_EKTE_MM);
+  if (fotoer.length) merknader.push(`Skissen har ${fotoer.length} innsatt${fotoer.length > 1 ? "e" : ""} bilde${fotoer.length > 1 ? "r" : ""} paa bilen ` +
+    `(${fotoer.map((b) => `${Math.round((b.x1 - b.x0) / MM * malestokk)} x ${Math.round((b.y1 - b.y0) / MM * malestokk)} mm`).join(", ")}). ` +
+    "Bilder er IKKE med i skjaerefilene. De maa printes fra originalfila.");
   const kandidater = kulorte.filter((b) => {
     if (malfarge.has(fargenavn(b))) return false;
     if (!iVisning(b)) return false;
@@ -310,7 +324,14 @@ export function finnDekor(lest: LettLest, malestokk: number,
      * Kia PV5 (310079) staar alene i sort. Sort fra en dekorbolk er
      * designerens og er en kandidat i seg selv.
      */
-    lest.bokser.filter((b) => !kulor(b) && noytral(b) && iDekorbolk.has(b) && iVisning(b)));
+    lest.bokser.filter((b) => !kulor(b) && noytral(b) && iVisning(b) && (iDekorbolk.has(b) ||
+      /**
+       * Paa moerk bil er en stor hvit flate dekor selv om den staar alene i
+       * tegnerekkefoelgen (Vito 304160: den store Ø-en paa venstre side er
+       * to flater, tegnet mellom bildeler). Bilens egne hvite deler er
+       * smaa (lys, refleks) eller nummerskiltet, som tas for seg.
+       */
+      (moerkBil && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM))));
   const fjernetFarge = kulorte.filter((b) => malfarge.has(fargenavn(b))).length;
   if (fjernetFarge) forkastet.push({ hva: `${fjernetFarge} flater`, grunn: "skissens egne farger" });
   const utenfor = kulorte.filter((b) => !malfarge.has(fargenavn(b)) && !iVisning(b)).length;
@@ -331,7 +352,10 @@ export function finnDekor(lest: LettLest, malestokk: number,
      * Nummerskiltet er bilens: et hvitt rektangel paa 520 x 110 mm (EU-skilt,
      * Vito 304160 bak). Én eller to flater i hvitt i den stoerrelsen.
      */
-    if (g.length <= 2 && g.every(lys) && bE > 470 && bE < 560 && hE > 90 && hE < 130) {
+    const fA = (b: Boks) => (b.x1 - b.x0) * (b.y1 - b.y0);
+    const lysAndel = g.filter(lys).reduce((a, b) => a + fA(b), 0) / Math.max(1e-9, g.reduce((a, b) => a + fA(b), 0));
+    // skiltet kan ha sort kant og tegnet tekst (E-Partner 306005: 567 x 117)
+    if (g.length <= 6 && lysAndel >= 0.6 && bE > 470 && bE < 600 && hE > 90 && hE < 140) {
       forkastet.push({ hva: `${g.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `nummerskilt (${bE.toFixed(0)} x ${hE.toFixed(0)} mm)` });
       continue;
@@ -394,7 +418,9 @@ export function finnDekor(lest: LettLest, malestokk: number,
      *    inne i rammen holdes ute av elementet i bilmotor.ts.
      */
     const ekteKulor = g.some(ekte);
-    if (!ekteKulor && graaAndel > BILGRAA_ANDEL) {
+    // en stor hvit flate paa moerk bil er dekor selv om den ligger over hjul og lister
+    const storLys = moerkBil && g.some((b) => lys(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM);
+    if (!ekteKulor && !storLys && graaAndel > BILGRAA_ANDEL) {
       forkastet.push({ hva: `${med.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `${(graaAndel * 100).toFixed(0)} % er bilens graatoner` });
       continue;

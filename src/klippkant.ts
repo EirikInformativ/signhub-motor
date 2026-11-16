@@ -89,6 +89,56 @@ function utvid(mp: any, d: number): any {
 /** Bare ytterringene: et hull i det tillatte skal aldri bli hull i dekoren. */
 const utenHull = (mp: any) => mp.map((poly: any) => [poly[0]]);
 
+/**
+ * Klippebanen designeren har lagt paa en dekorbane (W n), som synlig del.
+ * Gir det synlige som flate, eller null naar banen ikke er klippet.
+ */
+export function klippFlate(b: Bane): any | null {
+  if (!b.klipp?.length) return null;
+  let k: any = null;
+  for (const kl of b.klipp) {
+    const f = flate(ringerAv(kl.segs as any[]));
+    if (!f) return null;
+    k = k ? pc.intersection(k, f) : f;
+  }
+  return k;
+}
+
+/** Rammen rundt det som synes av banen (klippet), eller hele banen. */
+export function synligBoks(b: Bane): { x0: number; y0: number; x1: number; y1: number } {
+  const k = klippFlate(b);
+  if (!k || !k.length) return b.boks;
+  const pk = k.flat(2) as Pt[];
+  return { x0: Math.max(b.boks.x0, Math.min(...pk.map((p) => p[0]))), y0: Math.max(b.boks.y0, Math.min(...pk.map((p) => p[1]))),
+    x1: Math.min(b.boks.x1, Math.max(...pk.map((p) => p[0]))), y1: Math.min(b.boks.y1, Math.max(...pk.map((p) => p[1]))) };
+}
+
+/**
+ * Dekor som designeren har klippet (Vito 304160: den store Ø-en klippet
+ * langs bilens bakkant) kuttes `luft` forbi klippet, som dekor under
+ * bilens deler (Eirik 16.11.2026: 50 mm). Bare naar banen gaar mer enn
+ * `luft` forbi klippet; ellers staar den hel.
+ */
+export function kuttVedKlipp(b: Bane, luft: number): Bane {
+  const k = klippFlate(b);
+  if (!k || !k.length) return b;
+  const egen = flate(ringerAv(b.segs as any[]));
+  if (!egen || !egen.length) return b;
+  let ny: any;
+  try { ny = pc.intersection(egen, utvid(utenHull(k), luft)); } catch { return b; }
+  const a0 = areal(egen), a1 = areal(ny);
+  if (!ny.length || a1 > a0 * 0.999) return b;
+  const segs: any[] = [];
+  for (const poly of ny) for (const r of poly) {
+    segs.push({ t: "m", p: r[0] });
+    for (let i = 1; i < r.length - 1; i++) segs.push({ t: "l", p: r[i] });
+    segs.push({ t: "h" });
+  }
+  const pts = segs.filter((x) => x.p).map((x) => x.p as Pt);
+  return { ...b, segs, boks: { x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
+    x1: Math.max(...pts.map((p) => p[0])), y1: Math.max(...pts.map((p) => p[1])) } } as Bane;
+}
+
 export function areal(mp: any): number {
   let a = 0;
   for (const poly of mp ?? []) poly.forEach((r: Ring, i: number) => {

@@ -125,6 +125,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx rammetest.ts  # formede, konvekse rammer med rett bunn
     npx tsx klipptest.ts  # kutt og forlengelse under bildelene
     npx tsx tettark.ts    # dyr folie ut av oppsettet naar det loenner seg
+    npx tsx lakkbil.ts    # lakkert bil i kuloer, skalert ark, klipp, bilder, tekst under logo
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -671,6 +672,31 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
 - `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i
   rammen (formede rammer). Feilsignatur: et felt som overlapper en stripe.
+
+**Lakkert bil, skalerte ark og klipp (natt 16.–17.11.2026, E-Partner 306005
+og Vito 304160):**
+- `velgMalestokk`: et ark skalert til et rent forhold maales med relativ
+  grense (1200 prosent gir 1:2,48). En tegning skalert inntil
+  `SKALERT_MAKS_PROSENT = 15` for aa passe arket bruker den maalte
+  malestokken, med merknad (E-Partner: 93 prosent, 1:32,4).
+- `finnDekor`: tegnede avstander skaleres med `30 / malestokk`. Kuloeren som
+  dekker mer enn `LAKK_ANDEL = 0.3` av alt fylt er lakken; er den moerk, er
+  bilen moerk. En hvit flate over `STOR_LYS_MM = 300` paa moerk bil er dekor
+  uansett tegnerekkefoelge, og graa-regelen gjelder ikke den. Nummerskilt
+  (hvitt, 470-600 x 90-140 mm) er bil.
+- `lesLett`: en bane som bare strekes (`S`) er ikke en hvit flate
+  (`bareStrek`), klippebaner (`W`) avgrenser det som synes, og innsatte bilder
+  (`bilde`) holdes utenfor dekoren og meldes («IKKE med i skjaerefilene»).
+- `bilmotor`: banene sammenlignes med det som synes innenfor klippet
+  (`synligBoks`), og klippet dekor kuttes `KLIPP_LUFT_MM` forbi klippet
+  (`kuttVedKlipp`). Korte ord (under `KORT_ORD_FLATER` flater) har ingen
+  sikker retning. Tekst i én farge utenfor en flerfarget logo, i en farge
+  logoen ogsaa har inni seg, skilles ut (LTS Maskin: logoen printes, teksten
+  skjaeres i 010) og faar vannrett passmerke mot logoen.
+
+**Feilsignatur:** «Malestokken i skissen er ikke til a stole pa» paa et ark
+som bare er skalert, en lakkert bil der bilens linjer kommer som dekor,
+eller en dekor som ligger dobbelt fordi en klippet kopi telles med.
 
 ## Ikke endre
 

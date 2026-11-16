@@ -18,7 +18,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp } from "./klippkant.ts";
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
@@ -235,6 +235,9 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
    * sammen, mens tekst og striper som bare staar ved siden av, skilles.
    */
   const arbeid: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
+  /** tekst skilt ut fra en flerfarget logo; bare disse faar passmerke over/under logoen */
+  const utskiltTekst = new Set<Bane[]>();
+  const utskiltNavn = new Set<string>();
   const valgtPerOmraade: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
   for (const o of funn.omraader) {
     /**
@@ -249,9 +252,11 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const erBil = (b: Bane) => (b.fyll ? bilGraa(b.farge) : true) && (b.strek ? bilGraa(b.strekFarge ?? b.farge) : true);
     // banen maa svare til en av flatene finnDekor valgte (samme ramme)
     const T = 0.6;
-    const likBoks = (b: Bane) => o.liste.some((x) => Math.abs(x.x0 - b.boks.x0) < T &&
-      Math.abs(x.y0 - b.boks.y0) < T && Math.abs(x.x1 - b.boks.x1) < T && Math.abs(x.y1 - b.boks.y1) < T);
-    const valgte = baner.filter((b) => !b.gradient && andel(b, o) >= 0.9 && !erBil(b) && likBoks(b));
+    // lesLett ser bare det som synes innenfor klippet; sammenlign med det samme
+    const likBoks = (b: Bane) => { const sb = synligBoks(b); return o.liste.some((x) => Math.abs(x.x0 - sb.x0) < T &&
+      Math.abs(x.y0 - sb.y0) < T && Math.abs(x.x1 - sb.x1) < T && Math.abs(x.y1 - sb.y1) < T); };
+    const valgte = baner.filter((b) => !b.gradient && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && !erBil(b) && likBoks(b))
+      .map((b) => kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM));
     if (valgte.length) valgtPerOmraade.push({ o, valgte });
   }
   /**
@@ -306,8 +311,38 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
             x.reduce((n, q) => n + (q.segs as any[]).filter((y) => y.t === "m").length, 0) <= 4;
           return stor(a) === stor(b);
         }) : [d]);
+    /**
+     * Tekst i én farge som staar utenfor en flerfarget logo, men i en farge
+     * logoen ogsaa har inni seg, skilles ut (Eirik 16.11.2026, LTS Maskin
+     * paa E-Partner 306005: logoen med den blaa bunnen og de hvite
+     * bokstavene printes, den hvite teksten under skjaeres i 010). Ellers kan
+     * ikke appen gi teksten en annen folie enn logoen. De to faar passmerke.
+     */
+    deler = deler.flatMap((d) => {
+      const hex = (b: Bane) => baneHex(b.farge);
+      for (const c of new Set(d.filter((b) => b.fyll).map(hex))) {
+        const kjerne = d.filter((b) => hex(b) !== c);
+        // kjernen er en flerfarget logo (blaa og roed paa LTS), ikke én farge (ÅTG-streken)
+        if (new Set(kjerne.map(hex)).size < 2) continue;
+        const K = { x0: Math.min(...kjerne.map((b) => b.boks.x0)), y0: Math.min(...kjerne.map((b) => b.boks.y0)),
+          x1: Math.max(...kjerne.map((b) => b.boks.x1)), y1: Math.max(...kjerne.map((b) => b.boks.y1)) };
+        const tol = 0.1 * Math.min(K.x1 - K.x0, K.y1 - K.y0);
+        const inni = (b: Bane) => b.boks.x0 >= K.x0 - tol && b.boks.x1 <= K.x1 + tol && b.boks.y0 >= K.y0 - tol && b.boks.y1 <= K.y1 + tol;
+        const ute = (b: Bane) => b.boks.x1 < K.x0 || b.boks.x0 > K.x1 || b.boks.y1 < K.y0 || b.boks.y0 > K.y1;
+        const egne = d.filter((b) => hex(b) === c);
+        const utenfor = egne.filter(ute);
+        if (!utenfor.length || !egne.some(inni) || utenfor.length === egne.length) continue;
+        if (d.some((b) => hex(b) === c && !inni(b) && !ute(b))) continue;   // noe ligger over kanten: én logo
+        utskiltTekst.add(utenfor);
+        return [d.filter((b) => !utenfor.includes(b)), utenfor];
+      }
+      return [d];
+    });
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
-    deler.forEach((d, k) => arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d }));
+    deler.forEach((d, k) => {
+      arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d });
+      if (utskiltTekst.has(d)) utskiltNavn.add(`${o.vis} ${o.navn} del ${k + 1}`);
+    });
     logg.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
       "(tekst og striper som bare staar ved siden av hverandre).");
   }
@@ -481,7 +516,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       "Ta det ut av jobben hvis det stemmer, ellers skjaeres det to ganger.");
   }
 
-  await leggPassmerker(elementer, brukteBaner, malestokk, logg);
+  await leggPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
 
   const forside = tegnBilSkisse(baner, {
     jobb: v.jobb, malestokk,
@@ -714,6 +749,8 @@ const SKJOT_TOL_MM = 15;
 const SKJOT_KANT_MM = 200;
 /** tekst med grunnlinjer som avviker mer enn dette, er ikke samme tekst (grader) */
 const TEKST_VINKEL = 5;
+/** Faerre flater enn dette: retningen er for usikker til aa skille deler paa. */
+const KORT_ORD_FLATER = 4;
 /** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */
 const TEKST_HOYDE = 1.8;
 /** linjer i samme tekst kan staa opptil dette ganger bokstavhoeyden fra hverandre */
@@ -755,6 +792,13 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
     const r9 = flater >= 3 && bh > 2 * bw ? rettOpp(dreid(gg), STOR_GRAD) : null;
     const r = r9 ? r9 : r0;
     let v = r.funnet ? (r.linje ?? 0) + (r === r9 ? 90 : 0) : null;
+    /**
+     * Et kort ord (to, tre tegn som «56» og «39» i et telefonnummer paa
+     * E-Partner 306005) har ikke nok grunnlinje til aa si noe sikkert om
+     * retningen. Da regnes retningen som ukjent, og ordet kan slaas sammen
+     * med resten av linja.
+     */
+    if (flater < KORT_ORD_FLATER) v = null;
     // en strek (ikke tekst) har retningen til sin lange akse, ikke til enden
     // (den gronne streken under ÅTG paa taket staar paa hoykant)
     if (flater < 3 && Math.max(bw, bh) >= 3 * Math.min(bw, bh)) {
@@ -891,7 +935,7 @@ const PASS_OVERLAPP_MM = 5;
  * eksemplarer faar ikke passmerke, siden naboen bare staar ved ett av dem.
  */
 async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Bane[]>,
-                              malestokk: number, merknader: string[]) {
+                              malestokk: number, merknader: string[], utskilt: Set<string> = new Set()) {
   const boks = (bs: Bane[]) => ({
     x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
     x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
@@ -903,30 +947,47 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
     const ba = baner.get(a), bb = baner.get(b);
     if (!ba || !bb) continue;
     const ra = boks(ba), rb = boks(bb);
-    if (rb.x0 <= ra.x1) continue;                     // b skal staa til hoyre for a
-    const ha = ra.y1 - ra.y0, hb = rb.y1 - rb.y0;
-    const luft = rb.x0 - ra.x1;
-    const overlappY = Math.min(ra.y1, rb.y1) - Math.max(ra.y0, rb.y0);
-    if (luft > 0.5 * Math.min(ha, hb)) continue;       // for langt fra hverandre
-    if (overlappY < 0.5 * Math.min(ha, hb)) continue;  // ikke i samme hoyde
-    if (Math.max(ha, hb) > 2 * Math.min(ha, hb)) continue;
+    // utskilt tekst faar passmerke bare mot logoen den ble skilt fra (flerfarget)
+    const erUtskilt = (e: BilElement) => [...utskilt].some((n) => e.navn.includes(n));
+    if ((erUtskilt(a) && b.farger.length < 2) || (erUtskilt(b) && a.farger.length < 2)) continue;
+    /**
+     * Side om side (XL-boksen og PROFF): loddrett strimmel ved naboens kant,
+     * i naboens hoeyde. Over og under hverandre (Eirik 16.11.2026, LTS
+     * Maskin: den hvite teksten under den printede logoen): vannrett
+     * strimmel ved naboens kant, i naboens bredde.
+     */
+    const ha = ra.y1 - ra.y0, hb = rb.y1 - rb.y0, wa = ra.x1 - ra.x0, wb = rb.x1 - rb.x0;
+    let side = false, stablet = false;
+    if (rb.x0 > ra.x1) {
+      const luft = rb.x0 - ra.x1, overlappY = Math.min(ra.y1, rb.y1) - Math.max(ra.y0, rb.y0);
+      side = luft <= 0.5 * Math.min(ha, hb) && overlappY >= 0.5 * Math.min(ha, hb) && Math.max(ha, hb) <= 2 * Math.min(ha, hb);
+    } else if (rb.y0 > ra.y1 && (erUtskilt(a) || erUtskilt(b))) {
+      const luft = rb.y0 - ra.y1, overlappX = Math.min(ra.x1, rb.x1) - Math.max(ra.x0, rb.x0);
+      stablet = luft <= Math.max(ha, hb) && overlappX >= 0.5 * Math.min(wa, wb);
+    }
+    if (!side && !stablet) continue;
     const felles = a.farger.map((f) => f.hex).filter((h) => b.farger.some((g) => g.hex === h));
     if (!felles.length) continue;
     // morkeste felles farge: den ses best og er oftest naboens farge
     const lum = (h: string) => parseInt(h.slice(1, 3), 16) + parseInt(h.slice(3, 5), 16) + parseInt(h.slice(5, 7), 16);
     const hex = felles.sort((x, y) => lum(x) - lum(y))[0];
-    const [baerer, nabo] = ha >= hb ? [a, b] : [b, a];
-    const [rB, rN] = ha >= hb ? [ra, rb] : [rb, ra];
+    const stor = side ? ha >= hb : wa * ha >= wb * hb;
+    const [baerer, nabo] = stor ? [a, b] : [b, a];
+    const [rB, rN] = stor ? [ra, rb] : [rb, ra];
     const kilde = (baner.get(nabo) ?? []).find((x) => x.fyll && baneHex(x.farge) === hex)
       ?? (baner.get(baerer) ?? []).find((x) => x.fyll && baneHex(x.farge) === hex);
     if (!kilde) continue;
-    // Loddrett strimmel ved naboens naermeste kant, i naboens fulle hoyde:
     // PASS_OVERLAPP_MM inn under naboen og like mye utenfor, saa den kan
-    // gripes og rives av. Den viser baade hvor kanten skal staa og hvor
-    // topp og bunn skal ligge (Eirik 16.11: loddrett, ikke vannrett).
+    // gripes og rives av (Eirik 16.11: loddrett ved side om side).
     const inn = tilTegnet(PASS_OVERLAPP_MM), ut = tilTegnet(PASS_BREDDE_MM - PASS_OVERLAPP_MM);
-    const y0 = rN.y0, y1 = rN.y1;
-    const [x0, x1] = rN.x0 > rB.x1 ? [rN.x0 - ut, rN.x0 + inn] : [rN.x1 - inn, rN.x1 + ut];
+    let x0: number, x1: number, y0: number, y1: number;
+    if (side) {
+      y0 = rN.y0; y1 = rN.y1;
+      [x0, x1] = rN.x0 > rB.x1 ? [rN.x0 - ut, rN.x0 + inn] : [rN.x1 - inn, rN.x1 + ut];
+    } else {
+      x0 = rN.x0; x1 = rN.x1;
+      [y0, y1] = rN.y0 > rB.y1 ? [rN.y0 - ut, rN.y0 + inn] : [rN.y1 - inn, rN.y1 + ut];
+    }
     const strimmel: Bane = {
       segs: [{ t: "m", p: [x0, y0] }, { t: "l", p: [x1, y0] }, { t: "l", p: [x1, y1] },
              { t: "l", p: [x0, y1] }, { t: "h" }] as any,
@@ -940,11 +1001,11 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
     baerer.breddeMm = Math.round(((per.bbox[2] - per.bbox[0]) / MM) * malestokk);
     baerer.hoydeMm = Math.round(((per.bbox[3] - per.bbox[1]) / MM) * malestokk);
     baerer.farger = per.lag.map((l) => ({ hex: l.hex, andel: l.andel }));
-    baerer.passmerke = { mot: nabo.navn, hex, lengdeMm: Math.round(((y1 - y0) / MM) * malestokk) };
+    baerer.passmerke = { mot: nabo.navn, hex, lengdeMm: Math.round(((side ? y1 - y0 : x1 - x0) / MM) * malestokk) };
     baner.set(baerer, nye);
     brukt.add(a); brukt.add(b);
-    merknader.push(`${baerer.navn}: passmerke lagt inn mot ${nabo.navn}, en loddrett strimmel ` +
-      `${PASS_BREDDE_MM} mm bred i ${hex} ved naboens kant og i naboens hoyde, ${PASS_OVERLAPP_MM} mm ` +
+    merknader.push(`${baerer.navn}: passmerke lagt inn mot ${nabo.navn}, en ${side ? "loddrett" : "vannrett"} strimmel ` +
+      `${PASS_BREDDE_MM} mm bred i ${hex} ved naboens kant og i naboens ${side ? "hoyde" : "bredde"}, ${PASS_OVERLAPP_MM} mm ` +
       "inn under den. Montoeren legger naboen der strimmelen viser, og river strimmelen av.");
   }
 }
