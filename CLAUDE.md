@@ -621,8 +621,11 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   et rektangel paa full bredde. Feilsignatur: en firkant paa enden av en
   stripe som smalner av.
 - Kiss+thru med rektangulaere rammer legges kant i kant (`kantIKant`):
-  thru er sammenslaatte linjer (`slaaSammenKanter`), kiss-boksen ligger
-  `boksKiss` innenfor rammen. Formede rammer bare naar de gir kortere ark.
+  thru er sammenslaatte linjer (`slaaSammenKanter`). Kiss ligger ALDRI
+  innenfor thru (da blir en stripe folie staaende rundt logoen): mellom
+  elementene skjaerer thru folien, og ut mot sidene gaar kiss `boksKiss`
+  utenfor, rundt hele blokken. Paa ark uten thru gaar kiss paa linjen.
+  Formede rammer bare naar de gir kortere ark.
 - Ingen ytre kiss-ramme rundt hele arket.
 - Et felt (ett helt, konvekst stykke over `DELT_FELT` av elementet) og
   farger som nesten ikke overlapper det (`DELT_OVERLAPP`), produseres hver

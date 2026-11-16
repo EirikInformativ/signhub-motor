@@ -440,9 +440,34 @@ export async function byggProduksjonsfil(
    */
   // kiss-boksen (uten fyll) rundt hvert element staar ogsaa paa ark med
   // thru-cut (Eirik 16.11.2026). Bare rene thru-ark (kunThru) har ingen.
-  for (const p of valg.kunThru ? [] : ark.plasseringer) {
+  /**
+   * Kant i kant (Eirik 16.11.2026): kiss kan aldri ligge innenfor thru, for
+   * da blir en stripe folie mellom dem staaende rundt logoen. Inne mellom
+   * elementene skjaerer thru allerede gjennom folien, saa der trengs ingen
+   * egen kiss. Ut mot sidene gaar kiss boksKiss utenfor thru, rundt hele
+   * blokken. Paa ark uten thru gaar kiss paa linjen der thru er paa
+   * primaerarket, én gang per linje.
+   */
+  if (valg.kantIKant && !valg.kunThru) {
+    const rekt = ark.plasseringer.filter((p) => harForm[p.id])
+      .map((p) => [[[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h], [p.x, p.y]]]);
+    if (valg.thruCut && rekt.length) {
+      const blokk = pc.union(...(rekt as [any])) as MultiPoly;
+      for (const poly of blokk) for (const r of offsetRinger([poly[0].slice(0, -1) as [number, number][]], geo.boksKiss, true))
+        ops.push(ringOps([...r, r[0]], ytop));
+    } else if (rekt.length) {
+      const kanter: [Pkt, Pkt][] = [];
+      for (const x of rekt) { const r = x[0] as Pkt[]; for (let i = 0; i < 4; i++) kanter.push([r[i], r[i + 1]]); }
+      for (const bane of slaaSammenKanter(kanter)) {
+        let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+        for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+        ops.push(o + "S\n");
+      }
+    }
+  }
+  for (const p of valg.kunThru || valg.kantIKant ? [] : ark.plasseringer) {
     if (!harForm[p.id]) continue;
-    const k = valg.kantIKant ? -geo.boksKiss : geo.boksKiss;   // kant i kant: innenfor rammen
+    const k = geo.boksKiss;
     if (p.kiss) { ops.push(ringOps(p.kiss, ytop)); continue; }
     ops.push(`${f4((p.x - k) * MM)} ${f4(ytop(p.y + p.h + k))} ` +
              `${f4((p.w + 2 * k) * MM)} ${f4((p.h + 2 * k) * MM)} re\nS\n`);
