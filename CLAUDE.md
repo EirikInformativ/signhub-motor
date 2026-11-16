@@ -216,6 +216,24 @@ fjernes som dublett. `test/kiatest.ts` vokter dette.
 **Feilsignatur:** en logo der bare de kulørte delene kommer med, eller
 grå og hvitt i fargelista til en stripe.
 
+**Tekst og striper som bare står ved siden av hverandre, skjæres hver
+for seg** (Eirik 16.11.2026, Kia PV5). Holdt sammen måtte hele rammen
+skjæres, nesten bare luft. `samleDeler` i `src/bilmotor.ts` deler hvert
+område i delbaner og slår deler sammen bare når de ligger nær hverandre
+(`DEL_GLIPPE_MM = 50`) **og** den felles rammen er under `DEL_LUFT = 2`
+ganger delenes egne. Bokstaver i en tekst og delene av en logo (ÅTG,
+XL-boksen, Osterøy-pinnen med tekst) gir 1,3 til 1,4; A-en med stripen
+gir 2,7. Delbaner fra samme bane settes sammen igjen, så hull i
+bokstaver står.
+
+**Lange striper skjøtes etter rullbredden, eller skjæres hele hvis det
+gir kortere ark.** Kandidat i `kjorJobb`: ett lag, én flate uten hull,
+lengre enn det som får plass på tvers og minst `STRIPE_FORHOLD = 8`
+ganger så lang som høy. Den deles i like lange stykker med `SKJOT_MM = 10`
+overlapp, gruppen pakkes begge veier, og den korteste vinner. Begge
+utfallene meldes. Kia PV5: fra 11,9 m til 6,3 m folie.
+`test/kiatest.ts` vokter begge reglene.
+
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom
 ikke med: på 309916 manglet «XL-BYGG Osterøy» på to av tre steder, mens

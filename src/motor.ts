@@ -54,6 +54,10 @@ export const MIN_DETALJ = 1.5;
 const SPOR_MM = 4;
 /** et lag som med hullene fylt dekker saa mye av motivet, danner ytterkanten */
 const RAMME_FYLL = 0.995;
+/** overlapp i skjoeten paa lange striper, mm */
+const SKJOT_MM = 10;
+/** en stripe er minst saa mange ganger lengre enn hoy */
+const STRIPE_FORHOLD = 8;
 /** hull smalere enn dette i snitt kan ingen kniv skjaere: tegnefeil */
 const GLIPPE_MM = 0.1;
 
@@ -704,6 +708,66 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|");
     if (!grupper.has(nokkel)) grupper.set(nokkel, []);
     grupper.get(nokkel)!.push(e);
+  }
+
+  /**
+   * Lange striper skjoetes etter rullbredden, eller skjaeres hele hvis det
+   * gir kortere ark (Eirik 16.11.2026, Kia PV5 310079: den gronne stripen
+   * er 2,6 m lang og 0,1 m hoy). En stripe som er lengre enn det som faar
+   * plass paa tvers av rullen, maa ellers ligge paa langs, og da blir arket
+   * minst like langt som stripen, for begge foliene i gruppen.
+   *
+   * Kandidat: ett lag, en flate uten hull, lengste side over det som faar
+   * plass paa tvers, og minst STRIPE_FORHOLD ganger saa lang som hoy. Den
+   * deles i like lange stykker med SKJOT_MM overlapp. Gruppen pakkes begge
+   * veier, og den korteste vinner. Skjoetingen meldes alltid.
+   */
+  for (const [nokkel, g] of grupper) {
+    const fb = Math.min(...g.flatMap((e) => e.deler.map((d) => d.folie.breddeMm ?? grunngeo.foliebredde)));
+    const sk = Math.min(fb - grunngeo.rullKant,
+      fb <= grunngeo.wildMaksRull ? grunngeo.wildMaksSkjaer : grunngeo.summaMaksSkjaer);
+    const maksLengde = sk - 2 * grunngeo.bleed - 2 * (grunngeo.kissInset + grunngeo.regClear + grunngeo.regmarkD);
+    const lengde = (es: Elem[]) => pakkFritt(es.map((e) => ({ navn: e.navn, flate: [], bbox: e.bbox,
+      skala: e.skala, breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall })),
+      { ...grunngeo, foliebredde: fb, skjaerebredde: sk }).arklengde;
+    const ny: Elem[] = [];
+    let skjoet = false;
+    for (const e of g) {
+      const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
+      const f = e.deler.length === 1 ? e.deler[0].flate : [];
+      if (!(f.length === 1 && f[0].length === 1 && lang > maksLengde && lang >= STRIPE_FORHOLD * kort)) {
+        ny.push(e); continue;
+      }
+      const n = Math.ceil(lang / maksLengde);
+      const langsX = e.breddeMm >= e.hoydeMm;
+      const [b0, b1] = langsX ? [e.bbox[0], e.bbox[2]] : [e.bbox[1], e.bbox[3]];
+      const steg = (b1 - b0) / n;
+      const ov = ((SKJOT_MM / 2) * MM) / e.skala;
+      const biter: Elem[] = [];
+      for (let i = 0; i < n; i++) {
+        const a = Math.max(b0, b0 + i * steg - ov), z = Math.min(b1, b0 + (i + 1) * steg + ov);
+        const rute: MultiPoly = langsX
+          ? [[[[a, e.bbox[1] - 1], [z, e.bbox[1] - 1], [z, e.bbox[3] + 1], [a, e.bbox[3] + 1], [a, e.bbox[1] - 1]]]]
+          : [[[[e.bbox[0] - 1, a], [e.bbox[2] + 1, a], [e.bbox[2] + 1, z], [e.bbox[0] - 1, z], [e.bbox[0] - 1, a]]]];
+        const bit = pc.intersection(f as any, rute as any) as MultiPoly;
+        const xs = bit.flatMap((p) => p[0].map((q) => q[0])), ys = bit.flatMap((p) => p[0].map((q) => q[1]));
+        const bb: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        biter.push({ ...e, navn: `${e.navn} skjoet ${i + 1} av ${n}`, bbox: bb,
+          breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
+          deler: [{ ...e.deler[0], flate: bit }] });
+      }
+      const hel = lengde(g), delt = lengde([...g.filter((x) => x !== e), ...biter]);
+      if (delt < hel) {
+        ny.push(...biter); skjoet = true;
+        advarsler.push(`${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${n} stykker ` +
+          `med ${SKJOT_MM} mm overlapp, for arket blir da ${((hel - delt) / 1000).toFixed(2)} m kortere.`);
+      } else {
+        ny.push(e);
+        advarsler.push(`${e.navn}: ${lang.toFixed(0)} mm lang stripe skjaeres hel; skjoeting ville ` +
+          "ikke gjort arket kortere.");
+      }
+    }
+    if (skjoet) grupper.set(nokkel, ny);
   }
 
   /**

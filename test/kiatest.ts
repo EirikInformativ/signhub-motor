@@ -19,7 +19,7 @@
  * stripen, «åtg.no» og «- RØR» tre deler.
  */
 import * as fs from "fs";
-import { lesBilskisse, DISCLAIMER, VANNMERKE } from "../src/motor";
+import { lesBilskisse, kjorJobb, DISCLAIMER, VANNMERKE } from "../src/motor";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 (async () => {
@@ -46,6 +46,15 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(tekst.length === 2, `«RØR - ELEKTRO - ENERGI» for seg paa begge sider (${tekst.length})`);
   const bakSort = l.elementer.filter((e) => /ende hoyre dekor 2 del/.test(e.navn) && e.farger[0].hex === SORT);
   sjekk(bakSort.length === 2, `bak: «åtg.no» og «- RØR» hver for seg (${bakSort.length})`);
+  // hele jobben: stripen skjoetes etter rullbredden, og arkene blir korte.
+  // For delingen og skjoetingen var begge arkene 5,9 m (11,9 m folie).
+  const KART: Record<string, any> = { [GRONN]: { kode: "751-068", hex: GRONN, breddeMm: 1260 }, [SORT]: { kode: "751-070", hex: SORT, breddeMm: 1260 } };
+  const r: any = await kjorJobb({ jobb: "kia", egenSkisse: false, linjer: l.elementer.filter((e) => !e.sammeSom)
+    .map((e) => ({ navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: e.antall, folier: e.farger.map((f) => KART[f.hex]) })) } as any);
+  const sum = r.ark.reduce((a: number, k: any) => a + k.lengdeMm, 0) / 1000;
+  sjekk(r.advarsler.some((a: string) => /skjoetet i 3 stykker/.test(a)), "den lange stripen er skjoetet i 3");
+  sjekk(sum < 7, `samlet folie under 7 m (${sum.toFixed(2)} m)`);
+
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: Kia PV5 leses riktig");
 })();
