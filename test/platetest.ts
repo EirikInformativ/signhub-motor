@@ -144,7 +144,8 @@ const fyllgrad = async (bytes: Uint8Array) => {
   // Med den utledede 1:29,8904 var det 1164 x 1268, altsa 0,37 % for lite.
   sjekk("begge arkene 1168 x 1272 mm",
     r.ark.every((k: any) => k.breddeMm === 1168 && Math.round(k.lengdeMm) === 1272));
-  sjekk("fire filer", r.filer.length === 4,
+  // Én produksjonsfil per folie fra 16.11.2026 (ikke lenger summa + wild).
+  sjekk("tre filer: én per folie og kundeskisse", r.filer.length === 3,
     r.filer.map((f: any) => f.navn).join(" "));
   sjekk("ingen advarsel om samme foliekode",
     !r.advarsler.some((a: string) => /samme foliekode/.test(a)));

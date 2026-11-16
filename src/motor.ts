@@ -293,6 +293,17 @@ const slugg = (s: string) =>
    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
    .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "jobb";
 
+/**
+ * Filnavn i Informativs system: mellomrom, ingen understrek, æøå skrevet
+ * om. Bare tegn som ikke tales i filnavn fjernes.
+ */
+const filnavnDel = (s: string) =>
+  s.replace(/æ/g, "ae").replace(/Æ/g, "AE")
+   .replace(/ø/g, "o").replace(/Ø/g, "O")
+   .replace(/å/g, "a").replace(/Å/g, "A")
+   .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+   .replace(/[\\/:*?"<>|_]+/g, " ").replace(/\s+/g, " ").trim() || "Jobb";
+
 const ROLLER = ["primær", "sekundær", "tertiær", "kvartær", "kvintær"];
 
 interface Del { folie: Folie; flate: MultiPoly; hex: string }
@@ -666,6 +677,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   const filer: Fil[] = [];
   const arkinfo: ArkInfo[] = [];
   const s = slugg(b.jobb);
+  const grunnNavn = filnavnDel(b.jobb);
 
   const utenWild: string[] = [];
   for (const gruppe of grupper.values()) {
@@ -736,20 +748,24 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         hoydeMm: e.hoydeMm, antall: e.antall,
       }));
 
+      /**
+       * Én fil per folie (Eirik 16.11.2026). Wild-fila kan kjores pa bade
+       * summa og wild, sa primaerfargen far bare den. Er arket for bredt for
+       * wild, lages summa-varianten med doble regmarks i stedet. Filnavnet
+       * sier ikke maskin, bare: navn, prosess, materiale, skala.
+       */
       const varianter: { navn: string; valg: ArkValg }[] = rolleNr === 0
-        ? [{ navn: `${rolle} summa`,
-             valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme } }]
+        ? [wildGar
+            ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
+            : { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme } }]
         : [{ navn: rolle,
              valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme } }];
-      if (rolleNr === 0 && wildGar) {
-        varianter.push({ navn: `${rolle} wild`,
-                         valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } });
-      }
 
       for (const v of varianter) {
+        const prosess = v.valg.thruCut ? "Kiss+thru" : "Kiss";
         filer.push({
           slag: "produksjon",
-          navn: `${s}_${slugg(v.navn)}_${folie.kode}.pdf`,
+          navn: `${grunnNavn} ${prosess} ${folie.kode} 100%.pdf`,
           bytes: undefined as any,
           _bygg: () => byggProduksjonsfil(motiver, ark, geo, fyllOp, v.navn,
                                           v.valg, b.jobb, folie.kode),
@@ -780,9 +796,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   }
 
   if (utenWild.length) {
-    advarsler.push(`Wild-fil er ikke laget for ${utenWild.join(", ")}. ` +
+    advarsler.push(`For bredt for wild: ${utenWild.join(", ")}. ` +
       `Wild tar rull opp til ${grunngeo.wildMaksRull} mm og skjaerer ` +
-      `${grunngeo.wildMaksSkjaer} mm. Jobben ma kjores pa summa.`);
+      `${grunngeo.wildMaksSkjaer} mm. Fila har doble regmarks og ma kjores pa summa.`);
   }
 
   const felt: Felt = { korrekturdato: idag(), ...(b.felt ?? {}) };

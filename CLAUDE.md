@@ -367,8 +367,17 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
     summaMaksSkjaer 1600, bleed 5, gap 7.5, regmarkD 5, kissInset 5,
     regClear 5, regmarkKiss 2.5, boksKiss 2.5, regTarget 500, strek 0.25
 
-Er folien bredere enn 1260 mm, eller kommer ytterste kiss-cut utenfor
-1215 mm, skal det ikke genereres wild-fil. Det er ikke et valg i skjemaet.
+Det lages **én produksjonsfil per folie** (fra 16.11.2026). Wild-fila
+kan kjøres på både summa og wild, så primærfargen får bare den. Er folien
+bredere enn 1260 mm, eller kommer ytterste kiss-cut utenfor 1215 mm, lages
+summa-varianten med doble regmarks i stedet, med advarsel. Det er ikke et
+valg i skjemaet.
+
+Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
+`Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er
+`Kiss+thru` på primærfargen og `Kiss` på fargene som legges oppå.
+Ingen maskinnavn og ingen rolleord i navnet. Antall står ikke i navnet,
+fordi elementene allerede er ganget opp på arket.
 
 ## Rollback
 
