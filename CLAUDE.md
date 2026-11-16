@@ -659,8 +659,14 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   `strekkUt` tar hensyn til `snu`.
 - Appliser+thru skyves sammen etter formen (`skyvSammen`): stykker kant i
   kant er én enhet, og hver enhet proeves som den ligger og snudd 180°, og
-  skyves til venstre til formen er `gap` fra det som ligger der. Vito:
-  feltet fra 1020 til 900 mm bredt.
+  skyves til venstre til formen er `gap` fra det som ligger der. Er kantene
+  som moetes parallelle (avvik under `PARALLELL_MM`), legges de kant i kant
+  med én thru-linje. Et felt alene proeves ogsaa dreid saa en side ligger
+  langs naboens kant. Vito: feltet fra 1020 til 880 mm bredt.
+- `slaaSammenKanter` slaar sammen linjer med samme retning (innenfor
+  `LINJE_VINKEL`) som ligger under `LINJE_AVSTAND_MM` fra hverandre: kniven
+  gaar én gang, langs den lengste. Feilsignatur: to thru-linjer et par
+  tideler fra hverandre.
 - Et helt felt (én farge, konvekst, ikke stripe) dreies til minste ramme
   (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
 - `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i

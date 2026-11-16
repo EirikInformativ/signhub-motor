@@ -595,22 +595,31 @@ export function slaaSammenLinjer(motiver: Motiv[], ark: Ark, geo: Geo): Pkt[][] 
 }
 
 /** Kanter paa samme linje slaas sammen; sammenhengende stykker blir én bane. */
+const LINJE_VINKEL = 0.01;      // radianer
+const LINJE_AVSTAND_MM = 1;
 export function slaaSammenKanter(kanter: [Pkt, Pkt][]): Pkt[][] {
-  // grupper paa linje: retning (vinkel mod 180) og avstand fra origo
-  const grupper = new Map<string, { ux: number; uy: number; d: number; iv: [number, number][] }>();
-  for (const [a, c] of kanter) {
+  /**
+   * Grupper paa linje: retning og avstand fra origo. Linjer som ligger
+   * nesten oppaa hverandre (samme retning innenfor LINJE_VINKEL og under
+   * LINJE_AVSTAND_MM fra hverandre i begge ender) er samme linje, og kniven
+   * gaar én gang, langs den lengste (Eirik 16.11.2026: to thru-linjer et par
+   * millimeter fra hverandre fungerer daarlig i praksis). Lengste foerst, saa
+   * den lange linjen er den som staar.
+   */
+  const grupper: { ux: number; uy: number; d: number; iv: [number, number][] }[] = [];
+  const sortert = kanter.slice().sort((x, y) => Math.hypot(y[1][0] - y[0][0], y[1][1] - y[0][1]) - Math.hypot(x[1][0] - x[0][0], x[1][1] - x[0][1]));
+  for (const [a, c] of sortert) {
     let ux = c[0] - a[0], uy = c[1] - a[1];
     const l = Math.hypot(ux, uy); ux /= l; uy /= l;
     if (ux < -1e-9 || (Math.abs(ux) < 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
-    const d = -uy * a[0] + ux * a[1];
-    const nokkel = `${Math.round(Math.atan2(uy, ux) * 1e4)}|${Math.round(d * 100)}`;
-    const g = grupper.get(nokkel) ?? { ux, uy, d, iv: [] };
-    const t0 = ux * a[0] + uy * a[1], t1 = ux * c[0] + uy * c[1];
+    let g = grupper.find((h) => Math.abs(h.ux * uy - h.uy * ux) < LINJE_VINKEL &&
+      Math.abs(-h.uy * a[0] + h.ux * a[1] - h.d) < LINJE_AVSTAND_MM && Math.abs(-h.uy * c[0] + h.ux * c[1] - h.d) < LINJE_AVSTAND_MM);
+    if (!g) { g = { ux, uy, d: -uy * a[0] + ux * a[1], iv: [] }; grupper.push(g); }
+    const t0 = g.ux * a[0] + g.uy * a[1], t1 = g.ux * c[0] + g.uy * c[1];
     g.iv.push([Math.min(t0, t1), Math.max(t0, t1)]);
-    grupper.set(nokkel, g);
   }
   const ut: [Pkt, Pkt][] = [];
-  for (const g of grupper.values()) {
+  for (const g of grupper) {
     g.iv.sort((x, y) => x[0] - y[0]);
     const slaatt: [number, number][] = [];
     for (const [t0, t1] of g.iv) {

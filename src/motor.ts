@@ -36,6 +36,8 @@ export type { Forhandsvisning, ForhandsvisValg } from "./forhandsvis.ts";
 export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
+/** To skraa kanter som avviker mindre enn dette fra parallelle, legges kant i kant. */
+const PARALLELL_MM = 0.5;
 /** Et felt dreies naar rammen blir minst saa mye mindre. */
 const DREI_GEVINST = 0.1;
 /** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
@@ -712,27 +714,33 @@ async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
  * med gap til det som allerede ligger der. Avstanden maales paa tvers i
  * smale skiver. Gir antall mm spart i bredden.
  */
-function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo): number {
+function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld: string[] = []): number {
   const ps = ark.plasseringer;
   if (ps.length < 2) return 0;
-  const form = (p: any): [number, number][][] => {
-    const e = gruppe[p.id], b = e.bbox, k = e.skala / MM, bl = geo.bleed;
-    const til = ([X, Y]: number[]): [number, number] => {
-      const [x, y] = p.rotated ? [p.x + bl + (b[3] - Y) * k, p.y + p.h - bl - (X - b[0]) * k]
-        : [p.x + bl + (X - b[0]) * k, p.y + p.h - bl - (Y - b[1]) * k];
-      return p.snu ? [2 * p.x + p.w - x, 2 * p.y + p.h - y] : [x, y];
-    };
-    return e.deler.flatMap((d) => d.flate.map((poly) => poly[0].map(til)));
+  type R = [number, number][];
+  const bl = geo.bleed;
+  const tilArk = (p: any, X: number, Y: number): [number, number] => {
+    const e = gruppe[p.id], b = e.bbox, k = e.skala / MM;
+    const [x, y] = p.rotated ? [p.x + bl + (b[3] - Y) * k, p.y + p.h - bl - (X - b[0]) * k]
+      : [p.x + bl + (X - b[0]) * k, p.y + p.h - bl - (Y - b[1]) * k];
+    return p.snu ? [2 * p.x + p.w - x, 2 * p.y + p.h - y] : [x, y];
   };
-  // x-utstrekning til en form paa hoeyde y
-  const spenn = (ringer: [number, number][][], y: number): [number, number] | null => {
+  // fra arket tilbake til elementets enheter (motsatt av tilArk)
+  const fraArk = (p: any, x: number, y: number): [number, number] => {
+    const e = gruppe[p.id], b = e.bbox, k = e.skala / MM;
+    if (p.snu) { x = 2 * p.x + p.w - x; y = 2 * p.y + p.h - y; }
+    return p.rotated ? [b[0] + (p.y + p.h - bl - y) / k, b[3] - (x - p.x - bl) / k]
+      : [b[0] + (x - p.x - bl) / k, b[1] + (p.y + p.h - bl - y) / k];
+  };
+  const form = (p: any): R[] => gruppe[p.id].deler.flatMap((d) => d.flate.map((poly) => poly[0].map(([X, Y]) => tilArk(p, X, Y))));
+  const spenn = (ringer: R[], y: number): [number, number] | null => {
     let lo = Infinity, hi = -Infinity;
     for (const r of ringer) for (let i = 0; i < r.length - 1; i++) {
       const [x1, y1] = r[i], [x2, y2] = r[i + 1];
-      if ((y < Math.min(y1, y2)) || (y > Math.max(y1, y2))) continue;
-      const x = Math.abs(y2 - y1) < 1e-9 ? Math.min(x1, x2) : x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
-      const x2b = Math.abs(y2 - y1) < 1e-9 ? Math.max(x1, x2) : x;
-      lo = Math.min(lo, x); hi = Math.max(hi, x2b);
+      if (y < Math.min(y1, y2) || y > Math.max(y1, y2)) continue;
+      if (Math.abs(y2 - y1) < 1e-9) { lo = Math.min(lo, x1, x2); hi = Math.max(hi, x1, x2); continue; }
+      const x = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
+      lo = Math.min(lo, x); hi = Math.max(hi, x);
     }
     return lo <= hi ? [lo, hi] : null;
   };
@@ -748,48 +756,142 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo): num
   const enheter = [...grupper.values()].sort((a, b) => Math.min(...a.map((p) => p.x)) - Math.min(...b.map((p) => p.x)));
   const x0Alle = Math.min(...ps.map((p) => p.x));
   const bredde0 = Math.max(...ps.map((p) => p.x + p.w)) - x0Alle;
-  const lagt: [number, number][][] = [];
+  const lagt: R[] = [];
   const snuEnhet = (u: any[]) => {
     const ux0 = Math.min(...u.map((p) => p.x)), ux1 = Math.max(...u.map((p) => p.x + p.w));
     const uy0 = Math.min(...u.map((p) => p.y)), uy1 = Math.max(...u.map((p) => p.y + p.h));
     for (const p of u) { p.x = ux0 + ux1 - (p.x + p.w); p.y = uy0 + uy1 - (p.y + p.h); p.snu = !p.snu; }
   };
-  const avstand = (ringer: [number, number][][]): number => {
-    // hvor langt enheten kan skyves til venstre
-    let min = Infinity;
+  /**
+   * Hvor langt enheten kan skyves til venstre. Ligger kanten som vender mot
+   * naboen parallelt med naboens (avvik under PARALLELL_MM over minst
+   * halvparten av det de ligger mot hverandre), legges de kant i kant uten
+   * gap, og linjen skjaeres én gang (Eirik 16.11.2026: «hvorfor legger du
+   * ikke parene kant i kant med enveisthru?»). Ellers holdes gap.
+   */
+  const plassering = (ringer: R[]): { s: number; kontakt: boolean } => {
     const ys = new Set<number>();
-    for (const r of ringer) for (const q of r) ys.add(q[1]);
-    for (const r of lagt) for (const q of r) ys.add(q[1]);
     const y0 = Math.min(...ringer.flat().map((q) => q[1])), y1 = Math.max(...ringer.flat().map((q) => q[1]));
+    for (const r of ringer) for (const q of r) ys.add(q[1]);
+    for (const r of lagt) for (const q of r) if (q[1] >= y0 && q[1] <= y1) ys.add(q[1]);
     for (let y = y0; y <= y1; y += 2) ys.add(y);
+    const d: number[] = [];
+    let min = Infinity, kant = Infinity;
     for (const y of ys) {
-      if (y < y0 - 1e-9 || y > y1 + 1e-9) continue;
       const b = spenn(ringer, y);
       if (!b) continue;
+      kant = Math.min(kant, b[0] - x0Alle);
+      let best = Infinity;
       for (const a of lagt) {
-        const s = spenn([a], y);
-        if (s && s[1] <= b[0] + 1e-6) min = Math.min(min, b[0] - s[1]);
-        else if (s && s[0] < b[1]) min = Math.min(min, 0);
+        const sp = spenn([a], y);
+        if (sp && sp[1] <= b[0] + 1e-6) best = Math.min(best, b[0] - sp[1]);
+        else if (sp && sp[0] < b[1]) best = Math.min(best, 0);
       }
-      min = Math.min(min, b[0] - x0Alle);
+      if (best < Infinity) { d.push(best); min = Math.min(min, best); }
     }
-    return min;
+    if (min === Infinity) return { s: Math.max(0, kant), kontakt: false };
+    const naer = d.filter((x) => x - min < PARALLELL_MM);
+    const kontakt = d.length > 3 && naer.length >= 0.5 * d.length;
+    if (kontakt && min <= kant) return { s: Math.max(0, min), kontakt: true };
+    return { s: Math.max(0, Math.min(kant, min - geo.gap - 0.5)), kontakt: false };
+  };
+  /**
+   * Kanten som vender mot naboen flyttes inn paa naboens linje (avviket er
+   * under PARALLELL_MM), saa de to linjene blir én og slaas sammen.
+   */
+  const snapp = (u: any[]) => {
+    for (const p of u) {
+      const e = gruppe[p.id];
+      const ny = e.deler.map((dl) => ({ ...dl, flate: dl.flate.map((poly) => poly.map((r) => r.map(([X, Y]) => {
+        const [x, y] = tilArk(p, X, Y);
+        let bestX: number | null = null;
+        for (const a of lagt) {
+          const sp = spenn([a], y);
+          if (sp && x >= sp[1] - 1e-6 && x - sp[1] < PARALLELL_MM + 0.05) bestX = sp[1];
+        }
+        return bestX === null ? [X, Y] as [number, number] : fraArk(p, bestX, y);
+      }))) }));
+      e.deler = ny;
+      e.omriss = e.deler[0].flate;
+    }
+  };
+  /** Elementets form dreid gamma grader (mot klokka paa arket), med rotert/snudd bakt inn. */
+  const dreid = (e: Elem, flate: MultiPoly, rotert: boolean, snudd: boolean, gamma: number) => {
+    const tot = ((rotert ? 90 : 0) + (snudd ? 180 : 0) + gamma) * Math.PI / 180;
+    const c = Math.cos(tot), sn = Math.sin(tot);
+    const fl = flate.map((poly) => poly.map((r) => r.map(([x, y]) => [x * c - y * sn, x * sn + y * c] as [number, number])));
+    const pk = fl.flat(2);
+    const bb: [number, number, number, number] = [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+      Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+    return { fl, bb, w: ((bb[2] - bb[0]) * e.skala) / MM, h: ((bb[3] - bb[1]) * e.skala) / MM };
   };
   for (const u of enheter) {
     const ringerAv = () => u.flatMap((p) => form(p));
     if (!lagt.length) { lagt.push(...ringerAv()); continue; }
     const xFoer = Math.min(...u.map((p) => p.x));
-    const skyv = (r: [number, number][][]) => {
-      const d = avstand(r);
-      return d === Infinity ? 0 : Math.max(0, d - geo.gap - 0.5);
-    };
-    const s0 = skyv(ringerAv());
+    const proev = () => { const r = plassering(ringerAv()); return { ...r, hoyre: Math.max(...u.map((p) => p.x + p.w)) - r.s }; };
+    let a0 = proev();
     snuEnhet(u);
-    const s1 = skyv(ringerAv());
-    if (s1 <= s0 + 0.5) snuEnhet(u);   // tilbake
-    const s = Math.max(s0, s1);
-    if (s > 0) for (const p of u) p.x -= s;
+    const a1 = proev();
+    if (a1.hoyre > a0.hoyre - 0.5 && !(a1.kontakt && !a0.kontakt && a1.hoyre <= a0.hoyre + 0.5)) snuEnhet(u); else a0 = a1;
+    /**
+     * Et felt alene kan dreies saa en av sidene ligger parallelt med naboens
+     * kant, og legges inntil med enveis thru (Eirik 16.11.2026: «snu det
+     * store roede feltet til bakluke litt mer for saa aa koble den paa med
+     * enveis-thru»). Vinkelen som gir minst ark vinner.
+     */
+    const e0 = u.length === 1 ? gruppe[u[0].id] : null;
+    if (e0 && e0.deler.length === 1 && e0.deler[0].flate.length === 1 && heltKonveks(e0.deler[0].flate) &&
+        !e0.skjoter?.length && !e0.forleng?.size) {
+      const p = u[0];
+      const foer = { flate: e0.deler[0].flate, bbox: e0.bbox, b: e0.breddeMm, h: e0.hoydeMm, x: p.x, y: p.y, w: p.w, hh: p.h, rot: p.rotated, snu: !!p.snu };
+      const pad = p.w - (p.rotated ? e0.hoydeMm : e0.breddeMm);
+      const tilbake = () => {
+        e0.deler = [{ ...e0.deler[0], flate: foer.flate }]; e0.bbox = foer.bbox; e0.breddeMm = foer.b; e0.hoydeMm = foer.h;
+        p.rotated = foer.rot; p.snu = foer.snu; p.w = foer.w; p.h = foer.hh; p.x = foer.x; p.y = foer.y;
+      };
+      const sett = (g: number) => {
+        const d = dreid(e0, foer.flate, foer.rot, foer.snu, g);
+        e0.deler = [{ ...e0.deler[0], flate: d.fl }]; e0.bbox = d.bb; e0.breddeMm = d.w; e0.hoydeMm = d.h;
+        p.rotated = false; p.snu = false; p.w = d.w + pad; p.h = d.h + pad; p.x = foer.x; p.y = foer.y;
+      };
+      // naboens kant: hoeyre side av det som er lagt, innenfor feltets hoeyde
+      const ya = p.y + 0.15 * p.h, yb = p.y + 0.85 * p.h;
+      const sa = lagt.map((r) => spenn([r], ya)).filter(Boolean).sort((x, y) => y![1] - x![1])[0];
+      const sb = lagt.map((r) => spenn([r], yb)).filter(Boolean).sort((x, y) => y![1] - x![1])[0];
+      const vinkler = [0];
+      if (sa && sb) {
+        const theta = Math.atan2(-(yb - ya), sb[1] - sa[1]) * 180 / Math.PI;   // arket med y opp
+        const d0 = dreid(e0, foer.flate, foer.rot, foer.snu, 0);
+        const sk = konvekstSkall(d0.fl[0][0].slice(0, -1) as [number, number][]);
+        for (let i = 0; i < sk.length; i++) {
+          const q0 = sk[i], q1 = sk[(i + 1) % sk.length];
+          const phi = Math.atan2(q1[1] - q0[1], q1[0] - q0[0]) * 180 / Math.PI;
+          vinkler.push(theta - phi, theta - phi + 180);
+        }
+      }
+      const andreH = Math.max(...ps.filter((q) => !u.includes(q)).map((q) => q.y + q.h));
+      const andreB = Math.max(...ps.filter((q) => !u.includes(q)).map((q) => q.x + q.w));
+      let best: { g: number; areal: number; kontakt: boolean } | null = null;
+      for (const g of vinkler) {
+        try {
+          sett(g);
+          const a = proev();
+          const areal = Math.max(a.hoyre, andreB) * Math.max(andreH, p.y + p.h);
+          if (!best || areal < best.areal - 1 || (Math.abs(areal - best.areal) <= 1 && a.kontakt && !best.kontakt)) best = { g, areal, kontakt: a.kontakt };
+        } catch { /* proev neste */ }
+        tilbake();
+      }
+      if (best && best.g !== 0) {
+        sett(best.g);
+        e0.omriss = e0.deler[0].flate;
+        meld.push(`${e0.navn}: dreid til saa en side ligger mot naboens kant${best.kontakt ? " (enveis thru)" : ""}.`);
+      }
+      a0 = proev();
+    }
+    if (a0.s > 0) for (const p of u) p.x -= a0.s;
     if (Math.min(...u.map((p) => p.x)) > xFoer) for (const p of u) p.x -= Math.min(...u.map((q) => q.x)) - xFoer;
+    if (a0.kontakt) snapp(u);
     lagt.push(...ringerAv());
   }
   const bredde1 = Math.max(...ps.map((p) => p.x + p.w)) - Math.min(...ps.map((p) => p.x));
@@ -1865,7 +1967,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       // med regmarks staar arkbredden og regmark-kolonnene fast: strekk innenfor dem
       advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo, reservert,
         regThru ? ark.breddeMm - reservert : reservert + ark.brukbarBredde));
-      const spart = skyvSammen(gruppe, ark, geo);
+      const spart = skyvSammen(gruppe, ark, geo, advarsler);
       if (spart >= 1) advarsler.push(`${folier[0].kode}: stykkene er snudd og skjovet inntil hverandre etter formen, ` +
         `${Math.round(spart)} mm smalere felt.`);
     }
