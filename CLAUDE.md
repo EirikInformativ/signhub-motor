@@ -626,11 +626,12 @@ skjæres én gang. `retteSider` i `src/motor.ts` finner sidene formen ligger
 langs (innenfor `RETT_SIDE_MM = 0.5`, minst `RETT_SIDE_ANDEL = 0.97` av
 lengden), og retter dem helt ut til rammen, utover, aldri innover, så to
 kanter aldri ligger en brøkdel av en millimeter fra hverandre. `pakkKant` i
-`src/pakk.ts` gir rette sider 0 og andre sider halvt gap. Fila har bare
-skjærelinjer i Through: `slaaSammenLinjer` i `src/produksjonsfil.ts` slår
+`src/pakk.ts` gir rette sider 0 og andre sider halvt gap. Skjærelinjene
+ligger i Through: `slaaSammenLinjer` i `src/produksjonsfil.ts` slår
 sammen stykker på samme linje, setter dem sammen til sammenhengende baner
-og tar dem i nærmeste-nabo-rekkefølge. Ingen fylte baner, for wild skjærer
-dem også. Kia: stripearket fra 500 til 460 mm. `test/kiatest.ts` feiler
+og tar dem i nærmeste-nabo-rekkefølge. Flatene ligger under i
+Design-laget med bare fyll i foliens farge og ingen strek, så det er
+tydelig hvilken farge arket er (Eirik 16.11.2026). Kia: stripearket fra 500 til 460 mm. `test/kiatest.ts` feiler
 hvis en linje skjæres to ganger eller to parallelle linjer ligger under
 2 mm fra hverandre.
 `test/kiatest.ts` og `test/skjultkutt.ts` (en hel sirkel) vokter det.

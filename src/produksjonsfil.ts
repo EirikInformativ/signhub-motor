@@ -114,6 +114,21 @@ function sirkel(cx: number, cy: number, r: number, op: "f" | "S"): string {
   );
 }
 
+/** Bare fyll, ingen strek: flatene i foliens farge. */
+function fyllOps(flate: MultiPoly, fyllOp: string): string {
+  let o = fyllOp + "\n";
+  for (const poly of flate) {
+    for (const r of poly) {
+      if (r.length < 3) continue;
+      o += `${f4(r[0][0])} ${f4(r[0][1])} m\n`;
+      for (const q of r.slice(1)) o += `${f4(q[0])} ${f4(q[1])} l\n`;
+      o += "h\n";
+    }
+    o += "f*\n";
+  }
+  return o;
+}
+
 /** En lukket ring i mm (y nedover) som strek. */
 function ringOps(r: [number, number][], ytop: (v: number) => number): string {
   let o = `${f4(r[0][0] * MM)} ${f4(ytop(r[0][1]))} m\n`;
@@ -176,7 +191,11 @@ export async function byggProduksjonsfil(
   motiver.forEach((m, i) => {
     harForm[i] = m.flate.length > 0;
     if (!harForm[i]) return;   // elementet finnes ikke i denne folien
-    formOps[i] = skjaereOps(m.flate, m.skala, folieFyll, geo.strek, valg.kunThru ? "CS0" : "CS1").ops;
+    // Appliser+thru: bare fyll, saa det synes hvilken farge det er. Linjene
+    // skjaeres fra Thru-cut-laget, slaatt sammen (Eirik 16.11.2026).
+    formOps[i] = valg.kunThru
+      ? fyllOps(m.flate, folieFyll)
+      : skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
   });
 
   const W = ark.breddeMm * MM;
@@ -184,25 +203,9 @@ export async function byggProduksjonsfil(
   const ytop = (v: number) => H - v * MM;
   const ops: string[] = [];
 
-  /**
-   * Appliser+thru: bare skjaerelinjer, slaatt sammen (Eirik 16.11.2026,
-   * prinsippet fra klebemerkene). Elementer som ligger kant i kant deler
-   * linje, og den skjaeres én gang. Ingen fylte baner, for wild skjaerer
-   * hver bane i fila, ogsaa en fylt kopi under linjene.
-   */
-  if (valg.kunThru) {
-    ops.push(`/OC /L1 BDC\nq\n/CS0 CS\n1 SCN\n${f4(geo.strek)} w\n`);
-    for (const bane of slaaSammenLinjer(motiver, ark, geo)) {
-      let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
-      for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
-      ops.push(o + "S\n");
-    }
-    ops.push("Q\nEMC\n");
-  }
-
   // Design
   ops.push("/OC /L0 BDC\nq\n");
-  for (const p of valg.kunThru ? [] : ark.plasseringer) {
+  for (const p of ark.plasseringer) {
     if (!harForm[p.id]) continue;
     const m = motiver[p.id];
     const b = m.bbox, s = m.skala;
@@ -218,6 +221,22 @@ export async function byggProduksjonsfil(
     }
   }
   ops.push("Q\nEMC\n");
+
+  /**
+   * Appliser+thru: skjaerelinjene slaatt sammen (Eirik 16.11.2026,
+   * prinsippet fra klebemerkene). Elementer som ligger kant i kant deler
+   * linje, og den skjaeres én gang. Flatene ligger i Design-laget med bare
+   * fyll og ingen strek, saa det er tydelig hvilken farge det er.
+   */
+  if (valg.kunThru) {
+    ops.push(`/OC /L1 BDC\nq\n/CS0 CS\n1 SCN\n${f4(geo.strek)} w\n`);
+    for (const bane of slaaSammenLinjer(motiver, ark, geo)) {
+      let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+      for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+      ops.push(o + "S\n");
+    }
+    ops.push("Q\nEMC\n");
+  }
 
   // Thru-cut (ved kunThru er elementenes egen strek thru-cutten)
   if (valg.thruCut && !valg.kunThru) {

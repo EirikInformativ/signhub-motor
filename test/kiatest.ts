@@ -82,15 +82,20 @@ import { hentBaner } from "../src/uttrekk";
   if (thru.length) {
     const t = await innhold(thru[0]);
     const maling = t.split("\n").filter((l) => /^(f|f\*|S|s|B|B\*|b|b\*)$/.test(l));
-    sjekk(maling.length > 0 && maling.every((l) => l === "S") && /\/CS0 CS/.test(t) && !/\/CS1 CS\n1 SCN\n[\d.]+ w\n[\d.]/.test(t),
-      `Appliser+thru-fila har bare skjaerelinjer i Through: ingen fyll, regmarks, ramme eller kiss (${[...new Set(maling)].join(", ")})`);
+    // linjene i Through, flatene bare fylt (f*, uten strek), ingen regmarks (f), ramme eller kiss
+    sjekk(maling.length > 0 && maling.every((l) => l === "S" || l === "f*") && maling.includes("f*") && /\/CS0 CS/.test(t) &&
+      !/\/CS1 CS\n1 SCN\n[\d.]+ w\n[\d.]/.test(t),
+      `Appliser+thru-fila har skjaerelinjer i Through og flatene bare fylt i foliefargen (${[...new Set(maling)].join(", ")})`);
+    const strek = t.split("\n").filter((l) => /^(S|s|B|B\*|b|b\*)$/.test(l)).length;
+    const thruLag = t.slice(t.indexOf("/OC /L1 BDC"), t.indexOf("EMC", t.indexOf("/OC /L1 BDC")));
+    sjekk(strek === (thruLag.match(/\nS\n/g) ?? []).length, "bare Thru-cut-laget har strek; flatene har ingen");
     /**
      * Kant i kant (Eirik 16.11.2026, prinsippet fra klebemerkene): ingen
      * linjestykker paa samme linje som overlapper, og ingen parallelle
      * linjer naermere enn 2 mm. Kniven gaar aldri i samme spor to ganger.
      */
     const st: number[][] = [];
-    for (const bane of t.split("\nS\n")) {
+    for (const bane of thruLag.split("\nS\n")) {
       const p = [...bane.matchAll(/([\d.]+) ([\d.]+) [ml]\n/g)].map((m) => [+m[1] / 2.8346, +m[2] / 2.8346]);
       for (let i = 0; i < p.length - 1; i++) st.push([...p[i], ...p[i + 1]]);
     }
