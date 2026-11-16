@@ -18,7 +18,9 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
+/** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
+const KANT_ENDE_MM = 15;
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
 import type { Folie } from "./motor.ts";
 
@@ -256,6 +258,8 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       `${(r.fjernet / MM / MM * malestokk * malestokk / 1e6).toFixed(2).replace(".", ",")} m² folie ` +
       `(${(r.fjernet / r.foer * 100).toFixed(0)} % av de kuttede delene). Alt som synes paa bilen er med` +
       (r.gjennomsyn ? ", bortsett fra smaa gjennomsyn mellom bildelene (for eksempel mellom hjulbue og dekk)." : "."));
+    if (r.rettet) merknader.push(`${x.o.vis} ${x.o.navn}: ${r.rettet} ${r.rettet === 1 ? "stripe" : "striper"} med ender ` +
+      "under bilens deler er rettet ut til rektangel. Endene kan forlenges paa arket.");
     if (r.knotter) merknader.push(`${x.o.vis} ${x.o.navn}: smaa synlige knotter i kanten mot bildelene ` +
       `(under ${KLIPP_MIN_MM} mm brede, for eksempel en flekk ved speilfoten) er ikke tatt med, saa kuttlinjen blir rett. ` +
       "Sjekk skissen hvis en slik bit er ment aa synes.");
@@ -266,6 +270,12 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       `${KLIPP_MIN_MM} mm inn under bilens deler (${r.kortForbi.length} ${r.kortForbi.length === 1 ? "del" : "deler"}). ` +
       "Montoeren trenger noe aa skjaere til etter. Forleng dekoren i skissen.");
     x.valgte = r.baner;
+    // striper som slutter ved en kant paa bilen kan ogsaa forlenges paa arket
+    x.valgte = x.valgte.map((b) => {
+      if (b.skjultEnde) return b;
+      const k = enderVedKant(b, baner, (o) => alleDekor.has(o), (KANT_ENDE_MM / malestokk) * MM);
+      return k ? { ...b, skjultEnde: k } : b;
+    });
   }
   for (const { o, valgte } of valgtPerOmraade) {
     const deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
@@ -287,7 +297,19 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
         throw new Error(`${o.vis} ${o.navn}: ${String(e?.message ?? e ?? "ukjent feil")}`);
       }
     };
-    let pdf = await skrivPdf(valgte);
+    /**
+     * En stripe med ender under bilen (rettet ut av kuttVedBildeler) faar
+     * vite i PDF-en hvilke ender som kan forlenges, i elementets retning.
+     * kjorJobb strekker dem ut i dodrommet paa et Appliser+thru-ark.
+     */
+    const forleng: string[] = [];
+    if (valgte.length === 1 && valgte[0].skjultEnde) {
+      const se = valgte[0].skjultEnde;
+      const liggende = Math.abs(se.ux) >= Math.abs(se.uy);
+      if (se.lav) forleng.push(liggende ? "venstre" : "bunn");
+      if (se.hoy) forleng.push(liggende ? "hoyre" : "topp");
+    }
+    let pdf = await skrivPdf(valgte, undefined, forleng);
     let brukte = valgte;
     let per = await lesTrygt(pdf);
     let tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
@@ -345,7 +367,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
        */
       const igjen = valgte.filter((b) => !horerTilPlaten(b, platehex));
       if (igjen.length && igjen.length < valgte.length) {
-        pdf = await skrivPdf(igjen);
+        pdf = await skrivPdf(igjen, undefined, forleng);
         brukte = igjen;
         // alt som meldes utledes na av den fila som faktisk leveres
         per = await lesTrygt(pdf);

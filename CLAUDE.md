@@ -297,6 +297,23 @@ står. Det meldes med spart areal. `test/kiatest.ts` vokter det.
 **Feilsignatur:** synlig dekor som mangler i produksjonsfila, eller striper
 som er like lange som tegnet langt inn under hjulbuen.
 
+**Striper med ender under bilen blir rette rektangler, og endene kan
+strekkes ut** (Eirik 16.11.2026). En stripe (én konveks flate, minst 8
+ganger så lang som bred) som går godt forbi det som synes, får hver skjult
+ende rettet ut til rektangel langs stripen (`kuttVedBildeler`). Det legger
+bare til folie under bildelen. En stripe som slutter ved en kant på bilen
+(en av bilens linjer krysser midtlinjen innenfor `KANT_ENDE_MM = 15` fra
+enden, `enderVedKant`), som stripen bak på Kia, merkes på samme måte.
+Endene skrives i element-PDF-en som nøkkelord `signhub-forleng:venstre,hoyre`
+(ingen endring i appen), og skjøtte stykker arver bare de ytterste endene.
+På et Appliser+thru-ark strekker `strekkUt` i `src/motor.ts` slike ender ut
+i dødrommet, til naboen eller feltkanten, og skyver elementet over først
+hvis plassen ligger på motsatt side. Kia: stripestykkene bak strekkes 311 mm
+hver, så hele feltet er fylt. Meldes per element.
+
+**Feilsignatur:** en stripe med skrå ende på et Appliser+thru-ark, eller
+dødrom ved siden av en stripe som er merket som forlengbar.
+
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom
 ikke med: på 309916 manglet «XL-BYGG Osterøy» på to av tre steder, mens

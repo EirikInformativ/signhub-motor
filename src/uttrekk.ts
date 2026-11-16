@@ -45,6 +45,12 @@ export interface Bane {
    * p0/p1 (og r0/r1 for radial) er i sidekoordinater. Bare til
    * kundeskissen; slike baner er aldri dekor og skjaeres aldri.
    */
+  /**
+   * Satt av kuttVedBildeler paa en stripe med ende(r) under bildelene:
+   * retningen langs stripen og hvilke ender som er skjult og rettet ut.
+   * Slike ender kan forlenges paa arket (kjorJobb, Appliser+thru).
+   */
+  skjultEnde?: { ux: number; uy: number; lav: boolean; hoy: boolean };
   gradient?: { type: 2 | 3; p0: [number, number]; p1: [number, number]; r0: number; r1: number;
                farger: [number, number, number][] };
 }
@@ -214,7 +220,7 @@ export async function hentBaner(pdf: Uint8Array): Promise<{ baner: Bane[]; side:
 const nr = (v: number) => (Math.round(v * 1000) / 1000).toString();
 
 /** Skriver de valgte banene til en ny PDF, flyttet til origo. */
-export async function skrivPdf(baner: Bane[], marg = 6): Promise<Uint8Array> {
+export async function skrivPdf(baner: Bane[], marg = 6, forleng: string[] = []): Promise<Uint8Array> {
   const x0 = Math.min(...baner.map((b) => b.boks.x0)) - marg;
   const y0 = Math.min(...baner.map((b) => b.boks.y0)) - marg;
   const x1 = Math.max(...baner.map((b) => b.boks.x1)) + marg;
@@ -243,5 +249,7 @@ export async function skrivPdf(baner: Bane[], marg = 6): Promise<Uint8Array> {
   // pushOperators({ toString }) gjor ingenting. pdf-lib serialiserer via
   // copyBytesInto, sa raa operatorer maa inn gjennom PDFOperator.of.
   (side as any).pushOperators(...linjer.map((l) => PDFOperator.of(l as any)));
+  // ender som kan forlenges paa arket (skjult under bilen), leses av kjorJobb
+  if (forleng.length) doc.setKeywords([`signhub-forleng:${forleng.join(",")}`]);
   return doc.save();
 }

@@ -114,6 +114,13 @@ import { hentBaner } from "../src/uttrekk";
     }
     sjekk(dobbel === 0, `kant i kant: ingen linje skjaeres to ganger og ingen parallelle linjer under 2 mm (${dobbel})`);
     sjekk(r.ark.some((a: any) => /kant i kant/.test(a.strategi)), "stripestykkene ligger kant i kant");
+    // stripene er rette rektangler og fyller feltet: ingen skraa ender, og
+    // stripen bak er strukket ut i doedrommet (Eirik 16.11.2026)
+    const skraa = st.filter(([a0, a1, a2, a3]) => Math.abs(a2 - a0) > 0.5 && Math.abs(a3 - a1) > 0.5).length;
+    sjekk(skraa === 0, `alle stripestykkene er rette rektangler (${skraa} skraa linjer)`);
+    sjekk(r.advarsler.filter((a: string) => /ende hoyre dekor 2 del 1 skjoet \d av 2: forlenget \d+ mm/.test(a)).length === 2,
+      "begge stykkene av stripen bak er strukket ut til feltbredden");
+    sjekk(l.merknader.filter((m: string) => /rettet ut til rektangel/.test(m)).length === 2, "sidestripenes ender under hjulbuene er rettet ut");
   }
   // kiss-boksen uten fyll rundt hvert thru-cut-element skal staa (Eirik 16.11.2026)
   for (const f of r.filer.filter((f: any) => / Kiss\+thru /.test(f.navn))) {

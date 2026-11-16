@@ -41,6 +41,8 @@ const GJENNOMSYN_TYKK = 0.25;
 const KNOTT_ANDEL = 0.5;
 /** en knott er mindre enn 4 x KLIPP_MIN_MM² = 1600 mm² (tappen ved speilfoten paa Kia er rundt 700) */
 const KNOTT_MAKS = 4;
+/** en stripe er minst saa mange ganger lengre enn bred (som i kjorJobb) */
+const STRIPE_FORHOLD = 8;
 
 /** Segmentene som ringer, kurvene delt i rette biter. */
 export function ringerAv(segs: any[]): Ring[] {
@@ -113,6 +115,26 @@ export interface KlippResultat {
   forlenget: number;
   /** baner der smaa synlige knotter ved kanten er kuttet bort */
   knotter: number;
+  /** striper med ender under bildelene som er rettet ut til rektangel */
+  rettet: number;
+}
+
+/** Retningen til en stripe: én konveks flate, minst STRIPE_FORHOLD ganger saa lang som bred. */
+export function stripeRetning(mp: any): { ux: number; uy: number } | null {
+  if (mp.length !== 1 || mp[0].length !== 1) return null;
+  const r = mp[0][0] as Pt[];
+  const skall = konvekstSkall(r.slice(0, -1));
+  if (areal(mp) < 0.98 * Math.abs(areal([[[...skall, skall[0]]]]))) return null;
+  let best = 0, ux = 1, uy = 0;
+  for (let i = 0; i < r.length - 1; i++) {
+    const dx = r[i + 1][0] - r[i][0], dy = r[i + 1][1] - r[i][1], l = Math.hypot(dx, dy);
+    if (l > best) { best = l; ux = dx / l; uy = dy / l; }
+  }
+  if (ux < 0) { ux = -ux; uy = -uy; }
+  const pk = r.map((q) => [q[0] * ux + q[1] * uy, -q[0] * uy + q[1] * ux]);
+  const L = Math.max(...pk.map((q) => q[0])) - Math.min(...pk.map((q) => q[0]));
+  const B = Math.max(...pk.map((q) => q[1])) - Math.min(...pk.map((q) => q[1]));
+  return L >= STRIPE_FORHOLD * B ? { ux, uy } : null;
 }
 
 /**
@@ -124,7 +146,7 @@ export interface KlippResultat {
 export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) => boolean,
                                 luft: number, min: number): KlippResultat {
   const indeks = new Map(alle.map((b, i) => [b, i]));
-  let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0, knotter = 0;
+  let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0, knotter = 0, rettet = 0;
   const korte = new Set<Bane>();
   const ut = dekor.map((b) => {
     if (!b.fyll || b.strek) return b;
@@ -219,9 +241,42 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
         if (areal(tillegg) > 0) { ny = pc.union(ny, tillegg); lagtTil++; korte.delete(b); }
       } catch { /* forlengelsen er en bonus; uten den meldes det */ }
     }
+    /**
+     * En stripe som gaar godt forbi det som synes, faar rette ender
+     * (Eirik 16.11.2026: «kan du ikke gjoere de til perfekte rektangler
+     * da?»). Er stripen én hel, rett flate (STRIPE_FORHOLD ganger saa lang
+     * som bred), rettes hver ende som ligger under bildelene ut til et
+     * rektangel langs stripen. Det legger bare til folie utenfor kuttlinjen,
+     * altsaa under bildelen, og enden kan forlenges paa arket senere.
+     */
+    let skjultEnde: Bane["skjultEnde"];
+    try {
+      const st = stripeRetning(egen);
+      if (st) {
+        const proj = (mp: any) => {
+          const pk = mp.flat(2) as Pt[];
+          const u = pk.map((q) => q[0] * st.ux + q[1] * st.uy), v = pk.map((q) => -q[0] * st.uy + q[1] * st.ux);
+          return { u0: Math.min(...u), u1: Math.max(...u), v0: Math.min(...v), v1: Math.max(...v) };
+        };
+        const n = proj(ny), sy = proj(synlig);
+        const lav = n.u0 < sy.u0 - min / 2, hoy = n.u1 > sy.u1 + min / 2;
+        if (lav || hoy) {
+          const ua = lav ? n.u0 : sy.u0, ub = hoy ? n.u1 : sy.u1;
+          const pt = (u: number, v: number): Pt => [u * st.ux - v * st.uy, u * st.uy + v * st.ux];
+          const rekt = [[pt(ua, n.v0), pt(ub, n.v0), pt(ub, n.v1), pt(ua, n.v1), pt(ua, n.v0)]];
+          // rektangelet der enden er skjult, resten som foer
+          const deler = [ny];
+          if (lav) deler.push([[pt(n.u0, n.v0), pt(sy.u0, n.v0), pt(sy.u0, n.v1), pt(n.u0, n.v1), pt(n.u0, n.v0)]]);
+          if (hoy) deler.push([[pt(sy.u1, n.v0), pt(n.u1, n.v0), pt(n.u1, n.v1), pt(sy.u1, n.v1), pt(sy.u1, n.v0)]]);
+          ny = pc.intersection(pc.union(...(deler as [any])), [rekt]);
+          skjultEnde = { ux: st.ux, uy: st.uy, lav, hoy };
+          rettet++;
+        }
+      }
+    } catch { /* uten retting staar kuttet som det er */ }
     const a1 = areal(ny);
-    if (!ny.length || Math.abs(a0 - a1) < a0 * 1e-3) return b;
-    const nyBane = { ...b } as Bane;
+    if (!ny.length || (Math.abs(a0 - a1) < a0 * 1e-3 && !skjultEnde)) return b;
+    const nyBane = { ...b, ...(skjultEnde ? { skjultEnde } : {}) } as Bane;
     fjernet += Math.max(0, a0 - a1);
     const segs: any[] = [];
     for (const poly of ny) for (const r of poly) {
@@ -238,5 +293,42 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (korte.has(b)) { korte.delete(b); korte.add(nyBane); }
     return nyBane;
   });
-  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil, knotter };
+  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil, knotter, rettet };
+}
+
+
+/**
+ * Ender av en stripe som slutter ved en kant paa bilen (Eirik 16.11.2026,
+ * Kia PV5: stripen bak gaar fra hjoernet til hjoernet av bakdoerene).
+ * Montoeren legger folien rundt kanten eller skjaerer til der, saa enden kan
+ * forlenges paa arket. En ende teller naar en av bilens egne linjer krysser
+ * stripens midtlinje innenfor `tol` (tegnede enheter) fra enden.
+ */
+export function enderVedKant(b: Bane, alle: Bane[], erDekor: (x: Bane) => boolean, tol: number):
+  Bane["skjultEnde"] | undefined {
+  if (!b.fyll || b.strek) return undefined;
+  const egen = flate(ringerAv(b.segs as any[]));
+  const st = egen ? stripeRetning(egen) : null;
+  if (!st) return undefined;
+  const pk = (egen.flat(2) as Pt[]);
+  const u = pk.map((q) => q[0] * st.ux + q[1] * st.uy), v = pk.map((q) => -q[0] * st.uy + q[1] * st.ux);
+  const u0 = Math.min(...u), u1 = Math.max(...u), vm = (Math.min(...v) + Math.max(...v)) / 2;
+  // bilens linjer som krysser midtlinjen: punktene der, langs stripen
+  const kryss: number[] = [];
+  const boks = { x0: b.boks.x0 - tol, y0: b.boks.y0 - tol, x1: b.boks.x1 + tol, y1: b.boks.y1 + tol };
+  for (const o of alle) {
+    if (o === b || erDekor(o) || o.gradient || !overlapper(o.boks, boks)) continue;
+    for (const r of ringerAv(o.segs as any[])) {
+      const lukket = [...r, r[0]];
+      for (let i = 0; i < lukket.length - 1; i++) {
+        const [a, c] = [lukket[i], lukket[i + 1]];
+        const va = -a[0] * st.uy + a[1] * st.ux, vc = -c[0] * st.uy + c[1] * st.ux;
+        if ((va - vm) * (vc - vm) > 0 || va === vc) continue;
+        const t = (vm - va) / (vc - va);
+        kryss.push((a[0] + t * (c[0] - a[0])) * st.ux + (a[1] + t * (c[1] - a[1])) * st.uy);
+      }
+    }
+  }
+  const lav = kryss.some((k) => Math.abs(k - u0) < tol), hoy = kryss.some((k) => Math.abs(k - u1) < tol);
+  return lav || hoy ? { ux: st.ux, uy: st.uy, lav, hoy } : undefined;
 }

@@ -12,6 +12,7 @@ import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
 import type { MultiPoly, Geometri, GeometriPerFarge } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
+import { PDFDocument } from "pdf-lib";
 import { konvekstSkall } from "./ramme.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
@@ -302,6 +303,98 @@ function heltKonveks(f: MultiPoly): boolean {
   const as = Math.abs(arealRing([...skall, skall[0]]));
   return as > 0 && a / as >= 0.99;
 }
+/** Endene en bilskisse har merket som skjult under bilen (PDF-noekkelord). */
+async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
+  try {
+    const d = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
+    const k = d.getKeywords() ?? "";
+    const m = /signhub-forleng:([a-z,]+)/.exec(k);
+    return new Set(m ? m[1].split(",").filter(Boolean) : []);
+  } catch { return new Set(); }
+}
+
+/**
+ * Strekker ut ender som ligger under bilen, inn i doedrommet paa et
+ * Appliser+thru-ark (Eirik 16.11.2026: «strekk hekk-stripene ut slik at de
+ * dekker foliebredden»). Folien er der uansett, og montoeren faar mer aa
+ * skjaere til etter. Enden flyttes til naboen (kant i kant naar begge sider
+ * er rette, ellers gap) eller til kanten av feltet. Bare elementer i ett
+ * eksemplar, saa én plassering er ett element.
+ */
+function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }, geo: Geo): string[] {
+  const ps = ark.plasseringer;
+  const meld: string[] = [];
+  const feltV = Math.min(...ps.map((p) => p.x)), feltH = Math.max(...ps.map((p) => p.x + p.w));
+  const feltO = Math.min(...ps.map((p) => p.y)), feltN = Math.max(...ps.map((p) => p.y + p.h));
+  // arkretning for hver side av elementet
+  const retning = (rot: boolean, side: string) => (rot
+    ? ({ venstre: "N", hoyre: "O", bunn: "H", topp: "V" } as any)[side]
+    : ({ venstre: "V", hoyre: "H", bunn: "N", topp: "O" } as any)[side]) as "V" | "H" | "O" | "N";
+  const rettMot = (q: any, mot: "V" | "H" | "O" | "N") => {
+    const sd = motiver[q.id].sider; if (!sd) return false;
+    // siden av naboen som vender mot oss, i naboens egen retning
+    const arkSide = { V: "H", H: "V", O: "N", N: "O" }[mot];
+    const idx = (["venstre", "hoyre", "bunn", "topp"] as const).findIndex((x) => retning(q.rotated, x) === arkSide);
+    return idx >= 0 && sd[idx];
+  };
+  for (const p of ps) {
+    const e = gruppe[p.id];
+    if (!e.forleng?.size || e.antall !== 1 || e.deler.length !== 1) continue;
+    let totalt = 0;
+    for (const side of e.forleng) {
+      const r = retning(p.rotated, side);
+      const andre = ps.filter((q) => q !== p);
+      const overlappY = (q: any) => q.y < p.y + p.h - 1e-6 && p.y < q.y + q.h - 1e-6;
+      const overlappX = (q: any) => q.x < p.x + p.w - 1e-6 && p.x < q.x + q.w - 1e-6;
+      const ledig = (r: "V" | "H" | "O" | "N") => {
+        let fri = 0;
+        if (r === "H") fri = Math.min(feltH, ...andre.filter((q) => overlappY(q) && q.x >= p.x + p.w - 1e-6)
+          .map((q) => q.x - (rettMot(q, "H") ? 0 : geo.gap))) - (p.x + p.w);
+        if (r === "V") fri = p.x - Math.max(feltV, ...andre.filter((q) => overlappY(q) && q.x + q.w <= p.x + 1e-6)
+          .map((q) => q.x + q.w + (rettMot(q, "V") ? 0 : geo.gap)));
+        if (r === "N") fri = Math.min(feltN, ...andre.filter((q) => overlappX(q) && q.y >= p.y + p.h - 1e-6)
+          .map((q) => q.y - (rettMot(q, "N") ? 0 : geo.gap))) - (p.y + p.h);
+        if (r === "O") fri = p.y - Math.max(feltO, ...andre.filter((q) => overlappX(q) && q.y + q.h <= p.y + 1e-6)
+          .map((q) => q.y + q.h + (rettMot(q, "O") ? 0 : geo.gap)));
+        return fri;
+      };
+      /**
+       * Er det ikke plass paa den siden enden vender, men paa motsatt side,
+       * skyves elementet over dit foerst, saa enden faar plassen (stykke 1 av
+       * stripen bak: enden mot hjoernet laa inntil feltkanten).
+       */
+      const mot = ({ V: "H", H: "V", O: "N", N: "O" } as const)[r];
+      if (Math.floor(ledig(r)) < 1) {
+        const skyv = Math.floor(ledig(mot));
+        if (skyv >= 1) {
+          if (mot === "H") p.x += skyv; else if (mot === "V") p.x -= skyv;
+          else if (mot === "N") p.y += skyv; else p.y -= skyv;
+        }
+      }
+      const d = Math.floor(ledig(r));
+      if (!(d >= 1)) continue;
+      // geometrien: enden flyttes d mm ut, i elementets egne enheter
+      const du = (d * MM) / e.skala, b = e.bbox, tol = (0.5 * MM) / e.skala;
+      const f = e.deler[0];
+      const flytt = (x: number, y: number): [number, number] =>
+        side === "hoyre" && x > b[2] - tol ? [x + du, y] : side === "venstre" && x < b[0] + tol ? [x - du, y]
+        : side === "topp" && y > b[3] - tol ? [x, y + du] : side === "bunn" && y < b[1] + tol ? [x, y - du] : [x, y];
+      f.flate = f.flate.map((poly) => poly.map((ring) => ring.map(([x, y]) => flytt(x, y))));
+      e.omriss = f.flate;
+      if (side === "hoyre") b[2] += du; else if (side === "venstre") b[0] -= du;
+      else if (side === "topp") b[3] += du; else b[1] -= du;
+      if (side === "hoyre" || side === "venstre") e.breddeMm += d; else e.hoydeMm += d;
+      motiver[p.id].bbox = b; motiver[p.id].breddeMm = e.breddeMm; motiver[p.id].hoydeMm = e.hoydeMm;
+      if (r === "H") p.w += d; else if (r === "V") { p.x -= d; p.w += d; }
+      else if (r === "N") p.h += d; else { p.y -= d; p.h += d; }
+      totalt += d;
+    }
+    if (totalt) meld.push(`${e.navn}: forlenget ${totalt} mm i enden som gaar inn under bilen, ` +
+      "for aa fylle arket. Folien er der uansett; montoeren skjaerer til ved montering.");
+  }
+  return meld;
+}
+
 /**
  * Hvilke sider av rammen formen ligger rett langs: [venstre, hoeyre, bunn,
  * topp]. En side er rett naar kantene som ligger paa den (innenfor
@@ -386,6 +479,8 @@ interface Elem {
   deler: Del[];
   /** alle fargene samlet: grunnlaget for rammer som foelger formen */
   omriss: MultiPoly;
+  /** sider (i elementets retning) som ligger under bilen og kan forlenges paa arket */
+  forleng?: Set<string>;
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -420,6 +515,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   let graaBunn = false;
 
   for (const l of b.linjer) {
+    const forleng = await lesForleng(l.pdf);
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
     // som star igjen nar hvitt er visket bort.
     const g0 = await medNavn<Geometri | GeometriPerFarge>(l.navn, () =>
@@ -734,7 +830,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
     elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
                      bbox: boks, skala,
-                     breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet });
+                     breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
+                     ...(forleng.size ? { forleng } : {}) });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -857,7 +954,11 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           : [e.bbox[0], Math.min(...ys), e.bbox[2], Math.max(...ys)];
         biter.push({ ...e, navn: `${e.navn} skjoet ${i + 1} av ${n}`, bbox: bb,
           breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-          deler: [{ ...e.deler[0], flate: bit }], omriss: [] });
+          deler: [{ ...e.deler[0], flate: bit }], omriss: [],
+          // bare de ytterste stykkene arver endene som kan forlenges
+          forleng: new Set([...(e.forleng ?? [])].filter((sd) =>
+            langsX ? (sd === "venstre" && i === 0) || (sd === "hoyre" && i === n - 1)
+                   : (sd === "bunn" && i === 0) || (sd === "topp" && i === n - 1))) });
       }
       biterAv.set(e, biter);
     }
@@ -1040,6 +1141,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
+    if (kunThru) advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo));
     /**
      * Appliser+thru: arket ER feltet som skal appliseres. Det legges rundt
      * elementene med APPLISER_OVERMAAL_MM paa hver side og rundes opp til
