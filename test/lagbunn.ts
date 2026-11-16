@@ -9,8 +9,9 @@
  * som ett rektangel, svart oppaa med XL skaaret ut.
  *
  * Fasit:
- *  - XL-boksen: svart er primaer (oeverst), gull ligger i bunn, og gull-
- *    laget er ett stykke uten hull: arealet er lik rammen.
+ *  - XL-boksen: svart er primaer (oeverst), gull ligger i bunn som ett
+ *    stykke uten hull, ogsaa paa panser og bakluke der PROFF staar ved siden
+ *    av. Tegnefeilen (glippe 0,01 mm) fylles og meldes.
  *  - «XL-BYGG Osteroy» paa bakluken og paa den ene siden er levende tekst
  *    og meldes ved elementet sitt.
  *  - XL PROFF paa panseret i frontvisningen meldes som samme merke som
@@ -49,8 +50,21 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
   const gull = await hentGeometriPerFarge(gullfil.bytes, 1);
   const gullLag = gull.lag.find((l: any) => !["#FFFFFF", "#FF00FF", "#00FFFF"].includes(l.hex));
   const hull = gullLag ? gullLag.flate.reduce((a: number, p: any) => a + p.length - 1, 0) : -1;
-  sjekk(!!gullLag && gullLag.flate.length === 1 && hull === motivHull,
-    `XL: gull i bunn er ett stykke (${gullLag?.flate.length} del, ${hull} hull, motivet har ${motivHull})`);
+  // motivet har ett hull: en glippe 710 mm lang og 0,01 mm bred mellom
+  // ruten og rammen. Det er en tegnefeil og skal fylles, ikke skjaeres.
+  sjekk(motivHull === 1, `XL: motivet har tegnefeilen (${motivHull} hull)`);
+  sjekk(!!gullLag && gullLag.flate.length === 1 && hull === 0,
+    `XL: gull i bunn er ett helt stykke uten hull (${gullLag?.flate.length} del, ${hull} hull)`);
+  sjekk(r.advarsler.some((a: string) => /glippe.*fylt igjen.*Ingenting er fjernet/.test(a)), "XL: glippa meldes som tegnefeil");
+
+  // panser og bakluke: XL-boksen staar ved siden av PROFF i samme element.
+  // Regelen gjelder per oey, saa gull skal i bunn ogsaa der.
+  for (const [b, h] of [[227, 978], [521, 121]]) {
+    const e = lest.elementer.find((x) => x.breddeMm === b && x.hoydeMm === h)!;
+    const rr: any = await kjorJobb({ jobb: "P", linjer: [{ navn: "P", pdf: e.pdf, breddeMm: b, antall: 1,
+      folier: e.farger.map((f) => f.hex === "#D7C46D" ? GULL : SORT) }] } as any);
+    sjekk(rr.advarsler.some((a: string) => /danner ytterkanten/.test(a)), `${b} x ${h}: gull lagt i bunn ogsaa ved siden av PROFF`);
+  }
 
   const tekst = lest.levendeTekst.filter((t) => t.element && /Osterøy/.test(t.tekst));
   sjekk(tekst.length === 2, `levende tekst «XL-BYGG Osterøy» meldt ved 2 elementer (fikk ${tekst.length})`);

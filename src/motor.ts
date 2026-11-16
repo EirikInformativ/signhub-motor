@@ -54,6 +54,22 @@ export const MIN_DETALJ = 1.5;
 const SPOR_MM = 4;
 /** et lag som med hullene fylt dekker saa mye av motivet, danner ytterkanten */
 const RAMME_FYLL = 0.995;
+/** hull smalere enn dette i snitt kan ingen kniv skjaere: tegnefeil */
+const GLIPPE_MM = 0.1;
+
+/** Fyller hull med snittbredde under GLIPPE_MM. Legger til, fjerner aldri. */
+function fyllTegnefeil(flate: MultiPoly, enhetMm: number) {
+  const lukket: { lengdeMm: number; breddeMm: number }[] = [];
+  const ny = flate.map((p) => [p[0], ...p.slice(1).filter((h) => {
+    const xs = h.map((q) => q[0]), ys = h.map((q) => q[1]);
+    const lengde = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * enhetMm;
+    const bredde = (areal([[h]] as MultiPoly) * enhetMm * enhetMm) / Math.max(lengde, 1e-9);
+    if (bredde >= GLIPPE_MM) return true;
+    lukket.push({ lengdeMm: lengde, breddeMm: bredde });
+    return false;
+  })]) as MultiPoly;
+  return { flate: lukket.length ? ny : flate, lukket };
+}
 /** Under denne blir det krevende, men mulig. */
 export const ADVAR_DETALJ = 3.0;
 /** Hva en oppspenning og en kjoring er verdt, malt i meter rull. */
@@ -456,14 +472,36 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * laget som var nederst faar utskjaeringene fra fargene som ligger
        * oppaa det. Ingenting forsvinner: det synlige bildet er det samme.
        */
+      /*
+       * Regelen gjelder per oey, ikke per element. Paa panseret og bakluken
+       * staar XL-boksen ved siden av PROFF i samme element. Gullet danner
+       * ytterkanten av XL-boksen, men ikke av hele elementet, og den foerste
+       * utgaven saa bare paa hele elementet. En farge flyttes naar den, i
+       * hver oey der den ligger sammen med andre farger, dekker hele oeya.
+       * Ligger den et sted oppaa en annen farge som eier kanten der, blir
+       * den staaende.
+       */
       if ((l.lagvis ?? true) && deler.length > 1) {
         const ytre = (f: MultiPoly) => f.map((p) => [p[0]]) as MultiPoly;
-        const alleFylt = kuttTrygt(l.navn, "ytterkant",
+        const oyer = kuttTrygt(l.navn, "ytterkant",
           (...f) => pc.union(...(f as any[])) as MultiPoly, ...deler.map((d) => ytre(d.flate)));
-        const helt = areal(alleFylt);
-        const dekker = (d: Del) => areal(ytre(d.flate)) >= RAMME_FYLL * helt;
-        const bunn = deler[deler.length - 1];
-        const k = dekker(bunn) ? -1 : deler.findIndex((d) => dekker(d));
+        const fylt = deler.map((d) => ytre(d.flate));
+        const iOy = (f: MultiPoly, oy: MultiPoly) => areal(pc.intersection(f as any, oy as any) as MultiPoly);
+        const eierKant = (k: number) => {
+          let treff = 0;
+          for (const p of oyer) {
+            const oy = [p] as MultiPoly, a = areal(oy);
+            const her = iOy(fylt[k], oy);
+            if (her < 1e-6 * a) continue;
+            const andre = fylt.some((f, j) => j !== k && iOy(f, oy) > 1e-6 * a);
+            if (!andre) continue;
+            if (her < RAMME_FYLL * a) return false;
+            treff++;
+          }
+          return treff > 0;
+        };
+        const k = eierKant(deler.length - 1) ? -1
+          : deler.slice(0, -1).findIndex((_, i) => eierKant(i));
         if (k >= 0) {
           const [d] = deler.splice(k, 1);
           deler.push(d);
@@ -541,6 +579,31 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * fortsatt skjaeres.
          */
       }
+      /**
+       * Glipper som ingen kniv kan skjaere er tegnefeil, og fylles igjen.
+       *
+       * Paa XL-logoen i 309916 naar den svarte ruten nesten, men ikke helt,
+       * opp til gullrammen. Glippa er 710 mm lang og 0,01 mm bred. Med gull
+       * i bunn ble den et hull i gullet, og to skjaerelinjer 0,01 mm fra
+       * hverandre: en strek tvers over rektangelet.
+       *
+       * Dette er ikke aa fjerne noe. Glippa fylles med folie, det legges til
+       * og ikke trekkes fra. Grensen er absolutt, ikke relativ til logoen:
+       * den gamle restfjerningen sammenlignet med logoens stoerrelse og
+       * fjernet hele bokstaver i smaa logoer. En glippe under GLIPPE_MM i
+       * snittbredde kan ingen plotter skjaere som to linjer, uansett hvor
+       * stor logoen er. Ekte hull er millimeter brede. Det meldes alltid.
+       */
+      const enhetMm = skala / MM;
+      for (const d of deler) {
+        const r = fyllTegnefeil(d.flate, enhetMm);
+        if (!r.lukket.length) continue;
+        d.flate = r.flate;
+        advarsler.push(`${l.navn}: ${r.lukket.length} glippe(r) i ${fargenavn(d)} er fylt igjen, ` +
+          r.lukket.map((g) => `${g.lengdeMm.toFixed(0)} mm lang og ${g.breddeMm.toFixed(2)} mm bred`).join(", ") +
+          ". Det er en tegnefeil i logoen (to flater som nesten moetes). Ingenting er fjernet.");
+      }
+      kuttet = fyllTegnefeil(kuttet, enhetMm).flate;
       if (per.lag.length > l.folier.length) {
         advarsler.push(`${l.navn}: filen har ${per.lag.length} farger, men bare ` +
           `${l.folier.length} er tildelt folie. Resten er slatt sammen.`);
