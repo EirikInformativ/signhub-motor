@@ -21,7 +21,9 @@ type Mat = [number, number, number, number, number, number];
 const ID: Mat = [1, 0, 0, 1, 0, 0];
 const MM = 72 / 25.4;
 
-export interface Boks { x0: number; y0: number; x1: number; y1: number; farge?: number[] }
+export interface Boks { x0: number; y0: number; x1: number; y1: number; farge?: number[];
+  /** banen strekes bare, fylles ikke: fargen er da fyllfargen som tilfeldigvis staar, ikke det som synes */
+  bareStrek?: boolean }
 /** levende tekst paa arket: hvor den staar, og hva den sier */
 export interface TekstBoks extends Boks { tekst: string; usynlig: boolean }
 export interface LettLest { tekst: string; bokser: Boks[]; side: Boks; levende: TekstBoks[] }
@@ -146,6 +148,8 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
       punkt(x, y); punkt(x + w, y); punkt(x + w, y + h); punkt(x, y + h);
     } else if ("f F f* B B* b b* S s n".split(" ").includes(op)) {
       // W og W* setter klipp; da skal ikke banen telle som tegning
+      const bare = op === "S" || op === "s";
+      if (bare && boks) (boks as Boks).bareStrek = true;
       lukk();
     } else if (op === "W" || op === "W*") { boks = null; }
     else if (op === "Do" && navn && dybde < 6) {
@@ -272,6 +276,8 @@ export interface Skisse {
  *                             utledet
  */
 const GRENSE_PROSENT = 3;
+/** Inntil saa mye kan tegningen vaere skalert for aa passe arket. */
+const SKALERT_MAKS_PROSENT = 15;
 export function velgMalestokk(
   trykt: number | null, malt: number | null, merknader: string[]
 ): { malestokk: number | null; avvikProsent: number | null } {
@@ -292,10 +298,23 @@ export function velgMalestokk(
     return { malestokk: trykt, avvikProsent: 0 };
   }
   const forhold = trykt / malt;
-  if (Math.abs(forhold - Math.round(forhold)) < 0.05 && Math.round(forhold) !== 1) {
+  // relativ grense: et ark skalert 1200 prosent maales til 1:2,48, ikke 1:2,50
+  if (Math.round(forhold) >= 2 && Math.abs(forhold / Math.round(forhold) - 1) < 0.02) {
     merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +
       `Arket ser ut til a vaere skalert ${Math.round(forhold) * 100} prosent. ` +
-      `Reell malestokk er 1:${malt.toFixed(0)}, og den brukes.`);
+      `Reell malestokk er 1:${malt < 10 ? malt.toFixed(2) : malt.toFixed(0)}, og den brukes.`);
+    return { malestokk: malt, avvikProsent: avvik };
+  }
+  /**
+   * Tegningen er skalert ned eller opp for aa passe paa arket (E-Partner
+   * 306005: teksten sier 1:30, tegningen er 92,6 prosent av det, 1:32,4).
+   * Maalingen kommer fra to maal som stoetter hverandre innenfor 1 prosent,
+   * saa den er til aa stole paa. Det er tegningen som skjaeres, og den er i
+   * 1:32,4. Avvik over SKALERT_MAKS_PROSENT er tull og stoppes.
+   */
+  if (Math.abs(avvik) <= SKALERT_MAKS_PROSENT) {
+    merknader.push(`Teksten sier 1:${trykt}, men tegningen er skalert til ${Math.round((trykt / malt) * 100)} prosent ` +
+      `(maalt 1:${malt.toFixed(1)} paa L, B og H). Den maalte brukes. Kontroller ett maal paa bilen.`);
     return { malestokk: malt, avvikProsent: avvik };
   }
   merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +

@@ -43,6 +43,9 @@ const svart = (b: Boks) => !!b.farge && b.farge.length === 4 && (
 /** over denne andelen bilgraatt er klyngen en del av bilen */
 const BILGRAA_ANDEL = 0.25;
 
+/** Kuloeren som dekker mer enn denne andelen av det fylte, er bilens lakk. */
+const LAKK_ANDEL = 0.3;
+
 export const BILFARGER = new Set<string>(["0.00,1.00,1.00,0.15"]);
 
 export interface DekorOmraade {
@@ -191,7 +194,35 @@ export function finnDekor(lest: LettLest, malestokk: number,
   const merknader: string[] = [];
   const forkastet: { hva: string; grunn: string }[] = [];
 
-  const kulorte = lest.bokser.filter(kulor);
+  /**
+   * Lakkert bil i kuloer (Eirik 16.11.2026, Vito 304160 i moerkeblaa): den
+   * kuloerte fargen som dekker mest, og mer enn LAKK_ANDEL av alt som er
+   * fylt, er bilens lakk, ikke dekor. Den behandles som bilens egne farger,
+   * og er den moerk, er bilen moerk (hvitt er dekor).
+   */
+  const sideA0 = (lest.side.x1 - lest.side.x0) * (lest.side.y1 - lest.side.y0);
+  const flateA = (b: Boks) => (b.x1 - b.x0) * (b.y1 - b.y0);
+  const smaa = lest.bokser.filter((b) => flateA(b) < 0.25 * sideA0);
+  const perFarge = new Map<string, number>();
+  for (const b of smaa) if (kulor(b)) perFarge.set(fargenavn(b), (perFarge.get(fargenavn(b)) ?? 0) + flateA(b));
+  const totalt = smaa.reduce((a, b) => a + flateA(b), 0);
+  const [lakkNavn, lakkA] = [...perFarge].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  const lakk = lakkA > LAKK_ANDEL * totalt ? lakkNavn : "";
+  const erLakk = (b: Boks) => !!lakk && fargenavn(b) === lakk;
+  const lakkMoerk = (() => {
+    if (!lakk) return null;
+    const [c, m, y, k] = lakk.split(",").map(Number);
+    const lum = 0.3 * (1 - c) * (1 - k) + 0.59 * (1 - m) * (1 - k) + 0.11 * (1 - y) * (1 - k);
+    return lum < 0.5;
+  })();
+  if (lakk) merknader.push(`Bilen er lakkert i ${lakk} (CMYK). Den fargen regnes som bilen, ikke dekor.`);
+  /**
+   * Tegnede avstander er satt for et ark i 1:30. Er arket skalert (Vito
+   * 304160 er tegnet i 1:2,5, tolv ganger stoerre), skaleres de med, saa
+   * bokstavene i et ord fortsatt er én klynge.
+   */
+  const T = MM * Math.max(1, 30 / malestokk);
+  const kulorte = lest.bokser.filter((b) => kulor(b) && !erLakk(b) && !(lakkMoerk && svart(b)));
 
   /**
    * Moerk bil (Eirik 16.11.2026, Mercedes Vito, sort): da er sort bilens
@@ -200,11 +231,12 @@ export function finnDekor(lest: LettLest, malestokk: number,
    * kandidat og hentes inn som nabo («VILLANGER» under roed «CENTER» foran,
    * «24 timers service» paa ruta). Lys bil (Kia, Proace, e-expert) er som foer.
    */
-  const lys = (b: Boks) => !!b.farge && b.farge.length === 4 && Math.max(...b.farge) < 0.03;
+  // en bane som bare strekes, er ikke en hvit flate selv om fyllfargen som staar er hvit
+  const lys = (b: Boks) => !b.bareStrek && !!b.farge && b.farge.length === 4 && Math.max(...b.farge) < 0.03;
   const sideA = (lest.side.x1 - lest.side.x0) * (lest.side.y1 - lest.side.y0);
   const arealAv = (f: (b: Boks) => boolean) => lest.bokser.filter((b) => f(b) &&
     (b.x1 - b.x0) * (b.y1 - b.y0) < 0.25 * sideA).reduce((a, b) => a + (b.x1 - b.x0) * (b.y1 - b.y0), 0);
-  const moerkBil = arealAv(svart) > arealAv(lys);
+  const moerkBil = lakkMoerk ?? (arealAv(svart) > arealAv(lys));
   /** designerens noeytrale farge: sort paa lys bil, hvit paa moerk */
   const noytral = moerkBil ? lys : svart;
 
@@ -237,7 +269,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       bolk = []; harKulor = false; lyse = 0;
     };
     for (const b of lest.bokser) {
-      if (bilTone(b) || BILFARGER.has(fargenavn(b)) || (moerkBil && svart(b))) { avslutt(); continue; }
+      if (bilTone(b) || BILFARGER.has(fargenavn(b)) || erLakk(b) || (moerkBil && svart(b))) { avslutt(); continue; }
       bolk.push(b);
       if (ekte(b)) harKulor = true;
       if (lys(b)) lyse++;
@@ -261,7 +293,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
   const rene = lest.bokser.filter((b) => !malfarge.has(fargenavn(b)));
   const visninger = finnVisninger(rene, malestokk, dim);
 
-  if (!kulorte.length) {
+  if (!kulorte.length && !lest.bokser.some((b) => noytral(b) && iDekorbolk.has(b))) {
     merknader.push("Skissen har ingen kulorte flater. Enten er den umalt, " +
       "eller sa er dekoren i sort og hvitt. Da ma dekoren merkes for hand.");
     return { visninger, omraader: [], forkastet, merknader };
@@ -286,13 +318,22 @@ export function finnDekor(lest: LettLest, malestokk: number,
 
   // 4. klynger, en klynge er ett element
   const omraader: DekorOmraade[] = [];
-  for (const g of klynger(kandidater, KLYNGE_MM * MM)) {
+  for (const g of klynger(kandidater, KLYNGE_MM * T)) {
     let r = ramme(g);
     const bE = ((r.x1 - r.x0) / MM) * malestokk;
     const hE = ((r.y1 - r.y0) / MM) * malestokk;
     if (bE < MINSTE_EKTE_MM && hE < MINSTE_EKTE_MM) {
       forkastet.push({ hva: `${g.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `bare ${bE.toFixed(0)} x ${hE.toFixed(0)} mm i virkeligheten` });
+      continue;
+    }
+    /**
+     * Nummerskiltet er bilens: et hvitt rektangel paa 520 x 110 mm (EU-skilt,
+     * Vito 304160 bak). Én eller to flater i hvitt i den stoerrelsen.
+     */
+    if (g.length <= 2 && g.every(lys) && bE > 470 && bE < 560 && hE > 90 && hE < 130) {
+      forkastet.push({ hva: `${g.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
+        grunn: `nummerskilt (${bE.toFixed(0)} x ${hE.toFixed(0)} mm)` });
       continue;
     }
     // 5. hvite og sorte deler av samme logo
@@ -314,7 +355,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       // inntil A-en, ikke inntil den gronne streken
       for (let ledd = 0; ledd < 4; ledd++) {
         const naer = (b: Boks) => med.some((m) => Math.hypot(
-          Math.max(0, m.x0 - b.x1, b.x0 - m.x1), Math.max(0, m.y0 - b.y1, b.y0 - m.y1)) <= NABO_MM * MM);
+          Math.max(0, m.x0 - b.x1, b.x0 - m.x1), Math.max(0, m.y0 - b.y1, b.y0 - m.y1)) <= NABO_MM * T);
         const nabo = lest.bokser.filter((b) => !med.includes(b) && noytral(b) && iVisning(b) &&
           iDekorbolk.has(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) <= maks && naer(b));
         if (!nabo.length) break;
@@ -322,7 +363,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       }
     }
     for (let runde = 0; runde < 3; runde++) {
-      const pad = { x0: r.x0 - 1 * MM, y0: r.y0 - 1 * MM, x1: r.x1 + 1 * MM, y1: r.y1 + 1 * MM };
+      const pad = { x0: r.x0 - 1 * T, y0: r.y0 - 1 * T, x1: r.x1 + 1 * T, y1: r.y1 + 1 * T };
       // bare flater fra en dekorbolk: bilens deler inne i rammen er bil
       const nye = lest.bokser.filter((b) => !med.includes(b) && andelInni(b, pad) >= 0.9 &&
         iDekorbolk.has(b));
