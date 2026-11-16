@@ -157,6 +157,21 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   const funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
   const merknader = [...s.merknader, ...funn.merknader];
 
+  /**
+   * Bilens farge i skissen: den fyllfargen som dekker mest. Paa begge
+   * skissene vi har (proace2 og 309916 e-expert) er det hvitt, og klart.
+   * Den trengs for aa avgjoere om en bakgrunnsplate er lakken.
+   */
+  const lakkHex = (() => {
+    const m = new Map<string, number>();
+    for (const b of lett.bokser) {
+      if (!b.farge || b.farge.length !== 4) continue;
+      const hx = baneHex(b.farge);
+      m.set(hx, (m.get(hx) ?? 0) + (b.x1 - b.x0) * (b.y1 - b.y0));
+    }
+    return [...m].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  })();
+
   const { baner } = await hentBaner(kilde);
   const andel = (b: any, o: any) => {
     const ox = Math.max(0, Math.min(b.boks.x1, o.x1) - Math.max(b.boks.x0, o.x0));
@@ -202,7 +217,20 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
      * et ekte element og blir staaende.
      */
     let bakgrunn: BilFarge | undefined;
-    if (erBakgrunnsplate(per.lag.map((l) => l.flate), per.bbox)) {
+    const plateform = erBakgrunnsplate(per.lag.map((l) => l.flate), per.bbox);
+    const bunnhex = per.lag[per.lag.length - 1]?.hex;
+    /**
+     * Formen alene er ikke nok. Paa 309916 e-expert har XL-logoen en svart
+     * firkant innenfor gullrammen. Den fyller rammen og ser ut som en
+     * plate, men den er dekor: bilen er hvit. Den ble tatt ut, og bare gull
+     * ville blitt skaaret. Motoren fjerner aldri noe fra en logo, saa platen
+     * tas bare ut naar den ogsaa har bilens farge. Er vi i tvil, blir den
+     * staaende og skjaeres.
+     */
+    if (plateform && bunnhex !== lakkHex) merknader.push(
+      `${o.vis} ${o.navn}: nederste farge ${bunnhex} fyller motivet som en plate, ` +
+      `men bilen er ${lakkHex ?? "ukjent farge"}. Den er derfor en del av logoen og skjaeres.`);
+    if (plateform && lakkHex && bunnhex === lakkHex) {
       const plate = per.lag[per.lag.length - 1];
       const platehex = plate.hex;
       /**

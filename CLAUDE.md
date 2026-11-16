@@ -117,6 +117,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx malestokk.ts  # den trykte malestokken er fasit
     npx tsx skjultkutt.ts # ingen skjulte baner (Form XObject/klipp) i produksjonsfilene
     npx tsx ingenfjernet.ts # motoren fjerner aldri noe fra logoen
+    npx tsx bilfarger.ts  # bilens deler er ikke dekor, svart logo-flate er ikke lakk
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -170,6 +171,24 @@ elementene 1,0000; en ellipseformet badge gir 0,7847. `PLATE_FYLL = 0.995`
 i `src/bilmotor.ts` ligger høyt med vilje, så en plate med lett avrundede
 hjørner fortsatt er en plate, mens en badge med tekst oppå blir stående som
 et ekte element.
+
+**En plate tas bare ut når den har bilens farge.** Formen alene er ikke
+nok. På 309916 e-expert har XL-logoen en svart firkant innenfor
+gullrammen som fyller motivet som en plate. Bilen er hvit, så firkanten er
+dekor. Den ble tatt ut, og bare gull ville blitt skåret. Bilens farge er
+fyllfargen som dekker mest i skissen (hvit på begge skissene vi har). Er
+fargen ulik, blir platen stående og skjæres, med en merknad.
+
+**Bilens egne deler er ikke dekor.** `src/dekorfinn.ts` har `BILFARGER`,
+farger som alltid er bilens (CCVision-lykterødt `0,1,1,0.15`), og forkaster
+klynger der mer enn 25 % av flaten er rene K-gråtoner (dekk, felg,
+hjulbue). Motoren lærer ikke av seg selv: hver skisse som leses feil blir
+en fasit i `test/`, og regelen som retter den står med begrunnelse i
+koden. `test/bilfarger.ts` vokter e-expert og proace2.
+
+**Feilsignatur:** baklykter, hjul, takrails eller hele taket som
+elementer, eller en logo som mister en flate som har en annen farge enn
+bilen.
 
 **Det som meldes og det som utleveres må være det samme.** Platen fjernes
 fra `farger` **og** fra element-PDF-en. `farger` er derfor nøyaktig
