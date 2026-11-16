@@ -22,6 +22,12 @@ const HARSTREK_MM = 0.1;      // tegnet tykkelse
 const HARSTREK_FORHOLD = 30;
 const KLYNGE_MM = 3;          // tegnet glippe innenfor ett element
 const MINSTE_EKTE_MM = 30;    // mindre enn dette er ikke folie
+const NABO_MM = 1;            // tegnet avstand der svart ved siden av hoerer til logoen
+
+/** K 100 eller rik sort: designerens sort, ikke bilens K-graatoner */
+const svart = (b: Boks) => !!b.farge && b.farge.length === 4 && (
+  (Math.max(b.farge[0], b.farge[1], b.farge[2]) < 0.01 && b.farge[3] >= 0.99) ||
+  (Math.min(b.farge[0], b.farge[1], b.farge[2]) > 0.4 && b.farge[3] > 0.5));
 
 /**
  * Farger som tilhoerer selve bilen i CCVision-tegningene, uansett om de
@@ -43,6 +49,8 @@ export interface DekorOmraade {
   x0: number; y0: number; x1: number; y1: number;
   vis: string; navn: string;
   bokser: number;
+  /** flatene som utgjoer elementet, saa bilmotor kan velge nettopp dem */
+  liste: Boks[];
   farger: string[];
   breddeEkteMm: number; hoydeEkteMm: number;
   sikkerhet: "sikker" | "tvil";
@@ -185,6 +193,33 @@ export function finnDekor(lest: LettLest, malestokk: number,
 
   const kulorte = lest.bokser.filter(kulor);
 
+  /**
+   * Tegnerekkefoelgen skiller designerens sort fra bilens. CCVision tegner
+   * bilen i K-graatoner med noen faa K 100-deler (grill, list, hjulbue)
+   * spredt mellom dem. Designeren legger dekoren oppaa, samlet: paa Kia PV5
+   * (310079) ligger gronn og sort vekselvis i to sammenhengende bolker uten
+   * en eneste bilgraa imellom. En «dekorbolk» er en sammenhengende rekke
+   * flater uten bilgraa eller lyktefarge, som inneholder minst en ekte
+   * kulort flate. Sort og hvitt teller som dekor bare i en slik bolk.
+   */
+  const bilTone = (b: Boks) => !!b.farge && b.farge.length === 4 &&
+    Math.max(b.farge[0], b.farge[1], b.farge[2]) < 0.01 && b.farge[3] > 0.01 && b.farge[3] < 0.99;
+  /** ekte kuloer, ikke rik sort: CMY ulike */
+  const ekte = (b: Boks) => !!b.farge &&
+    Math.max(b.farge[0], b.farge[1], b.farge[2]) - Math.min(b.farge[0], b.farge[1], b.farge[2]) > 0.2;
+  const iDekorbolk = new Set<Boks>();
+  {
+    let bolk: Boks[] = [];
+    let harKulor = false;
+    const avslutt = () => { if (harKulor) for (const b of bolk) iDekorbolk.add(b); bolk = []; harKulor = false; };
+    for (const b of lest.bokser) {
+      if (bilTone(b) || BILFARGER.has(fargenavn(b))) { avslutt(); continue; }
+      bolk.push(b);
+      if (ekte(b)) harKulor = true;
+    }
+    avslutt();
+  }
+
   // 2. skissens egne farger: de som ogsa brukes til harstrek.
   //    Dette ma gjores forst, for malpilene binder visningene sammen
   //    til en klump hvis de far vaere med naar visningene skal finnes.
@@ -212,7 +247,13 @@ export function finnDekor(lest: LettLest, malestokk: number,
     if (malfarge.has(fargenavn(b))) return false;
     if (!iVisning(b)) return false;
     return true;
-  });
+  }).concat(
+    /**
+     * Sort dekor uten kuloer ved siden av: «åtg.no» og «- RØR» bak paa
+     * Kia PV5 (310079) staar alene i sort. Sort fra en dekorbolk er
+     * designerens og er en kandidat i seg selv.
+     */
+    lest.bokser.filter((b) => !kulor(b) && svart(b) && iDekorbolk.has(b) && iVisning(b)));
   const fjernetFarge = kulorte.filter((b) => malfarge.has(fargenavn(b))).length;
   if (fjernetFarge) forkastet.push({ hva: `${fjernetFarge} flater`, grunn: "skissens egne farger" });
   const utenfor = kulorte.filter((b) => !malfarge.has(fargenavn(b)) && !iVisning(b)).length;
@@ -231,9 +272,35 @@ export function finnDekor(lest: LettLest, malestokk: number,
     }
     // 5. hvite og sorte deler av samme logo
     let med = g.slice();
+    /**
+     * 5a. Svarte deler som staar ved siden av, ikke inni. Paa Kia PV5
+     *     (310079) er «ATG» sorte bokstaver over en gronn strek og med en
+     *     gronn trekant i A-en. Bare streken og trekanten kom med; ramma
+     *     deres rommer ikke bokstavene. Svart (K 100 eller rik sort) som
+     *     ligger mindre enn NABO_MM fra den kulorte kjernen, og som ikke er
+     *     stoerre enn kjernen selv, hoerer til logoen. Bare ett ledd fra
+     *     kjernen, ikke kjede: CCVision tegner ogsaa deler av bilen i K 100
+     *     (grill, list), og en kjede ville spist seg inn i dem.
+     */
+    {
+      const kjerne = ramme(g);
+      const maks = Math.max(kjerne.x1 - kjerne.x0, kjerne.y1 - kjerne.y0);
+      // i flere ledd, men bare innenfor dekorbolkene: ringen i Å ligger
+      // inntil A-en, ikke inntil den gronne streken
+      for (let ledd = 0; ledd < 4; ledd++) {
+        const naer = (b: Boks) => med.some((m) => Math.hypot(
+          Math.max(0, m.x0 - b.x1, b.x0 - m.x1), Math.max(0, m.y0 - b.y1, b.y0 - m.y1)) <= NABO_MM * MM);
+        const nabo = lest.bokser.filter((b) => !med.includes(b) && svart(b) && iVisning(b) &&
+          iDekorbolk.has(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) <= maks && naer(b));
+        if (!nabo.length) break;
+        med = med.concat(nabo); r = ramme(med);
+      }
+    }
     for (let runde = 0; runde < 3; runde++) {
       const pad = { x0: r.x0 - 1 * MM, y0: r.y0 - 1 * MM, x1: r.x1 + 1 * MM, y1: r.y1 + 1 * MM };
-      const nye = lest.bokser.filter((b) => !med.includes(b) && andelInni(b, pad) >= 0.9);
+      // bare flater fra en dekorbolk: bilens deler inne i rammen er bil
+      const nye = lest.bokser.filter((b) => !med.includes(b) && andelInni(b, pad) >= 0.9 &&
+        iDekorbolk.has(b));
       if (!nye.length) break;
       med = med.concat(nye);
       r = ramme(med);
@@ -249,9 +316,19 @@ export function finnDekor(lest: LettLest, malestokk: number,
     const flate = (b: Boks) => (b.x1 - b.x0) * (b.y1 - b.y0);
     const rentGraatt = (b: Boks) => !!b.farge && b.farge.length === 4 &&
       Math.max(b.farge[0], b.farge[1], b.farge[2]) < 0.01 && b.farge[3] > 0.03 && b.farge[3] < 0.97;
-    const graaAndel = med.filter(rentGraatt).reduce((a, b) => a + flate(b), 0) /
-      Math.max(med.reduce((a, b) => a + flate(b), 0), 1e-9);
-    if (graaAndel > BILGRAA_ANDEL) {
+    // maales paa alt inne i rammen, ogsaa det som ikke tas med i elementet
+    const iRamme = lest.bokser.filter((b) => andelInni(b, r) >= 0.9);
+    const graaAndel = iRamme.filter(rentGraatt).reduce((a, b) => a + flate(b), 0) /
+      Math.max(iRamme.reduce((a, b) => a + flate(b), 0), 1e-9);
+    /*
+     *    Gjelder bare klynger uten ekte kuloer i kjernen (bare rik sort o.l.,
+     *    som dekket paa e-expert). Paa Kia PV5 (310079) gaar de gronne
+     *    stripene over doerer, haandtak og vindu, saa rammen deres er full
+     *    av bil; de er likevel dekor, fordi kjernen er gronn. Bildelene
+     *    inne i rammen holdes ute av elementet i bilmotor.ts.
+     */
+    const ekteKulor = g.some(ekte);
+    if (!ekteKulor && graaAndel > BILGRAA_ANDEL) {
       forkastet.push({ hva: `${med.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `${(graaAndel * 100).toFixed(0)} % er bilens graatoner` });
       continue;
@@ -259,12 +336,20 @@ export function finnDekor(lest: LettLest, malestokk: number,
     const v = visninger.find((vv) => andelInni(r, vv) >= 0.5);
     omraader.push({
       ...r, vis: v?.navn ?? "ukjent", navn: "dekor",
-      bokser: med.length,
+      bokser: med.length, liste: med,
       farger: [...new Set(med.filter(kulor).map(fargenavn))],
       breddeEkteMm: ((r.x1 - r.x0) / MM) * malestokk,
       hoydeEkteMm: ((r.y1 - r.y0) / MM) * malestokk,
       sikkerhet: "sikker",
     });
+  }
+
+  // et omraade som allerede ligger helt i et annet (teksten inne i stripenes
+  // ramme paa Kia PV5) skal ikke skjaeres to ganger
+  for (let i = omraader.length - 1; i >= 0; i--) {
+    const a = omraader[i];
+    if (omraader.some((b, j) => j !== i && b.liste.length > a.liste.length &&
+        a.liste.every((x) => b.liste.includes(x)))) omraader.splice(i, 1);
   }
 
   // nummerer per visning

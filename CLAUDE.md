@@ -119,6 +119,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx ingenfjernet.ts # motoren fjerner aldri noe fra logoen
     npx tsx bilfarger.ts  # bilens deler er ikke dekor, svart logo-flate er ikke lakk
     npx tsx lagbunn.ts    # ytterkanten i bunn, levende tekst og doble merker meldes
+    npx tsx kiatest.ts    # spotfarger, sort ved siden av kuloer, bil inne i stripene
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -190,6 +191,30 @@ koden. `test/bilfarger.ts` vokter e-expert og proace2.
 **Feilsignatur:** baklykter, hjul, takrails eller hele taket som
 elementer, eller en logo som mister en flate som har en annen farge enn
 bilen.
+
+**Bilskissen leser spotfarger** (`cs`/`scn`), ikke bare `k` og `rg`
+(Kia PV5 310079: all dekor var PANTONE 7481 C, og motoren fant ingen
+dekor). `lesLett` i `src/bilskisse.ts` og `hentBaner` i `src/uttrekk.ts`
+bruker `csFraObj`/`rgbScn` fra `src/pdfbaner.ts`.
+
+**Tegnerekkefølgen skiller designerens sort fra bilens.** CCVision tegner
+bilen i K-gråtoner med noen få K 100-deler spredt mellom dem. Designeren
+legger dekoren oppå i sammenhengende bolker. En *dekorbolk* er en rekke
+flater uten bilgrå eller lyktefarge som inneholder minst én ekte kulør
+(CMY ulike). Sort og hvitt teller som dekor bare i en dekorbolk:
+- sort i en dekorbolk er kandidat i seg selv («åtg.no» bak),
+- sort inntil klyngen hentes inn i flere ledd innenfor bolkene (bokstavene
+  og ringen i «ÅTG», som står ved siden av den grønne streken),
+- bare flater fra en dekorbolk legges til fra rammen (dørhåndtak og vindu
+  inne i stripenes ramme blir stående som bil),
+- `bilmotor.ts` tar bare med banene finnDekor faktisk valgte (`liste`),
+  ikke alt i rammen.
+Grå-regelen (25 % bilgrå = bil) gjelder bare klynger uten ekte kulør i
+kjernen, og måles på alt i rammen. Et område som ligger helt i et annet
+fjernes som dublett. `test/kiatest.ts` vokter dette.
+
+**Feilsignatur:** en logo der bare de kulørte delene kommer med, eller
+grå og hvitt i fargelista til en stripe.
 
 **Levende tekst i en bilskisse meldes, den forsvinner aldri i stillhet.**
 Motoren leser bare baner. Tekst som ikke er konvertert til kurver kom

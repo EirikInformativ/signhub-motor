@@ -210,7 +210,21 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   /** banene som faktisk ligger i hvert elements PDF, til passmerkene */
   const brukteBaner = new Map<BilElement, Bane[]>();
   for (const o of funn.omraader) {
-    const valgte = baner.filter((b) => andel(b, o) >= 0.9);
+    /**
+     * Bilens egne streker og flater ligger ofte inne i rammen til en stor
+     * dekor: paa Kia PV5 (310079) gaar stripene over doerhaandtak, skinne
+     * og vindu. Bilen er tegnet i rene K-graatoner (CMY 0, K mellom 1 og
+     * 99 %). Slike baner er bil og tas ikke med i elementet, med mindre de
+     * ligger helt inne i en annen farge (da er de en del av logoen).
+     */
+    const bilGraa = (f?: number[]) => !!f && f.length === 4 &&
+      Math.max(f[0], f[1], f[2]) < 0.01 && f[3] > 0.01 && f[3] < 0.99;
+    const erBil = (b: Bane) => (b.fyll ? bilGraa(b.farge) : true) && (b.strek ? bilGraa(b.strekFarge ?? b.farge) : true);
+    // banen maa svare til en av flatene finnDekor valgte (samme ramme)
+    const T = 0.6;
+    const likBoks = (b: Bane) => o.liste.some((x) => Math.abs(x.x0 - b.boks.x0) < T &&
+      Math.abs(x.y0 - b.boks.y0) < T && Math.abs(x.x1 - b.boks.x1) < T && Math.abs(x.y1 - b.boks.y1) < T);
+    const valgte = baner.filter((b) => andel(b, o) >= 0.9 && !erBil(b) && likBoks(b));
     if (!valgte.length) continue;
     // ogsaa her skal en feil si hvilket element den gjelder, ikke bare hvilken farge
     const lesTrygt = async (bytes: Uint8Array) => {
