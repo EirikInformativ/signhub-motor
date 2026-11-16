@@ -600,9 +600,29 @@ rammer, så thru-cut på begge sider av skjøten ligger på samme linje og
 montøren kan treffe etter kanten. Kia: tekstarket fra 1273 til 406 mm,
 hele jobben fra 5,55 til 4,26 m. `test/kiatest.ts` vokter det.
 
+**Ingen doble linjer i produksjonsfilene** (Eirik 16.11.2026). Wild
+skjærer hver linje i fila, uansett farge, så to linjer ved siden av
+hverandre blir skåret to ganger. Elementene er én bane hver: fylt med
+skjermfargen (foliens hex som `rg`) og streket i CutContour i samme `B*`.
+På ark med thru-cut skjærer rammen ut hvert element, så kiss-boksen rett
+utenfor er tatt bort der. Den står bare på ark uten thru-cut.
+
+**Ark med bare hele stykker er bare thru-cut** (Eirik 16.11.2026, Kia PV5:
+stripestykkene i grønt). Er arket én folie, og hvert element er én hel,
+konveks flate uten hull (minst 99 % av sitt eget konvekse skall), er
+elementet selve stykket. Det er ingenting å luke: folien appliseres og
+elementene thru-cuttes langs kanten. Banen streket i Through er eneste
+linje. Ingen ramme, ingen kiss, ingen bleed, og ingen regmarks, fordi det
+bare er én oppgave på summaen. Prosess i filnavnet er `Thru`.
+`test/kiatest.ts` og `test/skjultkutt.ts` (en hel sirkel) vokter det.
+
+**Feilsignatur:** to linjer ved siden av hverandre rundt et element, eller
+regmarks og kiss på et ark med bare hele stripestykker.
+
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er
-`Kiss+thru` på primærfargen og `Kiss` på fargene som legges oppå.
+`Kiss+thru` på primærfargen, `Kiss` på fargene som legges oppå, og
+`Thru` på ark med bare hele stykker.
 Ingen maskinnavn og ingen rolleord i navnet. Antall står ikke i navnet,
 fordi elementene allerede er ganget opp på arket.
 

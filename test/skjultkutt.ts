@@ -43,8 +43,8 @@ function innhold(bytes: Uint8Array): Promise<{ tekst: string; xobj: boolean }> {
       folier: [{ kode: "751-027", hex: "#C1121F", breddeMm: 1260 }] }] });
   let feil = 0;
   const prod = r.filer.filter((f: any) => f.slag === "produksjon");
-  if (prod.length !== 1 || prod[0].navn !== "Skjult Kiss+thru 751-027 100%.pdf") {
-    console.log(`FEIL: ventet én fil «Skjult Kiss+thru 751-027 100%.pdf», fikk ${prod.map((f: any) => f.navn).join(", ")}`); feil++;
+  if (prod.length !== 1 || prod[0].navn !== "Skjult Thru 751-027 100%.pdf") {
+    console.log(`FEIL: ventet én fil «Skjult Thru 751-027 100%.pdf» (en hel sirkel i én farge er bare thru-cut), fikk ${prod.map((f: any) => f.navn).join(", ")}`); feil++;
   }
   for (const f of prod) {
     const { tekst, xobj } = await innhold(f.bytes);

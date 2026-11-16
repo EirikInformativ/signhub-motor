@@ -132,6 +132,12 @@ export interface ArkValg {
    * trenger den ikke.
    */
   ytreRamme: boolean;
+  /**
+   * Bare thru-cut: elementet er selve stykket. Banen fylles med
+   * skjermfargen og strekes i Through, og det er den eneste linjen.
+   * Ingen ramme, ingen kiss, ingen regmarks.
+   */
+  kunThru?: boolean;
 }
 
 export async function byggProduksjonsfil(
@@ -164,7 +170,7 @@ export async function byggProduksjonsfil(
   motiver.forEach((m, i) => {
     harForm[i] = m.flate.length > 0;
     if (!harForm[i]) return;   // elementet finnes ikke i denne folien
-    formOps[i] = skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
+    formOps[i] = skjaereOps(m.flate, m.skala, folieFyll, geo.strek, valg.kunThru ? "CS0" : "CS1").ops;
   });
 
   const W = ark.breddeMm * MM;
@@ -191,8 +197,8 @@ export async function byggProduksjonsfil(
   }
   ops.push("Q\nEMC\n");
 
-  // Thru-cut
-  if (valg.thruCut) {
+  // Thru-cut (ved kunThru er elementenes egen strek thru-cutten)
+  if (valg.thruCut && !valg.kunThru) {
     ops.push(`/OC /L1 BDC\nq\n/CS0 CS\n1 SCN\n${f4(geo.strek)} w\n`);
     /**
      * Thru-cut deler arket i ett stykke per element. Stykket ma vaere der
@@ -229,7 +235,13 @@ export async function byggProduksjonsfil(
    * ikke vaere der. Plassen blir staaende, for alle foliene ma ha samme
    * oppsett for a ligge i register.
    */
-  for (const p of ark.plasseringer) {
+  /**
+   * Paa ark med thru-cut skjaerer thru-cut-rammen allerede ut hvert
+   * element. En kiss-boks rett utenfor ville vaert en dobbel linje, og wild
+   * skjaerer hver linje i fila, uansett farge (Eirik 16.11.2026: «maa ikke
+   * legges doble linjer»). Boksen legges derfor bare paa ark uten thru-cut.
+   */
+  for (const p of valg.thruCut || valg.kunThru ? [] : ark.plasseringer) {
     if (!harForm[p.id]) continue;
     const k = geo.boksKiss;
     if (p.kiss) { ops.push(ringOps(p.kiss, ytop)); continue; }

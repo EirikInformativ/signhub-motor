@@ -19,6 +19,7 @@
  * stripen, «åtg.no» og «- RØR» tre deler.
  */
 import * as fs from "fs";
+import { PDFDocument, decodePDFRawStream } from "pdf-lib";
 import { lesBilskisse, kjorJobb, DISCLAIMER, VANNMERKE } from "../src/motor";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { hentBaner } from "../src/uttrekk";
@@ -67,6 +68,32 @@ import { hentBaner } from "../src/uttrekk";
   const tekstark = r.ark.filter((a: any) => a.foliekode === "751-070").map((a: any) => a.lengdeMm);
   sjekk(Math.min(...tekstark) < 600, `det sorte tekstarket er kort (${tekstark.map((x: number) => x.toFixed(0)).join(", ")} mm)`);
   sjekk(sum < 4.6, `samlet folie under 4,6 m med formede rammer og skjoetede tekster (${sum.toFixed(2)} m)`);
+  /**
+   * Ingen doble linjer (Eirik 16.11.2026): wild skjaerer hver linje i fila.
+   * Paa ark med thru-cut er det ingen kiss-boks i tillegg til rammen. Arket
+   * med bare hele stripestykker er bare thru-cut: elementet strekes i
+   * Through, ingen ramme, ingen kiss, ingen regmarks.
+   */
+  const innhold = async (f: any) => {
+    const d = await PDFDocument.load(f.bytes);
+    const c: any = d.getPage(0).node.Contents();
+    return new TextDecoder("latin1").decode(decodePDFRawStream(d.context.lookup(c) as any ?? c).decode());
+  };
+  const thru = r.filer.filter((f: any) => / Thru 751-068 /.test(f.navn));
+  sjekk(thru.length === 1, `stripestykkene i gront faar en egen fil med bare thru-cut (${r.filer.map((f: any) => f.navn).join(", ")})`);
+  if (thru.length) {
+    const t = await innhold(thru[0]);
+    const maling = t.split("\n").filter((l) => /^(f|f\*|S|s|B|B\*|b|b\*)$/.test(l));
+    sjekk(maling.length > 0 && maling.every((l) => l === "B*") && /\/CS0 CS/.test(t),
+      `thru-fila har bare elementene, fylt og streket i Through: ingen regmarks, ramme eller kiss (${[...new Set(maling)].join(", ")})`);
+  }
+  for (const f of r.filer.filter((f: any) => / Kiss\+thru /.test(f.navn))) {
+    const t = await innhold(f);
+    const kiss = t.slice(t.indexOf("/OC /L3 BDC"), t.indexOf("EMC", t.indexOf("/OC /L3 BDC")));
+    const linjer = (kiss.match(/\nS\n/g) ?? []).length;
+    sjekk(linjer <= 3, `${f.navn}: ingen kiss-boks ved siden av thru-cut (${linjer} kiss-linjer: ytre ramme og regmark-bokser)`);
+  }
+
   // skraadde elementer rettes opp etter grunnlinjen: stripen, A-en (foettene),
   // teksten og ÅTG (den gronne streken i bunn)
   const rettet = l.merknader.filter((m) => /rettet opp/.test(m)).map((m) => m.split(":")[0]);

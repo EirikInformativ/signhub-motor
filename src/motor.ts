@@ -12,6 +12,7 @@ import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
 import type { MultiPoly, Geometri, GeometriPerFarge } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt } from "./pakk.ts";
+import { konvekstSkall } from "./ramme.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { byggProduksjonsfil, STD_GEO, MM } from "./produksjonsfil.ts";
@@ -287,6 +288,21 @@ function idag(): string {
 }
 
 /** #rrggbb til 0..1 */
+/** Én flate uten hull som (nesten) fyller sitt eget konvekse skall. */
+function heltKonveks(f: MultiPoly): boolean {
+  if (f.length !== 1 || f[0].length !== 1) return false;
+  const r = f[0][0];
+  const a = Math.abs(arealRing(r));
+  const skall = konvekstSkall(r.map((p) => [p[0], p[1]] as [number, number]));
+  const as = Math.abs(arealRing([...skall, skall[0]]));
+  return as > 0 && a / as >= 0.99;
+}
+function arealRing(r: [number, number][]): number {
+  let s = 0;
+  for (let i = 0; i < r.length - 1; i++) s += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
+  return s / 2;
+}
+
 function hexTilRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "").trim();
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -965,7 +981,16 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     if (skjaerebredde <= 0) {
       throw new Error(`Folien ${folier[0].kode} er for smal: ${foliebredde} mm.`);
     }
-    const geo: Geo = { ...grunngeo, foliebredde, skjaerebredde };
+    /**
+     * Bare thru-cut (Eirik 16.11.2026, Kia PV5 del 2 av 2: stripestykker i
+     * gront). Er arket én folie og hvert element én hel, konveks flate uten
+     * hull, er elementet selve stykket som skal ut. Det er ingenting aa luke,
+     * saa folien appliseres og elementene thru-cuttes direkte langs kanten.
+     * Uten kiss trengs heller ingen regmarks, for det er bare én oppgave paa
+     * summaen. Ingen bleed: kanten ER kuttet.
+     */
+    const kunThru = folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && heltKonveks(e.deler[0].flate));
+    const geo: Geo = { ...grunngeo, foliebredde, skjaerebredde, ...(kunThru ? { bleed: 0 } : {}) };
 
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
@@ -986,8 +1011,13 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
     folier.forEach((folie, rolleNr) => {
       const rolle = ROLLER[rolleNr] ?? `farge${rolleNr + 1}`;
-      const fyll = rgbTilCmyk(...hexTilRgb(folie.hex ?? "#000000"));
-      const fyllOp = `${fyll[0]} ${fyll[1]} ${fyll[2]} ${fyll[3]} k`;
+      /**
+       * Elementene fylles med skjermfargen, foliens hex som rgb, og streken
+       * er CutContour. Én bane per flate: fyll og strek i samme B*, aldri en
+       * fylt og en streket kopi oppaa hverandre (wild skjaerer begge).
+       */
+      const [fr, fg, fb2] = hexTilRgb(folie.hex ?? "#000000");
+      const fyllOp = `${fr.toFixed(4)} ${fg.toFixed(4)} ${fb2.toFixed(4)} rg`;
       const motiver: Motiv[] = gruppe.map((e) => ({
         navn: e.navn,
         flate: e.deler.find((d) => d.folie.kode === folie.kode)?.flate ?? [],
@@ -1001,7 +1031,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * wild, lages summa-varianten med doble regmarks i stedet. Filnavnet
        * sier ikke maskin, bare: navn, prosess, materiale, skala.
        */
-      const varianter: { navn: string; valg: ArkValg }[] = rolleNr === 0
+      const varianter: { navn: string; valg: ArkValg }[] = kunThru
+        ? [{ navn: rolle, valg: { thruCut: true, regmark: false, dobleRegmarks: false, ytreRamme: false, kunThru: true } }]
+        : rolleNr === 0
         ? [wildGar
             ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
             : { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme } }]
@@ -1009,7 +1041,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
              valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme } }];
 
       for (const v of varianter) {
-        const prosess = v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        const prosess = v.valg.kunThru ? "Thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
         filer.push({
           slag: "produksjon",
           navn: `${grunnNavn} ${prosess} ${folie.kode} 100%.pdf`,
@@ -1032,7 +1064,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         rullforbrukM2: (geo.foliebredde * ark.arklengde) / 1e6,
         elementer: ark.plasseringer.length,
         roterte: ark.plasseringer.filter((p) => p.rotated).length,
-        regmarkSett: rolleNr === 0 ? ark.regY.length : 0,
+        regmarkSett: rolleNr === 0 && !kunThru ? ark.regY.length : 0,
         strategi: ark.strategi,
       });
     });
