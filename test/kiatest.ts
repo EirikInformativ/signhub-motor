@@ -96,7 +96,7 @@ import { hentBaner } from "../src/uttrekk";
      */
     const st: number[][] = [];
     for (const bane of thruLag.split("\nS\n")) {
-      const p = [...bane.matchAll(/([\d.]+) ([\d.]+) [ml]\n/g)].map((m) => [+m[1] / 2.8346, +m[2] / 2.8346]);
+      const p = [...(bane + "\n").matchAll(/([\d.]+) ([\d.]+) [ml]\n/g)].map((m) => [+m[1] / 2.8346, +m[2] / 2.8346]);
       for (let i = 0; i < p.length - 1; i++) st.push([...p[i], ...p[i + 1]]);
     }
     let dobbel = 0;
@@ -118,6 +118,10 @@ import { hentBaner } from "../src/uttrekk";
     // stripen bak er strukket ut i doedrommet (Eirik 16.11.2026)
     const skraa = st.filter(([a0, a1, a2, a3]) => Math.abs(a2 - a0) > 0.5 && Math.abs(a3 - a1) > 0.5).length;
     sjekk(skraa === 0, `alle stripestykkene er rette rektangler (${skraa} skraa linjer)`);
+    // endene ligger paa noeyaktig samme linje, over hele skjaerebredden
+    const xer = [...new Set(st.filter(([a0, , a2]) => Math.abs(a2 - a0) < 0.01).map(([a0]) => a0.toFixed(1)))];
+    sjekk(xer.length === 2, `alle stripeendene ligger paa to linjer, ingen sprang paa millimetre (${xer.join(", ")})`);
+    sjekk(/ felt 1220x/.test(thru[0].navn), `feltet bruker hele skjaerebredden, 1260 minus rullkant (${thru[0].navn})`);
     sjekk(r.advarsler.filter((a: string) => /ende hoyre dekor 2 del 1 skjoet \d av 2: forlenget \d+ mm/.test(a)).length === 2,
       "begge stykkene av stripen bak er strukket ut til feltbredden");
     sjekk(l.merknader.filter((m: string) => /rettet ut til rektangel/.test(m)).length === 2, "sidestripenes ender under hjulbuene er rettet ut");

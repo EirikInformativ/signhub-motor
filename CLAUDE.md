@@ -309,7 +309,15 @@ Endene skrives i element-PDF-en som nøkkelord `signhub-forleng:venstre,hoyre`
 På et Appliser+thru-ark strekker `strekkUt` i `src/motor.ts` slike ender ut
 i dødrommet, til naboen eller feltkanten, og skyver elementet over først
 hvis plassen ligger på motsatt side. Kia: stripestykkene bak strekkes 311 mm
-hver, så hele feltet er fylt. Meldes per element.
+hver, så hele feltet er fylt. Meldes per element. Utstrekkingen går
+nøyaktig til naboen eller kanten (ikke avrundet), så alle endene ligger på
+samme linje: et sprang på en millimeter mellom to rader er kniven i nesten
+samme spor. Elementer der alle fire sider er rette, tegnes på nytt som et
+eksakt rektangel på rammens mål.
+
+Appliser+thru bruker **hele skjærebredden**: rullen minus `rullKant`,
+innenfor summa, uten regmark-marger (det er ingen regmarks), minus
+overmålet. På 1260-folie gir det et felt på 1220 mm.
 
 **Feilsignatur:** en stripe med skrå ende på et Appliser+thru-ark, eller
 dødrom ved siden av en stripe som er merket som forlengbar.

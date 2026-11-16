@@ -321,10 +321,11 @@ async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
  * er rette, ellers gap) eller til kanten av feltet. Bare elementer i ett
  * eksemplar, saa én plassering er ett element.
  */
-function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }, geo: Geo): string[] {
+function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }, geo: Geo, bredde: number): string[] {
   const ps = ark.plasseringer;
   const meld: string[] = [];
-  const feltV = Math.min(...ps.map((p) => p.x)), feltH = Math.max(...ps.map((p) => p.x + p.w));
+  // feltet er hele skjaerebredden, ikke bare det elementene bruker
+  const feltV = 0, feltH = bredde;
   const feltO = Math.min(...ps.map((p) => p.y)), feltN = Math.max(...ps.map((p) => p.y + p.h));
   // arkretning for hver side av elementet
   const retning = (rot: boolean, side: string) => (rot
@@ -364,14 +365,15 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
        * stripen bak: enden mot hjoernet laa inntil feltkanten).
        */
       const mot = ({ V: "H", H: "V", O: "N", N: "O" } as const)[r];
-      if (Math.floor(ledig(r)) < 1) {
-        const skyv = Math.floor(ledig(mot));
+      if (ledig(r) < 1) {
+        const skyv = ledig(mot);
         if (skyv >= 1) {
           if (mot === "H") p.x += skyv; else if (mot === "V") p.x -= skyv;
           else if (mot === "N") p.y += skyv; else p.y -= skyv;
         }
       }
-      const d = Math.floor(ledig(r));
+      // noeyaktig til naboen eller kanten, saa endene ligger paa samme linje
+      const d = ledig(r);
       if (!(d >= 1)) continue;
       // geometrien: enden flyttes d mm ut, i elementets egne enheter
       const du = (d * MM) / e.skala, b = e.bbox, tol = (0.5 * MM) / e.skala;
@@ -389,7 +391,7 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
       else if (r === "N") p.h += d; else { p.y -= d; p.h += d; }
       totalt += d;
     }
-    if (totalt) meld.push(`${e.navn}: forlenget ${totalt} mm i enden som gaar inn under bilen, ` +
+    if (totalt) meld.push(`${e.navn}: forlenget ${Math.round(totalt)} mm i enden som gaar inn under bilen, ` +
       "for aa fylle arket. Folien er der uansett; montoeren skjaerer til ved montering.");
   }
   return meld;
@@ -1116,7 +1118,16 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * summaen. Ingen bleed: kanten ER kuttet.
      */
     const kunThru = folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && heltKonveks(e.deler[0].flate));
-    const geo: Geo = { ...grunngeo, foliebredde, skjaerebredde, ...(kunThru ? { bleed: 0 } : {}) };
+    /**
+     * Appliser+thru gaar bare paa summa og har ingen regmarks: hele
+     * skjaerebredden brukes (Eirik 16.11.2026: «du bruker jo fortsatt ikke
+     * full skjaerebredde»). Det er rullen minus rullkanten, innenfor summa,
+     * minus overmaalet paa feltet.
+     */
+    const geo: Geo = kunThru
+      ? { ...grunngeo, foliebredde, bleed: 0, kissInset: 0, regClear: 0, regmarkD: 0, regmarkKiss: 0,
+          skjaerebredde: Math.min(foliebredde - grunngeo.rullKant, grunngeo.summaMaksSkjaer) - 2 * APPLISER_OVERMAAL_MM }
+      : { ...grunngeo, foliebredde, skjaerebredde };
 
     /**
      * Kant i kant krever at sidene er helt rette: to linjer som avviker
@@ -1133,6 +1144,8 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         sider[0] && Math.abs(x - b[0]) < tol ? b[0] : sider[1] && Math.abs(x - b[2]) < tol ? b[2] : x,
         sider[2] && Math.abs(y - b[1]) < tol ? b[1] : sider[3] && Math.abs(y - b[3]) < tol ? b[3] : y,
       ] as [number, number])));
+      // alle fire sider rette: tegnes paa nytt som et eksakt rektangel paa rammens maal
+      if (sider.every(Boolean)) d.flate = [[[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]]];
     }
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
@@ -1141,7 +1154,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
-    if (kunThru) advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo));
+    if (kunThru) advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo, ark.brukbarBredde));
     /**
      * Appliser+thru: arket ER feltet som skal appliseres. Det legges rundt
      * elementene med APPLISER_OVERMAAL_MM paa hver side og rundes opp til
