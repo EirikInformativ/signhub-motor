@@ -373,6 +373,42 @@ elementet og en merknad sier fra.
 tekst som mangler ved siden av et element, eller samme merke skåret to
 ganger.
 
+**Mørk bil: hvitt er dekor, sort er lakken** (Eirik 16.11.2026, Mercedes
+Vito i sort). `finnDekor` i `src/dekorfinn.ts` avgjør `moerkBil` ut fra om
+sort eller hvitt dekker mest. På mørk bil byttes reglene for sort og hvitt:
+sort avslutter en dekorbolk, hvit i en dekorbolk er kandidat, og en bolk med
+minst `LYS_BOLK = 6` hvite flater teller som dekor («24 timers service» på
+ruta). Sort i dekoren skjæres likevel alltid: på glass er sort kontur
+bunnfolie med sterkere lim (961).
+
+**Hva hører sammen?** (Eirik: «det er jo det som er kunsten å svare på»).
+`samleDeler` i `src/bilmotor.ts`:
+- det som er skrevet i samme retning er én tekst; to deler med grunnlinjer
+  som avviker mer enn `TEKST_VINKEL = 5°` (modulo 90) slås ikke sammen. Vito:
+  logoen er skrådd 20°, telefonnummeret står vannrett ved siden av;
+- linjer i samme tekst kan stå opptil `TEKST_LINJE = 1,2` ganger
+  bokstavhøyden fra hverandre («24 timers service:» over «41770011»);
+- en flate tykkere enn bokstavene og større enn teksten tar ikke med seg
+  tekst som står ved siden av (den røde flaten bak på Vito);
+- en stripe (én eller to flater, minst 8:1) limes ikke fast i det som står
+  inntil, og hører bare til naboen når naboen spenner over minst
+  `STRIPE_SPENN = 0,9` av den (ÅTG-streken på Kia hører til bokstavene,
+  logoen på Vito-stripen gjør ikke);
+- en del som ikke får plass på tvers av rullen (`MAKS_DEL_MM = 1150` målt
+  dreid inntil 35°) deles finere, og en stor flate (over `STOR_FLATE_MM`)
+  tar da ikke med bokstaver ved siden av.
+Skrådde logoer rettes opp etter grunnlinjen inntil `STOR_GRAD = 35°` når
+rammen da blir under `STOR_GEVINST = 0,75` av den vanlige, eller elementet
+ellers ikke får plass.
+
+**Stripen skjøtes i bilens egen skjøt** (Eirik 16.11.2026, Vito: «viktig da
+med god overlapp slik at vi kan bruke bilens naturlige skjøt»; «minimum 3
+cm»). `skjoterLangs` i `src/klippkant.ts` finner bilens linjer som krysser
+hele stripen (på nedre kvartil, midten og øvre kvartil), og `skrivPdf`
+skriver dem som `signhub-skjot:<andel>,...`. `kjorJobb` velger færrest og
+jevnest skjøter som gir stykker som får plass, og hvert stykke går
+`SKJOT_BIL_MM = 30` inn på den andre siden.
+
 **Merknadene er bare det et menneske må gjøre noe med** (Eirik
 16.11.2026: «dette er bare støy for menneske. vi vil bare at det funker»).
 `lesBilskisse` gir `merknader` (levende tekst, samme merke to ganger, synlig
