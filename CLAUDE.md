@@ -373,6 +373,14 @@ elementet og en merknad sier fra.
 tekst som mangler ved siden av et element, eller samme merke skåret to
 ganger.
 
+**Merknadene er bare det et menneske må gjøre noe med** (Eirik
+16.11.2026: «dette er bare støy for menneske. vi vil bare at det funker»).
+`lesBilskisse` gir `merknader` (levende tekst, samme merke to ganger, synlig
+dekor som ikke kom med, dekor som ikke lot seg forlenge, skisse som ikke er
+til å stole på) og `logg` (kutt ved bildelene, striper rettet ut, deling,
+retting etter grunnlinjen, passmerke, plate tatt ut). Appen viser bare
+`merknader`. `test/kiatest.ts` feiler hvis loggføring havner i merknadene.
+
 **Det som meldes og det som utleveres må være det samme.** Platen fjernes
 fra `farger` **og** fra element-PDF-en. `farger` er derfor nøyaktig
 fargelagene i `pdf`, i samme rekkefølge, og listen fra `foreslaFolier` går

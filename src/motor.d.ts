@@ -274,7 +274,10 @@ export interface BilSkisseLest {
   elementer: BilElement[];
   /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
   forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
+  /** bare det et menneske maa gjoere noe med: dette vises paa skjermen */
   merknader: string[];
+  /** hva motoren gjorde av seg selv (kutt, retting, deling, passmerke). Til feilsoeking, ikke til skjermen. */
+  logg: string[];
   /** levende tekst i visningene. Er ikke med i skjaerefilene. */
   levendeTekst: { tekst: string; vis: string; element: string | null }[];
 }

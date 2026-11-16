@@ -48,7 +48,11 @@ import { hentBaner } from "../src/uttrekk";
   sjekk(striper.every((e) => e.breddeMm < 2400), `stripene er kuttet ved hjulbuene (${striper.map((e) => e.breddeMm).join(", ")} mm)`);
   const aer = l.elementer.filter((e) => e.hoydeMm > 500 && e.farger.length === 2 && /side/.test(e.vis));
   sjekk(aer.length === 2 && aer.every((e) => e.hoydeMm < 679), `A-en med gronn trekant er egen del paa hver side, kuttet under rute og speil (${aer.map((e) => e.hoydeMm).join(", ")} mm hoy)`);
-  sjekk(l.merknader.filter((m) => /inn under bilens egne deler og er kuttet 50 mm/.test(m)).length === 2, "kuttet ved bildelene meldes for begge sidene");
+  // merknadene er bare det et menneske maa gjoere noe med (Eirik 16.11.2026:
+  // «dette er bare stoey for menneske»); resten ligger i logg
+  const stoey = l.merknader.filter((m: string) => /kuttet 50 mm|rettet ut til rektangel|delt i \d+ deler|rettet opp|passmerke lagt inn|bakgrunnsplaten .* er tatt ut/.test(m));
+  sjekk(stoey.length === 0, `ingen stoey i merknadene (${stoey.length}: ${stoey.map((m: string) => m.slice(0, 40)).join(" | ")})`);
+  sjekk(l.logg.filter((m: string) => /inn under bilens egne deler og er kuttet 50 mm/.test(m)).length === 2, "kuttet ved bildelene meldes for begge sidene");
   const tekst = l.elementer.filter((e) => e.breddeMm > 1150 && e.breddeMm < 1300 && e.farger.length === 1 && e.farger[0].hex === SORT);
   sjekk(tekst.length === 2, `«RØR - ELEKTRO - ENERGI» for seg paa begge sider (${tekst.length})`);
   const bakSort = l.elementer.filter((e) => /ende hoyre dekor 2 del/.test(e.navn) && e.farger[0].hex === SORT);
@@ -124,7 +128,7 @@ import { hentBaner } from "../src/uttrekk";
     sjekk(/ felt 1220x/.test(thru[0].navn), `feltet bruker hele skjaerebredden, 1260 minus rullkant (${thru[0].navn})`);
     sjekk(r.advarsler.filter((a: string) => /ende hoyre dekor 2 del 1 skjoet \d av 2: forlenget \d+ mm/.test(a)).length === 2,
       "begge stykkene av stripen bak er strukket ut til feltbredden");
-    sjekk(l.merknader.filter((m: string) => /rettet ut til rektangel/.test(m)).length === 2, "sidestripenes ender under hjulbuene er rettet ut");
+    sjekk(l.logg.filter((m: string) => /rettet ut til rektangel/.test(m)).length === 2, "sidestripenes ender under hjulbuene er rettet ut");
   }
   // kiss-boksen uten fyll rundt hvert thru-cut-element skal staa (Eirik 16.11.2026)
   for (const f of r.filer.filter((f: any) => / Kiss\+thru /.test(f.navn))) {
@@ -136,7 +140,7 @@ import { hentBaner } from "../src/uttrekk";
 
   // skraadde elementer rettes opp etter grunnlinjen: stripen, A-en (foettene),
   // teksten og ÅTG (den gronne streken i bunn)
-  const rettet = l.merknader.filter((m) => /rettet opp/.test(m)).map((m) => m.split(":")[0]);
+  const rettet = l.logg.filter((m: string) => /rettet opp/.test(m)).map((m) => m.split(":")[0]);
   for (const navn of ["side ovre dekor 2 del 1", "side ovre dekor 2 del 2", "side ovre dekor 2 del 3", "side ovre dekor 1"])
     sjekk(rettet.includes(navn), `${navn} rettet opp etter grunnlinjen`);
 

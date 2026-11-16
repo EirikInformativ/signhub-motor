@@ -87,7 +87,7 @@ const fyllgrad = async (bytes: Uint8Array) => {
         : "mangler");
   }
 
-  const meldt = lest.merknader.filter((m) => /bakgrunnsplaten/.test(m));
+  const meldt = [...lest.merknader, ...lest.logg].filter((m: string) => /bakgrunnsplaten/.test(m));
   sjekk("meldt i merknader, med farge og andel", meldt.length === 4,
     `${meldt.length} merknader`);
   sjekk("merknaden navngir farge og andel",

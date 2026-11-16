@@ -116,7 +116,15 @@ export interface BilSkisseLest {
   elementer: BilElement[];
   /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
   forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
+  /**
+   * Bare det et menneske maa gjoere noe med (Eirik 16.11.2026: «dette er
+   * bare stoey for menneske. vi vil bare at det funker»): levende tekst,
+   * samme merke to ganger, synlig dekor som ikke kom med, skisse som ikke
+   * er til aa stole paa.
+   */
   merknader: string[];
+  /** hva motoren gjorde av seg selv (kutt, retting, deling, passmerke): til feilsoeking, ikke til skjermen */
+  logg: string[];
   /**
    * levende tekst i visningene. Den er ikke med i skjaerefilene. element
    * er satt naar teksten staar ved et dekorelement.
@@ -176,6 +184,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   }
   const funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
   const merknader = [...s.merknader, ...funn.merknader];
+  const logg: string[] = [];
   const levendeTekst = finnLevendeTekst(lett.levende, funn, malestokk);
   for (const t of levendeTekst.filter((x) => x.element)) merknader.push(
     `${t.element}: teksten «${t.tekst}» er levende tekst og er IKKE med i skjaerefilene. ` +
@@ -253,17 +262,17 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   const luft = (KLIPP_LUFT_MM / malestokk) * MM, min = (KLIPP_MIN_MM / malestokk) * MM;
   for (const x of valgtPerOmraade) {
     const r = kuttVedBildeler(x.valgte, baner, (b) => alleDekor.has(b), luft, min);
-    if (r.fjernet > 0) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gaar inn under bilens egne deler ` +
+    if (r.fjernet > 0) logg.push(`${x.o.vis} ${x.o.navn}: dekoren gaar inn under bilens egne deler ` +
       `og er kuttet ${KLIPP_LUFT_MM} mm forbi det som synes. Sparer ` +
       `${(r.fjernet / MM / MM * malestokk * malestokk / 1e6).toFixed(2).replace(".", ",")} m² folie ` +
       `(${(r.fjernet / r.foer * 100).toFixed(0)} % av de kuttede delene). Alt som synes paa bilen er med` +
       (r.gjennomsyn ? ", bortsett fra smaa gjennomsyn mellom bildelene (for eksempel mellom hjulbue og dekk)." : "."));
-    if (r.rettet) merknader.push(`${x.o.vis} ${x.o.navn}: ${r.rettet} ${r.rettet === 1 ? "stripe" : "striper"} med ender ` +
+    if (r.rettet) logg.push(`${x.o.vis} ${x.o.navn}: ${r.rettet} ${r.rettet === 1 ? "stripe" : "striper"} med ender ` +
       "under bilens deler er rettet ut til rektangel. Endene kan forlenges paa arket.");
     if (r.knotter) merknader.push(`${x.o.vis} ${x.o.navn}: smaa synlige knotter i kanten mot bildelene ` +
       `(under ${KLIPP_MIN_MM} mm brede, for eksempel en flekk ved speilfoten) er ikke tatt med, saa kuttlinjen blir rett. ` +
       "Sjekk skissen hvis en slik bit er ment aa synes.");
-    if (r.forlenget) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gikk mindre enn ${KLIPP_MIN_MM} mm inn ` +
+    if (r.forlenget) logg.push(`${x.o.vis} ${x.o.navn}: dekoren gikk mindre enn ${KLIPP_MIN_MM} mm inn ` +
       `under bilens deler og er forlenget til ${KLIPP_LUFT_MM} mm (${r.forlenget} ${r.forlenget === 1 ? "del" : "deler"}), ` +
       "saa montoeren har noe aa skjaere til etter. Det som er lagt til, ligger under bildelen og synes ikke.");
     if (r.kortForbi.length) merknader.push(`${x.o.vis} ${x.o.navn}: dekoren gaar mindre enn ` +
@@ -281,13 +290,13 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
     deler.forEach((d, k) => arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d }));
-    merknader.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
+    logg.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
       "(tekst og striper som bare staar ved siden av hverandre).");
   }
   for (const { o, valgte: raa } of arbeid) {
     const rett = rettOpp(raa);
     const valgte = rett.baner;
-    if (rett.vinkel) merknader.push(`${o.vis} ${o.navn}: rettet opp ${Math.abs(rett.vinkel).toFixed(1).replace(".", ",")}° i ` +
+    if (rett.vinkel) logg.push(`${o.vis} ${o.navn}: rettet opp ${Math.abs(rett.vinkel).toFixed(1).replace(".", ",")}° i ` +
       `produksjonsfila (sparer ${rett.spartProsent.toFixed(0)} % ramme). Monteres med samme helning som paa skissen.`);
     // ogsaa her skal en feil si hvilket element den gjelder, ikke bare hvilken farge
     const lesTrygt = async (bytes: Uint8Array) => {
@@ -346,7 +355,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
      * tas bare ut naar den ogsaa har bilens farge. Er vi i tvil, blir den
      * staaende og skjaeres.
      */
-    if (plateform && bunnhex !== lakkHex) merknader.push(
+    if (plateform && bunnhex !== lakkHex) logg.push(
       `${o.vis} ${o.navn}: nederste farge ${bunnhex} fyller motivet som en plate, ` +
       `men bilen er ${lakkHex ?? "ukjent farge"}. Den er derfor en del av logoen og skjaeres.`);
     if (plateform && lakkHex && bunnhex === lakkHex) {
@@ -383,7 +392,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
           "Settes den ikke til negativt, skjaeres den som folie.");
       } else {
         bakgrunn = { hex: platehex, andel: plate.andel };
-        merknader.push(
+        logg.push(
           `${o.vis} ${o.navn}: bakgrunnsplaten ${platehex} ` +
           `(${(plate.andel * 100).toFixed(1)} % av motivet) er tatt ut, ` +
           "bade av fargelista og av filen. Den er ikke dekor, den er " +
@@ -431,7 +440,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       "Ta det ut av jobben hvis det stemmer, ellers skjaeres det to ganger.");
   }
 
-  await leggPassmerker(elementer, brukteBaner, malestokk, merknader);
+  await leggPassmerker(elementer, brukteBaner, malestokk, logg);
 
   const forside = tegnBilSkisse(baner, {
     jobb: v.jobb, malestokk,
@@ -444,7 +453,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     malestokk, malestokkTekst: s.malestokkTekst, avvikProsent: s.avvikProsent,
     lengdeM: s.lengdeM, breddeM: s.breddeM, hoydeM: s.hoydeM,
     visninger: funn.visninger.map((x) => ({ navn: x.navn, breddeEkteMm: x.breddeEkteMm, hoydeEkteMm: x.hoydeEkteMm })),
-    elementer, forside, merknader, levendeTekst,
+    elementer, forside, merknader, logg, levendeTekst,
   };
 }
 

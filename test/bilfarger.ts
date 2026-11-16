@@ -33,7 +33,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   const xl = e.elementer.filter((x) => x.breddeMm > 700 && x.breddeMm < 800 || x.breddeMm > 700 && x.hoydeMm > 440 && x.hoydeMm < 500);
   sjekk(xl.length === 2 && xl.every((x) => x.farger.length === 2 && !x.bakgrunn),
     `e-expert: XL-boksene beholder den svarte firkanten (${xl.map((x) => x.farger.map((f) => f.hex).join("+")).join(", ")})`);
-  sjekk(!e.merknader.some((m) => /er tatt ut/.test(m)), "e-expert: ingen plate tatt ut");
+  sjekk(![...e.merknader, ...e.logg].some((m: string) => /er tatt ut/.test(m)), "e-expert: ingen plate tatt ut");
 
   const p = await lesBilskisse(new Uint8Array(fs.readFileSync("proace2.pdf")), { jobb: "proace", bilder, lerret });
   sjekk(p.elementer.length === 4, `proace2: 4 elementer (fikk ${p.elementer.length})`);
