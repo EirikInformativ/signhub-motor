@@ -383,6 +383,26 @@ function heltKonveks(f: MultiPoly): boolean {
  * Fargen under fylles under fargen over, og der fargene moetes side om side
  * gaar fargen under UNDERLAP_MM inn under.
  */
+/**
+ * Thru-linjen rundt bitene i én logo som skal teipes inn: minste lukking som
+ * gjoer bitene til ett stykke, TETT_THRU_MM utenfor, minus det som er andre
+ * farger. Samme form som tettArk bruker.
+ */
+function tettForm(flate: MultiPoly, andre: MultiPoly, skala: number): MultiPoly {
+  const ytre = pc.union(...(flate.map((poly) => [poly[0]]) as [any])) as MultiPoly;
+  const ringer = ytre.map((poly) => poly[0].map(([x, y]) => [x, y] as [number, number]));
+  const tilMulti = (rs: [number, number][][]) => pc.union(...(rs.map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
+  let lukket = tilMulti(ringer);
+  for (let rMm = 1; lukket.length > 1 && rMm <= 200; rMm *= 1.25) {
+    const r = (rMm * MM) / skala;
+    lukket = tilMulti(offsetRinger(tilMulti(offsetRinger(ringer, r)).map((poly) => poly[0] as [number, number][]), -r));
+    lukket = pc.union(lukket as any, ytre as any) as MultiPoly;
+  }
+  let form = tilMulti(offsetRinger(lukket.map((poly) => poly[0] as [number, number][]), (TETT_THRU_MM * MM) / skala));
+  if (andre.length) form = pc.difference(form as any, andre as any) as MultiPoly;
+  return pc.union(form as any, flate as any) as MultiPoly;
+}
+
 function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
   const filer = (es: Elem[]) => {
     const n = new Set(es.map((e) => [...new Set(e.deler.map((d) => d.folie.kode))].sort().join("|")));
@@ -411,26 +431,19 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
       }
       if (!ok) { ut.push(e); continue; }
       const u = mm(UNDERLAP_MM);
-      e.deler.forEach((d, i) => {
-        const over = e.deler.slice(0, i);
-        let flate: MultiPoly = d.flate;
-        if (over.length) {
-          const O = pc.union(...(over.map((o) => o.flate) as [any])) as MultiPoly;
-          // under fargene over: fylt innenfor egen form, og UNDERLAP_MM inn der de moetes
-          flate = pc.union(d.flate, pc.intersection(O, pc.union(fylt[i], ytre(d.flate, u)))) as MultiPoly;
-        }
-        /**
-         * Deler av samme farge som ligger langt fra hverandre (den roede
-         * trekanten under D-en og CENTER) blir egne elementer, saa de ikke
-         * deler en ramme som nesten bare er luft.
-         */
-        const boks = (f: MultiPoly): [number, number, number, number] => {
-          const pk = f.flat(2);
-          return [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
-            Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
-        };
-        const klynger: MultiPoly[] = [];
-        for (const poly of flate) klynger.push([poly]);
+      const boks = (f: MultiPoly): [number, number, number, number] => {
+        const pk = f.flat(2);
+        return [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+          Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+      };
+      const mmAv = (bb: number[]) => [((bb[2] - bb[0]) * e.skala) / MM, ((bb[3] - bb[1]) * e.skala) / MM];
+      /**
+       * Deler av samme farge som ligger langt fra hverandre (den roede
+       * trekanten under D-en og CENTER) blir egne elementer, saa de ikke
+       * deler en ramme som nesten bare er luft.
+       */
+      const klyng = (flate: MultiPoly): MultiPoly[] => {
+        const klynger: MultiPoly[] = flate.map((poly) => [poly]);
         const naer = (a: MultiPoly, b: MultiPoly) => {
           const x = boks(a), y = boks(b), g = mm(DEL_AVSTAND_MM);
           return x[0] - g <= y[2] && y[0] - g <= x[2] && x[1] - g <= y[3] && y[1] - g <= x[3];
@@ -441,13 +454,67 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
             if (naer(klynger[a], klynger[c])) { klynger[a] = klynger[a].concat(klynger[c]); klynger.splice(c, 1); endret = true; }
           }
         }
-        klynger.forEach((k, ki) => {
-          const bb = boks(k);
-          ut.push({ navn: `${e.navn} ${d.folie.kode}${klynger.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
-            breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-            antall: e.antall, deler: [{ ...d, flate: k }], omriss: k });
+        return klynger;
+      };
+      // bunnfarger: farger som en annen farge ligger paa (961 under det hvite paa bakruta)
+      const erBunn = e.deler.map((_, j) => e.deler.slice(0, j).some((_, i) =>
+        areal(pc.intersection(fylt[i], fylt[j])) >= 0.1 * Math.min(areal(fylt[i]), areal(fylt[j]))));
+      e.deler.forEach((d, j) => {
+        if (!erBunn[j]) return;
+        const O = pc.union(...(e.deler.slice(0, j).map((o) => o.flate) as [any])) as MultiPoly;
+        // fylt under fargene over, og UNDERLAP_MM inn der de moetes
+        const flate = pc.union(d.flate, pc.intersection(O, pc.union(fylt[j], ytre(d.flate, u)))) as MultiPoly;
+        const kl = klyng(flate);
+        kl.forEach((k, ki) => {
+          const bb = boks(k), [w, h] = mmAv(bb);
+          ut.push({ navn: `${e.navn} ${d.folie.kode}${kl.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
+            breddeMm: w, hoydeMm: h, antall: e.antall, deler: [{ ...d, flate: k }], omriss: k });
         });
       });
+      /**
+       * Fargene oppaa bunnen, eller ved siden av hverandre (Eirik 16.11.2026,
+       * Vito: «751-010 oppsettet maa skjaere baade de roede og hvite
+       * elementene i logoene ... dermed kan man teipe over de roede
+       * elementene inn i det hvite oppsettet»). Fargen med stoerst flate er
+       * oppsettet; den skjaerer ogsaa omrisset av de andre fargene som kiss
+       * (markering), saa montoeren ser hvor de skal. De andre fargene
+       * kiss-cuttes tett, lukes og thru-cuttes rundt hver logo, og teipes inn
+       * i oppsettet. De trenger ikke appliseres.
+       */
+      const topp = e.deler.filter((_, j) => !erBunn[j]);
+      const hoved = topp.slice().sort((x, y) => areal(y.flate) - areal(x.flate))[0];
+      const alleTopp = pc.union(...(topp.map((d) => d.flate) as [any])) as MultiPoly;
+      for (const k of klyng(alleTopp)) {
+        const bbK = boks(k);
+        const iKlynge = (f: MultiPoly) => f.filter((poly) => {
+          const b2 = boks([poly]);
+          return b2[0] >= bbK[0] - 1e-6 && b2[2] <= bbK[2] + 1e-6 && b2[1] >= bbK[1] - 1e-6 && b2[3] <= bbK[3] + 1e-6;
+        });
+        const hovedHer = iKlynge(hoved.flate);
+        const andreHer = topp.filter((d) => d !== hoved).map((d) => ({ d, f: iKlynge(d.flate) })).filter((x) => x.f.length);
+        const [w, h] = mmAv(bbK);
+        if (hovedHer.length) {
+          ut.push({ navn: `${e.navn} ${hoved.folie.kode}`, lagvis: false, bbox: bbK, skala: e.skala, breddeMm: w, hoydeMm: h,
+            antall: e.antall, deler: [{ ...hoved, flate: hovedHer }], omriss: k,
+            ...(andreHer.length ? { markering: andreHer.map((x) => ({ flate: x.f, hex: x.d.folie.hex ?? x.d.hex })) } : {}) });
+        }
+        for (const x of andreHer) {
+          if (!hovedHer.length) {
+            const bb = boks(x.f), [w2, h2] = mmAv(bb);
+            ut.push({ navn: `${e.navn} ${x.d.folie.kode}`, lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2,
+              antall: e.antall, deler: [{ ...x.d, flate: x.f }], omriss: x.f });
+            continue;
+          }
+          // hver del av fargen for seg (CENTER og trekanten under D-en)
+          const kl = klyng(x.f);
+          kl.forEach((f, ki) => {
+            const form = tettForm(f, hovedHer, e.skala);
+            const bb = boks(form), [w2, h2] = mmAv(bb);
+            ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
+              breddeMm: w2, hoydeMm: h2, antall: e.antall, deler: [{ ...x.d, flate: f }], omriss: form, thruForm: form });
+          });
+        }
+      }
       tatt.push(e.navn);
     } catch { ut.push(e); }
   }

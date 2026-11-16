@@ -641,7 +641,13 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   eller paa en farge med minst `HAAND_MARGIN_MM` kant) ut av registeret.
   Hver farge gaar paa det ordinaere oppsettet for sin folie, fargen under
   fylles under fargen over, og deler lenger fra hverandre enn
-  `DEL_AVSTAND_MM` blir egne elementer. Vito: 9 til 5 filer.
+  `DEL_AVSTAND_MM` blir egne elementer.
+- Teip inn i oppsettet (Eirik 16.11.2026): i en slik logo er fargen med
+  stoerst flate oppsettet, og den skjaerer ogsaa omrisset av de andre
+  fargene som kiss (markering). De andre fargene kiss-cuttes tett, lukes og
+  thru-cuttes rundt hver del (`tettForm`), og teipes inn i oppsettet. De
+  appliseres ikke. Bunnfarger (961 under det hvite) er egne elementer.
+  Vito: 9 til 6 filer.
 
 ## Ikke endre
 
