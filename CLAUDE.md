@@ -696,7 +696,7 @@ oppsett til 0,43 m² tett (stripene kommer i tillegg i begge).
 
 **Den tette gruppen er én logo om gangen** (Eirik 16.11.2026, etter Kia
 PV5). Bitene til ett element tas ut sammen: kiss rundt hver bit, og
-thru-cut `TETT_THRU_MM = 3` utenfor, rundt hele gruppen (skallet om bitene)
+thru-cut `TETT_THRU_MM = 3` utenfor, rundt hele gruppen. Linjen foelger bitene tett og bygger bare bro over mellomrommet (minste morfologiske lukking som gjoer bitene til ett stykke; Eirik: «ingen grunn til at thrucuten skal gaa opp igjen paa toppene»),
 **minus det som skal vaere sort**, saa thru-cut aldri gaar inn over en annen
 farge. Montoeren stripper én logo og legger den samlet. Fila heter
 `Print+kiss+thru` (eller `Kiss+thru` uten print) og har regmarks, fordi det

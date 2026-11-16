@@ -375,15 +375,26 @@ function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: str
         let form: MultiPoly;
         try {
           const ytre = pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly;
-          const ut = offsetRinger(ytre.map((poly) => poly[0].map(([x, y]) => [x, y] as [number, number])), u)
-            .map((r) => [[...r, r[0]]]) as MultiPoly;
           /**
            * Én gruppe er ett stykke: thru-cut rundt hele logoens biter, ikke
            * rundt hver bit for seg, ellers faller de fra hverandre og maa
-           * plasseres én og én. Skallet rundt bitene, minus det som er sort.
+           * plasseres én og én. Linjen foelger bitene tett og bygger bare
+           * bro over mellomrommet mellom dem (Eirik 16.11.2026: «ingen grunn
+           * til at thrucuten skal gaa opp igjen paa toppene naar den allerede
+           * er nede»). Morfologisk lukking med minste radius som gjoer
+           * bitene til ett stykke, saa TETT_THRU_MM utenfor, minus det sorte.
            */
-          const skall = konvekstSkall(ut.flat(2).map((q) => [q[0], q[1]] as [number, number]));
-          form = [[[...skall, skall[0]]]] as MultiPoly;
+          const ringer = ytre.map((poly) => poly[0].map(([x, y]) => [x, y] as [number, number]));
+          const tilMulti = (rs: [number, number][][]) => pc.union(...(rs.map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
+          let lukket = tilMulti(ringer);
+          for (let rMm = 1; lukket.length > 1 && rMm <= 200; rMm *= 1.25) {
+            const r = (rMm * MM) / e.skala;
+            const ut1 = offsetRinger(ringer, r);
+            lukket = tilMulti(offsetRinger(tilMulti(ut1).map((poly) => poly[0] as [number, number][]), -r));
+            // lukkingen kan krympe bort et smalt stykke: bitene er alltid med
+            lukket = pc.union(lukket as any, ytre as any) as MultiPoly;
+          }
+          form = tilMulti(offsetRinger(lukket.map((poly) => poly[0] as [number, number][]), u));
           const andre = e.deler.filter((x) => x !== d).map((x) => x.flate);
           if (andre.length) form = pc.difference(form as any, ...(andre as any)) as MultiPoly;
           // bitene ligger alltid innenfor: det som er tatt bort, var sort
