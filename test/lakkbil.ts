@@ -49,6 +49,15 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(v.merknader.some((m: string) => /innsatte bilder/.test(m)), "Vito 304160: fotoene paa sidene er meldt");
   sjekk(v.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#FFFFFF")).length >= 10, "Vito 304160: den hvite dekoren er funnet");
 
+  // Vito i sort (Skisse_Vito_rev_3): fasiten fra kvelden 16.11 skal staa
+  const s: any = await lesBilskisse(new Uint8Array(fs.readFileSync("vito_sort.pdf")), { jobb: "s", bilder, lerret } as any);
+  const mal = (e: any) => `${Math.round(e.breddeMm)}x${Math.round(e.hoydeMm)}`;
+  const har = (b: number, h: number) => s.elementer.some((e: any) => Math.abs(e.breddeMm - b) < 15 && Math.abs(e.hoydeMm - h) < 15);
+  sjekk(har(542, 965) && har(480, 128) && har(1119, 260) && har(542, 154), `Vito sort: de fire elementene bak (${s.elementer.filter((e: any) => /^ende hoyre/.test(e.navn)).map(mal).join(", ")})`);
+  sjekk(har(2040, 465) && har(765, 217), "Vito sort: logoen paa siden uten sifre fra telefonnummeret, og «24 timers service» for seg");
+  // skiltet var 525 x 109 i hvitt med sort kant (ikke «24 timers service», 480 x 128)
+  sjekk(!har(525, 109), "Vito sort: nummerskiltet er ikke dekor");
+
   console.log(feil ? `\nFEIL: ${feil} sjekker feilet` : "\nok: lakkert bil og skalert ark leses riktig");
   process.exit(feil ? 1 : 0);
 })();

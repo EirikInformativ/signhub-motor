@@ -68,7 +68,7 @@ export function ringerAv(segs: any[]): Ring[] {
 }
 
 /** Flaten ringene dekker, etter partallsregelen. */
-function flate(ringer: Ring[]): any {
+export function flate(ringer: Ring[]): any {
   const deler = ringer.map((r) => [[[...r, r[0]]]]);
   if (!deler.length) return [];
   try { return pc.xor(...(deler as [any])); } catch { return null; }

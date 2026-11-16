@@ -18,7 +18,8 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp } from "./klippkant.ts";
+const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
@@ -100,6 +101,13 @@ export interface BilElement {
    * nabo-elementet skal ligge. Den rives av etter montering.
    */
   passmerke?: { mot: string; hex: string; lengdeMm: number };
+  /**
+   * satt naar minst halvparten av elementet ligger paa en vindusrute
+   * (gradientene i skissen). Glass trenger annen folie enn lakk (Eirik
+   * 16.11.2026: hvit paa glass 3106, sort bunn paa glass 961, hvit paa
+   * 961-bunn 010). Appen bruker dette i folieforslaget.
+   */
+  paaGlass?: boolean;
 }
 
 export interface BilSkisseLest {
@@ -212,6 +220,9 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   })();
 
   const { baner } = await hentBaner(kilde);
+  // vindusrutene: gradientene CCVision fyller rutene med (klippet de fyller)
+  const rutene: any[] = [];
+  for (const b of baner) if (b.gradient) { try { const f = flateAvSegs(b.segs as any[]); if (f?.length) rutene.push(f); } catch { /* hopp over */ } }
   const andel = (b: any, o: any) => {
     const ox = Math.max(0, Math.min(b.boks.x1, o.x1) - Math.max(b.boks.x0, o.x0));
     const oy = Math.max(0, Math.min(b.boks.y1, o.y1) - Math.max(b.boks.y0, o.y0));
@@ -476,8 +487,18 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       }
     }
 
+    // andel av elementets ramme som ligger paa en vindusrute
+    let glassAndel = 0;
+    try {
+      const r = { x0: Math.min(...brukte.map((b) => b.boks.x0)), y0: Math.min(...brukte.map((b) => b.boks.y0)),
+        x1: Math.max(...brukte.map((b) => b.boks.x1)), y1: Math.max(...brukte.map((b) => b.boks.y1)) };
+      const rekt = [[[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1], [r.x0, r.y0]]];
+      const A = (r.x1 - r.x0) * (r.y1 - r.y0);
+      for (const g of rutene) glassAndel += arealKlipp(pc.intersection([rekt], g)) / Math.max(A, 1e-9);
+    } catch { /* uten ruter */ }
     const nytt: BilElement = {
       id: nokkel, vis: o.vis, navn: `${o.vis} ${o.navn}`, pdf,
+      ...(glassAndel >= 0.5 ? { paaGlass: true } : {}),
       breddeMm: Math.round(tegnetB * malestokk),
       hoydeMm: Math.round(tegnetH * malestokk),
       antall: 1,
@@ -751,6 +772,7 @@ const SKJOT_KANT_MM = 200;
 const TEKST_VINKEL = 5;
 /** Faerre flater enn dette: retningen er for usikker til aa skille deler paa. */
 const KORT_ORD_FLATER = 4;
+const KORT_ORD_VINKEL = 12;
 /** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */
 const TEKST_HOYDE = 1.8;
 /** linjer i samme tekst kan staa opptil dette ganger bokstavhoeyden fra hverandre */
@@ -775,7 +797,7 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
    * vinkel (der den har en) og bokstavhoeydene sine; to deler med ulik
    * retning, eller to tekster med ulik bokstavhoeyde, slaas ikke sammen.
    */
-  type Info = { vinkel: number | null; hoyder: number[] };
+  type Info = { vinkel: number | null; hoyder: number[]; kort?: boolean };
   // tekst paa hoykant (taket): grunnlinjen leses ogsaa med banene dreid 90°
   const dreid = (gg: Bane[]) => gg.map((b) => {
     const r = (p: [number, number]): [number, number] => [-p[1], p[0]];
@@ -798,7 +820,7 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
      * retningen. Da regnes retningen som ukjent, og ordet kan slaas sammen
      * med resten av linja.
      */
-    if (flater < KORT_ORD_FLATER) v = null;
+    // (beholdes, men sammenlignes med romsligere grense i ulikTekst)
     // en strek (ikke tekst) har retningen til sin lange akse, ikke til enden
     // (den gronne streken under ÅTG paa taket staar paa hoykant)
     if (flater < 3 && Math.max(bw, bh) >= 3 * Math.min(bw, bh)) {
@@ -808,7 +830,7 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
     }
     // bokstavhoeyden: korteste side av hver flate, med teksten rettet opp
     const hoyder = delbaner_hoyder(r.funnet ? r.baner : gg, r.funnet);
-    return { vinkel: v, hoyder };
+    return { vinkel: v, hoyder, kort: flater < KORT_ORD_FLATER };
   };
   let info = g.map((x) => infoAv(x));
   // bokstavhoeyden: 75-persentilen, saa smaa tegn (punktum, kolon) ikke trekker ned
@@ -836,7 +858,9 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
       // modulo 90: en firkant (XL-boksen) har ingen sikker side opp, og paa
       // taket staar alt paa hoykant (e-expert, panseret)
       const d = Math.abs(a.vinkel - b.vinkel) % 90;
-      if (Math.min(d, 90 - d) > TEKST_VINKEL) return true;
+      // et kort ord har usikker retning: romsligere grense, men en skraadd
+      // logo (Vito, 20°) tar fortsatt ikke med seg sifre fra telefonnummeret
+      if (Math.min(d, 90 - d) > (a.kort || b.kort ? KORT_ORD_VINKEL : TEKST_VINKEL)) return true;
     }
     // en flate som er tykkere enn bokstavene, er ikke en strek under teksten
     // (Vito bak: den roede og den hvite flaten er ikke en del av logoen)

@@ -309,6 +309,11 @@ export function finnDekor(lest0: LettLest, malestokk: number,
   }
 
   const iVisning = (b: Boks) => visninger.some((v) => andelInni(b, v) >= 0.5);
+  /** et nummerskilt: 470-600 x 90-140 mm */
+  const skiltMaal = (b: Boks) => {
+    const w = (b.x1 - b.x0) / MM * malestokk, h = (b.y1 - b.y0) / MM * malestokk;
+    return w > 470 && w < 600 && h > 90 && h < 140;
+  };
   const fotoer = bilder.filter((b) => iVisning(b) &&
     Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= MINSTE_EKTE_MM);
   if (fotoer.length) merknader.push(`Skissen har ${fotoer.length} innsatt${fotoer.length > 1 ? "e" : ""} bilde${fotoer.length > 1 ? "r" : ""} paa bilen ` +
@@ -331,7 +336,7 @@ export function finnDekor(lest0: LettLest, malestokk: number,
        * to flater, tegnet mellom bildeler). Bilens egne hvite deler er
        * smaa (lys, refleks) eller nummerskiltet, som tas for seg.
        */
-      (moerkBil && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM))));
+      (moerkBil && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM && !skiltMaal(b)))));
   const fjernetFarge = kulorte.filter((b) => malfarge.has(fargenavn(b))).length;
   if (fjernetFarge) forkastet.push({ hva: `${fjernetFarge} flater`, grunn: "skissens egne farger" });
   const utenfor = kulorte.filter((b) => !malfarge.has(fargenavn(b)) && !iVisning(b)).length;
