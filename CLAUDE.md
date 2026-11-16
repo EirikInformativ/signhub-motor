@@ -631,7 +631,10 @@ ligger i Through: `slaaSammenLinjer` i `src/produksjonsfil.ts` slår
 sammen stykker på samme linje, setter dem sammen til sammenhengende baner
 og tar dem i nærmeste-nabo-rekkefølge. Flatene ligger under i
 Design-laget med bare fyll i foliens farge og ingen strek, så det er
-tydelig hvilken farge arket er (Eirik 16.11.2026). Kia: stripearket fra 500 til 460 mm. `test/kiatest.ts` feiler
+tydelig hvilken farge arket er (Eirik 16.11.2026). To lag er greit akkurat
+her, fordi Appliser+thru bare kjøres på summa, som skjærer etter
+spotfargen Through. Regelen om ingen doble linjer gjelder filer som kan gå
+på wild. Kia: stripearket fra 500 til 460 mm. `test/kiatest.ts` feiler
 hvis en linje skjæres to ganger eller to parallelle linjer ligger under
 2 mm fra hverandre.
 `test/kiatest.ts` og `test/skjultkutt.ts` (en hel sirkel) vokter det.
