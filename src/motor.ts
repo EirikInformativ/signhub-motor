@@ -63,6 +63,8 @@ const STRIPE_FORHOLD = 8;
 const TEKST_GLIPPE_MM = 3;
 /** saa mye av neste bokstav stykket foer skjoeten tar med som passmerke */
 const TEKST_PASS_MM = 10;
+/** overmaal paa hver side av feltet som appliseres foer thru-cut */
+const APPLISER_OVERMAAL_MM = 20;
 /** hull smalere enn dette i snitt kan ingen kniv skjaere: tegnefeil */
 const GLIPPE_MM = 0.1;
 
@@ -998,6 +1000,24 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
+    /**
+     * Appliser+thru: arket ER feltet som skal appliseres. Det legges rundt
+     * elementene med APPLISER_OVERMAAL_MM paa hver side og rundes opp til
+     * hele 10 mm, og elementene flyttes inn fra nullpunktet tilsvarende.
+     * Ingen regmark-marger, for det er ingen regmarks.
+     */
+    if (kunThru && ark.plasseringer.length) {
+      const ps = ark.plasseringer;
+      const x0 = Math.min(...ps.map((p) => p.x)), y0 = Math.min(...ps.map((p) => p.y));
+      const x1 = Math.max(...ps.map((p) => p.x + p.w)), y1 = Math.max(...ps.map((p) => p.y + p.h));
+      const dx = APPLISER_OVERMAAL_MM - x0, dy = APPLISER_OVERMAAL_MM - y0;
+      for (const p of ps) { p.x += dx; p.y += dy; }
+      ark.breddeMm = Math.ceil((x1 - x0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
+      ark.arklengde = Math.ceil((y1 - y0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
+      ark.regY = []; ark.regBokser = [];
+      if (ark.breddeMm > foliebredde) advarsler.push(`Feltet som skal appliseres er ${ark.breddeMm} mm bredt, ` +
+        `bredere enn folien (${foliebredde} mm).`);
+    }
 
     // rammen trengs bare nar flere folier skal legges oppa hverandre
     const ramme = folier.length > 1;
@@ -1041,10 +1061,17 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
              valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme } }];
 
       for (const v of varianter) {
-        const prosess = v.valg.kunThru ? "Thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        /**
+         * Appliser+thru (Eirik 16.11.2026): folien appliseres paa et felt
+         * foerst, saa thru-cuttes elementene. Ingen kiss, ingen luking. Feltet
+         * staar i navnet, saa produksjonen ser hva som skal appliseres foer
+         * fila aapnes.
+         */
+        const prosess = v.valg.kunThru ? "Appliser+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        const felt = v.valg.kunThru ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
-          navn: `${grunnNavn} ${prosess} ${folie.kode} 100%.pdf`,
+          navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,
           bytes: undefined as any,
           _bygg: () => byggProduksjonsfil(motiver, ark, geo, fyllOp, v.navn,
                                           v.valg, b.jobb, folie.kode),

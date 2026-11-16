@@ -613,7 +613,11 @@ konveks flate uten hull (minst 99 % av sitt eget konvekse skall), er
 elementet selve stykket. Det er ingenting å luke: folien appliseres og
 elementene thru-cuttes langs kanten. Banen streket i Through er eneste
 linje. Ingen ramme, ingen kiss, ingen bleed, og ingen regmarks, fordi det
-bare er én oppgave på summaen. Prosess i filnavnet er `Thru`.
+bare er én oppgave på summaen. Metoden heter **Appliser+thru** (Eirik
+16.11.2026): folien appliseres på et felt først, så thru-cuttes
+elementene. Arket er feltet: elementene pluss `APPLISER_OVERMAAL_MM = 20`
+på hver side, rundet opp til hele 10 mm, og feltet står i filnavnet,
+`<jobb> Appliser+thru <folie> felt <B>x<L> 100%.pdf`, og i PDF-tittelen.
 `test/kiatest.ts` og `test/skjultkutt.ts` (en hel sirkel) vokter det.
 
 **Feilsignatur:** et element tegnet to ganger (en fylt og en streket kopi),
@@ -623,7 +627,7 @@ ark med bare hele stripestykker.
 Filnavn: `<jobbnavn> <prosess> <foliekode> 100%.pdf`, for eksempel
 `Informativ logo 2026-11-16 Kiss+thru 751-027 100%.pdf`. Prosess er
 `Kiss+thru` på primærfargen, `Kiss` på fargene som legges oppå, og
-`Thru` på ark med bare hele stykker.
+`Appliser+thru` (med `felt BxL` etter folien) på ark med bare hele stykker.
 Ingen maskinnavn og ingen rolleord i navnet. Antall står ikke i navnet,
 fordi elementene allerede er ganget opp på arket.
 

@@ -77,7 +77,7 @@ import { hentBaner } from "../src/uttrekk";
     const c: any = d.getPage(0).node.Contents();
     return new TextDecoder("latin1").decode(decodePDFRawStream(d.context.lookup(c) as any ?? c).decode());
   };
-  const thru = r.filer.filter((f: any) => / Thru 751-068 /.test(f.navn));
+  const thru = r.filer.filter((f: any) => / Appliser\+thru 751-068 felt \d+x\d+ /.test(f.navn));
   sjekk(thru.length === 1, `stripestykkene i gront faar en egen fil med bare thru-cut (${r.filer.map((f: any) => f.navn).join(", ")})`);
   if (thru.length) {
     const t = await innhold(thru[0]);

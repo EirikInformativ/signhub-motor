@@ -288,7 +288,9 @@ export async function byggProduksjonsfil(
     D: doc.context.obj({ Order: oc, ON: oc, OFF: [], BaseState: PDFName.of("ON") }),
   }));
 
-  doc.setTitle(`${jobb} | ${variant} | ${folieTekst}`);
+  doc.setTitle(valg.kunThru
+    ? `${jobb} | Appliser+thru | ${folieTekst} | Appliser folie paa ${ark.breddeMm.toFixed(0)} x ${ark.arklengde.toFixed(0)} mm, legg arket i nullpunktet og thru-cut`
+    : `${jobb} | ${variant} | ${folieTekst}`);
   doc.setSubject(`Folie ${folieTekst}. Ark ${ark.breddeMm.toFixed(0)} x ` +
                  `${ark.arklengde.toFixed(1)} mm. ${ark.plasseringer.length} elementer.`);
   doc.setProducer("SignHub");
