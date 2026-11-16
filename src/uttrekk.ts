@@ -6,6 +6,15 @@
  * Resultatet er en fil motoren kan behandle som en hvilken som helst logo.
  */
 import { PDFDocument, PDFName, PDFDict, PDFRawStream, decodePDFRawStream, PDFOperator } from "pdf-lib";
+import { csFraObj, rgbScn } from "./pdfbaner.ts";
+import type { Cs } from "./pdfbaner.ts";
+/** rgb 0..1 til samme cmyk-form som rg-grenen bruker */
+const rgbTilCmykArr = (v: [number, number, number]): number[] => {
+  const kk = 1 - Math.max(v[0], v[1], v[2]);
+  return kk >= 1 ? [0, 0, 0, 1]
+    : [(1 - v[0] - kk) / (1 - kk), (1 - v[1] - kk) / (1 - kk), (1 - v[2] - kk) / (1 - kk), kk];
+};
+
 
 type Mat = [number, number, number, number, number, number];
 const ID: Mat = [1, 0, 0, 1, 0, 0];
@@ -63,6 +72,8 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
     if (p[1] < boks.y0) boks.y0 = p[1]; if (p[1] > boks.y1) boks.y1 = p[1];
     return p;
   };
+  let fyllCs: Cs | null = null, strekCs: Cs | null = null;
+  const csStabel: [Cs | null, Cs | null][] = [];
   const tom = () => { segs = []; boks = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }; };
 
   for (const t of data.match(TOKEN) ?? []) {
@@ -72,11 +83,17 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
     if (t.startsWith("(")) continue;
     const op = t;
 
-    if (op === "q") { mStabel.push(cur); fStabel.push(farge); sStabel.push(strekFarge); wStabel.push(bredde); }
+    if (op === "q") { mStabel.push(cur); fStabel.push(farge); sStabel.push(strekFarge); wStabel.push(bredde); csStabel.push([fyllCs, strekCs]); }
     else if (op === "Q") {
       cur = mStabel.pop() ?? cur; farge = fStabel.pop() ?? farge;
       strekFarge = sStabel.pop() ?? strekFarge; bredde = wStabel.pop() ?? bredde;
+      const c = csStabel.pop(); if (c) { fyllCs = c[0]; strekCs = c[1]; }
     }
+    // spotfarger (cs/scn, CS/SCN), se bilskisse.ts: Kia PV5 310079
+    else if (op === "cs" && navn) fyllCs = csFraObj(res, navn);
+    else if (op === "CS" && navn) strekCs = csFraObj(res, navn);
+    else if ((op === "scn" || op === "sc") && fyllCs) { const v = rgbScn(fyllCs, tall); if (v) farge = rgbTilCmykArr(v); }
+    else if ((op === "SCN" || op === "SC") && strekCs) { const v = rgbScn(strekCs, tall); if (v) strekFarge = rgbTilCmykArr(v); }
     else if (op === "cm" && tall.length >= 6) cur = mul(tall.slice(-6) as Mat, cur);
     else if (op === "w" && tall.length >= 1) bredde = tall[tall.length - 1];
     else if (op === "k" && tall.length >= 4) farge = tall.slice(-4);

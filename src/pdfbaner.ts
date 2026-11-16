@@ -112,7 +112,7 @@ function flat(p0: [number, number], p1: [number, number], p2: [number, number],
  * mister et helt folielag. Tinten skal gjennom tintTransform og
  * alternativfargerommet.
  */
-interface Cs {
+export interface Cs {
   /** antall komponenter scn tar */
   n: number;
   tilRgb(v: number[]): [number, number, number] | null;
@@ -311,7 +311,7 @@ function reserveFarge(navn: string): [number, number, number] {
   return [t[0] + m, t[1] + m, t[2] + m];
 }
 
-function csFraObj(res: PDFDict | undefined, navn: string): Cs | null {
+export function csFraObj(res: PDFDict | undefined, navn: string): Cs | null {
   if (navn === "DeviceCMYK") return CS_CMYK;
   if (navn === "DeviceRGB") return CS_RGB;
   if (navn === "DeviceGray") return CS_GRAY;
@@ -374,7 +374,7 @@ function csFraVerdi(obj: any, res: PDFDict | undefined): Cs | null {
 }
 
 /** Fargen som rgb 0..1, saa fargeseparering vet hva som er hva. */
-function rgbScn(cs: Cs | null, tall: number[]): [number, number, number] | null {
+export function rgbScn(cs: Cs | null, tall: number[]): [number, number, number] | null {
   if (!cs || !tall.length) return null;
   const v = tall.slice(-cs.n);
   if (v.length < cs.n) return null;

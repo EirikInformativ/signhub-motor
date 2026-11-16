@@ -7,6 +7,15 @@
  * kontrollpunktene rammer inn kurven, og en ramme er alt vi er ute etter.
  */
 import { PDFDocument, PDFName, PDFDict, PDFRawStream, decodePDFRawStream } from "pdf-lib";
+import { csFraObj, rgbScn } from "./pdfbaner.ts";
+import type { Cs } from "./pdfbaner.ts";
+/** rgb 0..1 til samme cmyk-form som rg-grenen bruker */
+const rgbTilCmykArr = (v: [number, number, number]): number[] => {
+  const kk = 1 - Math.max(v[0], v[1], v[2]);
+  return kk >= 1 ? [0, 0, 0, 1]
+    : [(1 - v[0] - kk) / (1 - kk), (1 - v[1] - kk) / (1 - kk), (1 - v[2] - kk) / (1 - kk), kk];
+};
+
 
 type Mat = [number, number, number, number, number, number];
 const ID: Mat = [1, 0, 0, 1, 0, 0];
@@ -64,6 +73,13 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
   let boks: Boks | null = null;
   let farge: number[] = [0, 0, 0, 1];
   const fargeStabel: number[][] = [];
+  /**
+   * Spotfarger (cs/scn). Kia PV5 (310079): all dekor var PANTONE 7481 C
+   * via /CS1 cs ... scn. Uten dette ble fargen staaende graa fra forrige
+   * k, og motoren fant ingen dekor i det hele tatt.
+   */
+  let fyllCs: Cs | null = null;
+  const csStabel: (Cs | null)[] = [];
 
   const punkt = (x: number, y: number) => {
     const [px, py] = app(cur, x, y);
@@ -104,8 +120,13 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
       if (op !== "Tj" && op !== "TJ") { tlm = mul([1, 0, 0, 1, 0, -lead], tlm); tm = tlm; }
       visTekst(biter.join("")); biter = [];
     }
-    if (op === "q") { stabel.push(cur); fargeStabel.push(farge); }
-    else if (op === "Q") { cur = stabel.pop() ?? cur; farge = fargeStabel.pop() ?? farge; }
+    if (op === "q") { stabel.push(cur); fargeStabel.push(farge); csStabel.push(fyllCs); }
+    else if (op === "Q") { cur = stabel.pop() ?? cur; farge = fargeStabel.pop() ?? farge; fyllCs = csStabel.pop() ?? fyllCs; }
+    else if (op === "cs" && navn) fyllCs = csFraObj(res, navn);
+    else if ((op === "scn" || op === "sc") && fyllCs) {
+      const rgb = rgbScn(fyllCs, tall);
+      if (rgb) farge = rgbTilCmykArr(rgb);
+    }
     else if (op === "k" && tall.length >= 4) farge = tall.slice(-4);
     else if (op === "g" && tall.length >= 1) farge = [0, 0, 0, 1 - tall[tall.length - 1]];
     else if (op === "rg" && tall.length >= 3) {
