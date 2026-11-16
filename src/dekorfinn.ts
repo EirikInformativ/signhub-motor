@@ -194,6 +194,21 @@ export function finnDekor(lest: LettLest, malestokk: number,
   const kulorte = lest.bokser.filter(kulor);
 
   /**
+   * Moerk bil (Eirik 16.11.2026, Mercedes Vito, sort): da er sort bilens
+   * lakk, og hvitt er designerens. Reglene for sort og hvitt byttes om:
+   * sort avslutter en dekorbolk og er aldri dekor, hvit i en dekorbolk er
+   * kandidat og hentes inn som nabo («VILLANGER» under roed «CENTER» foran,
+   * «24 timers service» paa ruta). Lys bil (Kia, Proace, e-expert) er som foer.
+   */
+  const lys = (b: Boks) => !!b.farge && b.farge.length === 4 && Math.max(...b.farge) < 0.03;
+  const sideA = (lest.side.x1 - lest.side.x0) * (lest.side.y1 - lest.side.y0);
+  const arealAv = (f: (b: Boks) => boolean) => lest.bokser.filter((b) => f(b) &&
+    (b.x1 - b.x0) * (b.y1 - b.y0) < 0.25 * sideA).reduce((a, b) => a + (b.x1 - b.x0) * (b.y1 - b.y0), 0);
+  const moerkBil = arealAv(svart) > arealAv(lys);
+  /** designerens noeytrale farge: sort paa lys bil, hvit paa moerk */
+  const noytral = moerkBil ? lys : svart;
+
+  /**
    * Tegnerekkefoelgen skiller designerens sort fra bilens. CCVision tegner
    * bilen i K-graatoner med noen faa K 100-deler (grill, list, hjulbue)
    * spredt mellom dem. Designeren legger dekoren oppaa, samlet: paa Kia PV5
@@ -210,12 +225,22 @@ export function finnDekor(lest: LettLest, malestokk: number,
   const iDekorbolk = new Set<Boks>();
   {
     let bolk: Boks[] = [];
-    let harKulor = false;
-    const avslutt = () => { if (harKulor) for (const b of bolk) iDekorbolk.add(b); bolk = []; harKulor = false; };
+    let harKulor = false, lyse = 0;
+    /**
+     * Paa moerk bil er hvit tekst alene dekor («24 timers service» paa ruta
+     * paa Vito). En bolk med minst LYS_BOLK hvite flater teller som dekor;
+     * et hvitt skilt eller en refleks i bilen er én eller to flater.
+     */
+    const LYS_BOLK = 6;
+    const avslutt = () => {
+      if (harKulor || (moerkBil && lyse >= LYS_BOLK)) for (const b of bolk) iDekorbolk.add(b);
+      bolk = []; harKulor = false; lyse = 0;
+    };
     for (const b of lest.bokser) {
-      if (bilTone(b) || BILFARGER.has(fargenavn(b))) { avslutt(); continue; }
+      if (bilTone(b) || BILFARGER.has(fargenavn(b)) || (moerkBil && svart(b))) { avslutt(); continue; }
       bolk.push(b);
       if (ekte(b)) harKulor = true;
+      if (lys(b)) lyse++;
     }
     avslutt();
   }
@@ -253,7 +278,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
      * Kia PV5 (310079) staar alene i sort. Sort fra en dekorbolk er
      * designerens og er en kandidat i seg selv.
      */
-    lest.bokser.filter((b) => !kulor(b) && svart(b) && iDekorbolk.has(b) && iVisning(b)));
+    lest.bokser.filter((b) => !kulor(b) && noytral(b) && iDekorbolk.has(b) && iVisning(b)));
   const fjernetFarge = kulorte.filter((b) => malfarge.has(fargenavn(b))).length;
   if (fjernetFarge) forkastet.push({ hva: `${fjernetFarge} flater`, grunn: "skissens egne farger" });
   const utenfor = kulorte.filter((b) => !malfarge.has(fargenavn(b)) && !iVisning(b)).length;
@@ -290,7 +315,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       for (let ledd = 0; ledd < 4; ledd++) {
         const naer = (b: Boks) => med.some((m) => Math.hypot(
           Math.max(0, m.x0 - b.x1, b.x0 - m.x1), Math.max(0, m.y0 - b.y1, b.y0 - m.y1)) <= NABO_MM * MM);
-        const nabo = lest.bokser.filter((b) => !med.includes(b) && svart(b) && iVisning(b) &&
+        const nabo = lest.bokser.filter((b) => !med.includes(b) && noytral(b) && iVisning(b) &&
           iDekorbolk.has(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) <= maks && naer(b));
         if (!nabo.length) break;
         med = med.concat(nabo); r = ramme(med);
@@ -350,6 +375,27 @@ export function finnDekor(lest: LettLest, malestokk: number,
     const a = omraader[i];
     if (omraader.some((b, j) => j !== i && b.liste.length > a.liste.length &&
         a.liste.every((x) => b.liste.includes(x)))) omraader.splice(i, 1);
+  }
+
+  /**
+   * To omraader som deler flater, er samme dekor (Vito bak: teksten «24
+   * timers service» ble halvt hentet inn i rammen til den roede flaten og
+   * halvt et eget omraade, og ble skaaret to ganger). De slaas sammen;
+   * samleDeler i bilmotor.ts deler dem igjen der delene staar hver for seg.
+   */
+  for (let endret = true; endret;) {
+    endret = false;
+    for (let i = 0; i < omraader.length && !endret; i++) for (let j = i + 1; j < omraader.length && !endret; j++) {
+      const a = omraader[i], b = omraader[j];
+      if (a.vis !== b.vis || !a.liste.some((x) => b.liste.includes(x))) continue;
+      const liste = [...new Set([...a.liste, ...b.liste])];
+      const r = ramme(liste);
+      omraader[i] = { ...a, ...r, liste, bokser: liste.length,
+        farger: [...new Set(liste.filter(kulor).map(fargenavn))],
+        breddeEkteMm: ((r.x1 - r.x0) / MM) * malestokk, hoydeEkteMm: ((r.y1 - r.y0) / MM) * malestokk };
+      omraader.splice(j, 1);
+      endret = true;
+    }
   }
 
   // nummerer per visning
