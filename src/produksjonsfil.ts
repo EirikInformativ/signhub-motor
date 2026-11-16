@@ -138,6 +138,23 @@ function utfallende(flate: MultiPoly, d: number): MultiPoly {
     .map((r) => [...r, r[0]] as [number, number][]));
 }
 
+/**
+ * Utfallende som beholder hullene: ytterkanten vokser og hullene krymper
+ * med samme mål. Uten dette ble punsene i bokstavene (o, b, e) fylt helt
+ * med farge paa Facebook-logoen (Eirik 16.11.2026: «helt unødvendig»).
+ */
+function utfallendeHull(flate: MultiPoly, d: number): MultiPoly {
+  const sa = (r: [number, number][]) => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+  const ringer = offsetRinger(flate.flatMap((poly) => poly.map((r) => r.slice(0, -1).map(([x, y]) => [x, y] as [number, number]))), d, true);
+  const lukk = (r: [number, number][]) => [[...r, r[0]]];
+  const pos = ringer.filter((r) => sa(r as any) > 0).map((r) => lukk(r as any));
+  const neg = ringer.filter((r) => sa(r as any) < 0).map((r) => lukk(r as any));
+  if (!pos.length) return flate;
+  let ut = pc.union(...(pos as [any]));
+  if (neg.length) ut = pc.difference(ut, ...(neg as [any]));
+  return ut as MultiPoly;
+}
+
 /** Bare strek i et fargerom (kiss eller thru), i elementets enheter. */
 function strekOpsFlate(flate: MultiPoly, skala: number, cs: string, strek = 0.25): string {
   let o = `/${cs} CS\n1 SCN\n${(strek / skala).toFixed(6)} w\n`;
@@ -199,6 +216,8 @@ export interface ArkValg {
   print?: boolean;
   /** spotfargen fyllet skal printes i (fra skissen), ellers skjermfargen */
   spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } };
+  /** rektangulaere rammer kant i kant: thru som sammenslaatte linjer, kiss-boks innenfor */
+  kantIKant?: boolean;
   /** helfolieringsfolie: bare thru-cut langs stykkene, ingen applisering */
   helfoliering?: boolean;
 }
@@ -276,7 +295,7 @@ export async function byggProduksjonsfil(
       let o = "";
       for (const t of m.trykk) {
         let fl: MultiPoly = t.flate;
-        try { fl = pc.union(t.flate as any, pc.difference(utfallende(t.flate, bl) as any, alle as any)) as MultiPoly; } catch { /* uten utfall */ }
+        try { fl = pc.union(t.flate as any, pc.difference(utfallendeHull(t.flate, bl) as any, alle as any)) as MultiPoly; } catch { /* uten utfall */ }
         o += fyllOps(fl, t.spot ? `/${csFor(t.spot)} cs\n${f4(t.spot.tint)} scn` : t.fyllOp);
       }
       formOps[i] = o + strekOpsFlate(m.flate, m.skala, "CS1");
@@ -377,7 +396,19 @@ export async function byggProduksjonsfil(
      * ogsa naar elementet ikke har noe i denne folien, for de andre
      * fargene legges oppa nettopp dette stykket.
      */
-    for (const p of ark.plasseringer) {
+    if (valg.kantIKant) {
+      // hver delte kant skjaeres én gang, i sammenhengende linjer
+      const kanter: [Pkt, Pkt][] = [];
+      for (const p of ark.plasseringer) {
+        const a: Pkt[] = [[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h]];
+        for (let i = 0; i < 4; i++) kanter.push([a[i], a[(i + 1) % 4]]);
+      }
+      for (const bane of slaaSammenKanter(kanter)) {
+        let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+        for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+        ops.push(o + "S\n");
+      }
+    } else for (const p of ark.plasseringer) {
       if (p.ramme) ops.push(ringOps(p.ramme, ytop));
       else ops.push(`${f4(p.x * MM)} ${f4(ytop(p.y + p.h))} ${f4(p.w * MM)} ${f4(p.h * MM)} re\nS\n`);
     }
@@ -411,7 +442,7 @@ export async function byggProduksjonsfil(
   // thru-cut (Eirik 16.11.2026). Bare rene thru-ark (kunThru) har ingen.
   for (const p of valg.kunThru ? [] : ark.plasseringer) {
     if (!harForm[p.id]) continue;
-    const k = geo.boksKiss;
+    const k = valg.kantIKant ? -geo.boksKiss : geo.boksKiss;   // kant i kant: innenfor rammen
     if (p.kiss) { ops.push(ringOps(p.kiss, ytop)); continue; }
     ops.push(`${f4((p.x - k) * MM)} ${f4(ytop(p.y + p.h + k))} ` +
              `${f4((p.w + 2 * k) * MM)} ${f4((p.h + 2 * k) * MM)} re\nS\n`);
@@ -499,6 +530,11 @@ export function slaaSammenLinjer(motiver: Motiv[], ark: Ark, geo: Geo): Pkt[][] 
       }
     }
   }
+  return slaaSammenKanter(kanter);
+}
+
+/** Kanter paa samme linje slaas sammen; sammenhengende stykker blir én bane. */
+export function slaaSammenKanter(kanter: [Pkt, Pkt][]): Pkt[][] {
   // grupper paa linje: retning (vinkel mod 180) og avstand fra origo
   const grupper = new Map<string, { ux: number; uy: number; d: number; iv: [number, number][] }>();
   for (const [a, c] of kanter) {

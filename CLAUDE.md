@@ -615,6 +615,23 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
 
 **Feilsignatur:** en ekstra rute paa logoens storrelse i wild-skjaeringen.
 
+**Vito-reglene (Eirik 16.11.2026, kveld):**
+- Stripeender under bilen foelger kantene videre i sin retning
+  (`stripeKanter` i `src/klippkant.ts`, `strekkUt` i `src/motor.ts`), aldri
+  et rektangel paa full bredde. Feilsignatur: en firkant paa enden av en
+  stripe som smalner av.
+- Kiss+thru med rektangulaere rammer legges kant i kant (`kantIKant`):
+  thru er sammenslaatte linjer (`slaaSammenKanter`), kiss-boksen ligger
+  `boksKiss` innenfor rammen. Formede rammer bare naar de gir kortere ark.
+- Ingen ytre kiss-ramme rundt hele arket.
+- Et felt (ett helt, konvekst stykke over `DELT_FELT` av elementet) og
+  farger som nesten ikke overlapper det (`DELT_OVERLAPP`), produseres hver
+  for seg naar det sparer minst `DELT_SPAR` av arkene. Fargen under gaar
+  `UNDERLAP_MM` inn under der de moetes. Folie med pris er tettArk sitt.
+- Printede elementer: hullene beholdes i utfallet (`utfallendeHull`), saa
+  punsene ikke fylles.
+- `helfoliering: true` paa folien gir ren Thru-fil uten applisering.
+
 ## Ikke endre
 
 `STD_GEO` i `src/produksjonsfil.ts` er målt mot maskinene og skal stå:

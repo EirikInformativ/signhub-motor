@@ -138,6 +138,47 @@ export function stripeRetning(mp: any): { ux: number; uy: number } | null {
 }
 
 /**
+ * Stripens to lange kanter som linjer v = a + b*u i stripens egne
+ * koordinater (u langs, v paa tvers). En skraa stripe (smalner av) faar da
+ * endene forlenget i den retningen kantene gaar (Eirik 16.11.2026: «det er
+ * jo bare aa fortsette linjene i den retningen de er paa vei»), ikke et
+ * rektangel paa full bredde.
+ */
+export function stripeKanter(mp: any, st: { ux: number; uy: number }):
+  { lo: (u: number, ende: number) => number; hi: (u: number, ende: number) => number } | null {
+  const pk = (mp.flat(2) as Pt[]).map((q) => [q[0] * st.ux + q[1] * st.uy, -q[0] * st.uy + q[1] * st.ux] as Pt);
+  if (pk.length < 3) return null;
+  const sk = konvekstSkall(pk);
+  const u0 = Math.min(...sk.map((q) => q[0])), u1 = Math.max(...sk.map((q) => q[0])), L = u1 - u0;
+  if (!(L > 0)) return null;
+  // skallets oevre og nedre kant som funksjon av u (interpolert)
+  const kant = (oevre: boolean) => (u: number) => {
+    let best: number | null = null;
+    for (let i = 0; i < sk.length; i++) {
+      const p = sk[i], q = sk[(i + 1) % sk.length];
+      const a = Math.min(p[0], q[0]), b = Math.max(p[0], q[0]);
+      if (u < a - 1e-9 || u > b + 1e-9) continue;
+      const v = b - a < 1e-12 ? (oevre ? Math.max(p[1], q[1]) : Math.min(p[1], q[1]))
+        : p[1] + ((q[1] - p[1]) * (u - p[0])) / (q[0] - p[0]);
+      if (best === null || (oevre ? v > best : v < best)) best = v;
+    }
+    return best ?? 0;
+  };
+  const ov = kant(true), ne = kant(false);
+  /**
+   * Linja gjennom kanten ved enden og kanten et stykke inn (en firedel av
+   * lengden), forlenget forbi enden. ende er u-verdien enden ligger ved.
+   */
+  const linje = (f: (u: number) => number) => (u: number, ende: number) => {
+    const inn = ende <= (u0 + u1) / 2 ? 1 : -1;
+    const ea = Math.min(u1, Math.max(u0, ende + inn * 0.02 * L)), eb = ea + inn * 0.25 * L;
+    const va = f(ea), vb = f(eb);
+    return va + ((vb - va) * (u - ea)) / (eb - ea);
+  };
+  return { lo: linje(ne), hi: linje(ov) };
+}
+
+/**
  * `dekor` er dekorbanene som skal kuttes. `alle` er skissens baner i
  * tegnerekkefoelge. `erDekor` sier hvilke av dem som er dekor (de dekker
  * aldri annen dekor her: lagene i en logo bygges i kjorJobb). `luft` og
@@ -263,12 +304,22 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
         if (lav || hoy) {
           const ua = lav ? n.u0 : sy.u0, ub = hoy ? n.u1 : sy.u1;
           const pt = (u: number, v: number): Pt => [u * st.ux - v * st.uy, u * st.uy + v * st.ux];
-          const rekt = [[pt(ua, n.v0), pt(ub, n.v0), pt(ub, n.v1), pt(ua, n.v1), pt(ua, n.v0)]];
-          // rektangelet der enden er skjult, resten som foer
-          const deler = [ny];
-          if (lav) deler.push([[pt(n.u0, n.v0), pt(sy.u0, n.v0), pt(sy.u0, n.v1), pt(n.u0, n.v1), pt(n.u0, n.v0)]]);
-          if (hoy) deler.push([[pt(sy.u1, n.v0), pt(n.u1, n.v0), pt(n.u1, n.v1), pt(sy.u1, n.v1), pt(sy.u1, n.v0)]]);
-          ny = pc.intersection(pc.union(...(deler as [any])), [rekt]);
+          // kantene maales paa det som synes, og fortsetter i sin retning
+          const kt = stripeKanter(synlig, st);
+          const bit = (a: number, b: number, ende: number) => {
+            const lo = (u: number) => kt ? kt.lo(u, ende) : n.v0, hi = (u: number) => kt ? kt.hi(u, ende) : n.v1;
+            return [[pt(a, lo(a)), pt(b, lo(b)), pt(b, hi(b)), pt(a, hi(a)), pt(a, lo(a))]];
+          };
+          // det som synes staar urort (motoren fjerner aldri noe); bare den
+          // skjulte enden byttes ut med kantene forlenget
+          const V = 10 * (n.v1 - n.v0 + 1);
+          const skive = [[pt(lav ? sy.u0 : n.u0 - 1, n.v0 - V), pt(hoy ? sy.u1 : n.u1 + 1, n.v0 - V),
+            pt(hoy ? sy.u1 : n.u1 + 1, n.v1 + V), pt(lav ? sy.u0 : n.u0 - 1, n.v1 + V), pt(lav ? sy.u0 : n.u0 - 1, n.v0 - V)]];
+          const deler = [pc.intersection(ny, skive)];
+          if (lav) deler.push(bit(n.u0, sy.u0, sy.u0));
+          if (hoy) deler.push(bit(sy.u1, n.u1, sy.u1));
+          const rekt = pc.union(...(deler as [any]));
+          ny = rekt;
           skjultEnde = { ux: st.ux, uy: st.uy, lav, hoy };
           rettet++;
         }

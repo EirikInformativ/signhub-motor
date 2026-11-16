@@ -36,6 +36,14 @@ export type { Forhandsvisning, ForhandsvisValg } from "./forhandsvis.ts";
 export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
+/** Hvor langt en farge gaar inn under en annen naar de produseres hver for seg. */
+const UNDERLAP_MM = 5;
+/** Fargene overlapper under denne andelen av den minste: de kan deles. */
+const DELT_OVERLAPP = 0.1;
+/** Et felt dekker minst denne andelen av elementets ramme. */
+const DELT_FELT = 0.2;
+/** Delingen maa spare minst denne andelen av arkene. */
+const DELT_SPAR = 0.3;
 export const MIN_DETALJ = 1.5;
 /**
  * Renner smalere enn dette regnes som en del av formen, ikke som luft
@@ -564,7 +572,32 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
       const flytt = (x: number, y: number): [number, number] =>
         side === "hoyre" && x > b[2] - tol ? [x + du, y] : side === "venstre" && x < b[0] + tol ? [x - du, y]
         : side === "topp" && y > b[3] - tol ? [x, y + du] : side === "bunn" && y < b[1] + tol ? [x, y - du] : [x, y];
-      f.flate = f.flate.map((poly) => poly.map((ring) => ring.map(([x, y]) => flytt(x, y))));
+      /**
+       * Enden foelger kantene videre i den retningen de gaar (Eirik
+       * 16.11.2026), ikke vannrett: en stripe som smalner av, fortsetter aa
+       * smalne av. Hjoernet flyttes langs kanten det kommer fra, innenfor
+       * elementets hoeyde (bredde), saa det aldri vokser inn i naboen.
+       */
+      const xAkse = side === "hoyre" || side === "venstre";
+      const iEnden = (x: number, y: number) => flytt(x, y)[0] !== x || flytt(x, y)[1] !== y;
+      f.flate = f.flate.map((poly) => poly.map((ring) => {
+        const n = ring.length - 1;   // lukket ring
+        return ring.map(([x, y], i) => {
+          if (!iEnden(x, y)) return [x, y] as [number, number];
+          const ii = i % n;
+          const nb = [ring[(ii + n - 1) % n], ring[(ii + 1) % n]].find(([qx, qy]) => !iEnden(qx, qy));
+          if (nb) {
+            const dx = x - nb[0], dy = y - nb[1];
+            const langs = xAkse ? dx : dy, tvers = xAkse ? dy : dx;
+            if (Math.abs(langs) > 1e-9 && Math.abs(tvers / langs) < 0.5) {
+              const t = tvers * (du / Math.abs(langs));
+              if (xAkse) return [flytt(x, y)[0], Math.min(b[3], Math.max(b[1], y + t))] as [number, number];
+              return [Math.min(b[2], Math.max(b[0], x + t)), flytt(x, y)[1]] as [number, number];
+            }
+          }
+          return flytt(x, y);
+        });
+      }));
       e.omriss = f.flate;
       if (side === "hoyre") b[2] += du; else if (side === "venstre") b[0] -= du;
       else if (side === "topp") b[3] += du; else b[1] -= du;
@@ -1063,7 +1096,66 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       foliekoder: deler.map((d) => d.folie.kode),
     });
 
-    elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
+    /**
+     * Farger som ikke ligger paa hverandre, produseres hver for seg (Eirik
+     * 16.11.2026, Vito: bakluka med feltet og det hvite elementet: «det er det som er kunsten
+     * aa finne ut. egentlig fordi det skaper saa mye ekstra-kapp»). Lagt i
+     * register maa hver farge ha et ark paa hele elementets stoerrelse, og
+     * det meste blir kapp. Hver for seg trenger hver farge bare sin egen
+     * ramme, og montoeren legger delene inntil hverandre.
+     *
+     * Bare naar fargene nesten ikke overlapper (under DELT_OVERLAPP av den
+     * minste, maalt med hullene fylt), og naar det sparer minst DELT_SPAR av
+     * arket. En logo der en farge ligger inni en annen (XL-boksen, Finsaas)
+     * blir staaende lagvis. Der fargene moetes, gaar fargen under
+     * UNDERLAP_MM inn under fargen over, saa det aldri blir en glippe.
+     */
+    const rammeAv = (f: MultiPoly): [number, number, number, number] => {
+      const pk = f.flat(2);
+      return [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+              Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+    };
+    const bxA = (b: number[]) => (b[2] - b[0]) * (b[3] - b[1]);
+    const mmAv = (b: number[]) => [((b[2] - b[0]) * skala) / MM, ((b[3] - b[1]) * skala) / MM];
+    let delt = false;
+    // folie med pris vurderes av tettArk, som regner paa kroner i stedet
+    if (deler.length >= 2 && !trykk?.length && deler.every((d) => d.flate.length && !d.folie.prisM2)) {
+      try {
+        const fylt = deler.map((d) => pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly);
+        let overlapp = 0;
+        for (let i = 0; i < fylt.length; i++) for (let j = i + 1; j < fylt.length; j++) {
+          const ov = areal(pc.intersection(fylt[i], fylt[j]));
+          overlapp = Math.max(overlapp, ov / Math.max(1e-9, Math.min(areal(fylt[i]), areal(fylt[j]))));
+        }
+        const hel = bxA(boks) * deler.length, hver = deler.reduce((t, d) => t + bxA(rammeAv(d.flate)), 0);
+        // et felt: én farge er ett helt, konvekst stykke som dekker en stor
+        // del av elementet (bakluka paa Vito). Logoer der fargene staar
+        // sammen (ÅTG paa Kia) skal ligge i register og deles ikke.
+        const felt = fylt.some((f) => f.length === 1 && f[0].length === 1 && heltKonveks(f) &&
+          areal(f) >= DELT_FELT * bxA(boks));
+        if (felt && overlapp < DELT_OVERLAPP && hver < (1 - DELT_SPAR) * hel) {
+          const u = (UNDERLAP_MM * MM) / skala;
+          const nye = deler.map((d, i) => {
+            const over = deler.slice(0, i);
+            if (!over.length) return d;
+            const ut = offsetRinger(d.flate.map((poly) => poly[0].slice(0, -1) as [number, number][]), u, true)
+              .map((r) => [[...r, r[0]]]);
+            const under = pc.intersection(pc.union(...(over.map((o) => o.flate) as [any])), pc.union(...(ut as [any])));
+            return { ...d, flate: pc.union(d.flate, under) as MultiPoly };
+          });
+          for (const d of nye) {
+            const r = rammeAv(d.flate), [w, h] = mmAv(r);
+            elementer.push({ navn: `${l.navn} ${d.folie.kode}`, lagvis: false, bbox: r, skala,
+              breddeMm: w, hoydeMm: h, antall: l.antall, deler: [d], omriss: d.flate });
+          }
+          advarsler.push(`${l.navn}: fargene ligger ikke paa hverandre og produseres hver for seg ` +
+            `(${nye.map((d) => d.folie.kode).join(", ")}). Sparer ${Math.round((1 - hver / hel) * 100)} % av arkene. ` +
+            "Montoeren legger delene inntil hverandre" + (overlapp > 0 ? `, med ${UNDERLAP_MM} mm under der de moetes.` : "."));
+          delt = true;
+        }
+      } catch { /* da staar elementet lagvis som foer */ }
+    }
+    if (!delt) elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
                      bbox: boks, skala,
                      breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
                      ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}),
@@ -1442,15 +1534,25 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       // alle fire sider rette: tegnes paa nytt som et eksakt rektangel paa rammens maal
       if (sider.every(Boolean)) d.flate = [[[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]]];
     }
+    const kantKiss = !kunThru && gruppe.length > 1 && gruppe.every((e) => !e.thruForm && !e.markering?.length);
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
       ...(e.thruForm ? { thruForm: e.thruForm } : {}),
       ...(kunThru ? { sider: e.thruForm ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
-        : retteSider(e.deler[0].flate, e.bbox, e.skala) } : {}),
+        : retteSider(e.deler[0].flate, e.bbox, e.skala) }
+        /**
+         * Kiss+thru med rektangulaere rammer legges kant i kant, som
+         * klebemerkene (Eirik 16.11.2026: «1 veis kjoering av thru»). Thru
+         * blir rette linjer tvers over arket, skaaret én gang, og kiss-boksen
+         * ligger innenfor rammen. Formede rammer brukes bare naar de gir
+         * kortere ark.
+         */
+        : kantKiss ? { sider: [true, true, true, true] as [boolean, boolean, boolean, boolean] } : {}),
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
+    const kantIKant = kantKiss && ark.strategi.startsWith("kant i kant");
     if (kunThru) {
       // feltet er skjaerebredden innenfor regmark-kolonnene (ingen paa Appliser+thru)
       const reservert = geo.kissInset + geo.regClear + (geo.regmarkD + 2 * geo.regmarkKiss) + geo.regClear;
@@ -1477,8 +1579,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         `bredere enn folien (${foliebredde} mm).`);
     }
 
-    // rammen trengs bare nar flere folier skal legges oppa hverandre
-    const ramme = folier.length > 1;
+    // ingen ytre kiss-ramme helt ytterst paa arket (Eirik 16.11.2026: «det
+    // trenger ikke vaere en ytre kiss-cut ramme paa helt paa utsiden»)
+    const ramme = false;
     /**
      * Wild males pa den ytterste skjaerelinjen, ikke pa arkmalet. Ytterst
      * ligger rammen, eller regmark-kolonnen naar det ikke er noen ramme.
@@ -1531,10 +1634,10 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
             print: printThru, ...(helfol ? { helfoliering: true } : {}), ...(spot ? { spot } : {}) } }]
         : rolleNr === 0
         ? [wildGar
-            ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
-            : { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme } }]
+            ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme, ...(kantIKant ? { kantIKant: true } : {}) } }
+            : { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme, ...(kantIKant ? { kantIKant: true } : {}) } }]
         : [{ navn: rolle,
-             valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme } }];
+             valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme, ...(kantIKant ? { kantIKant: true } : {}) } }];
 
       for (const v of varianter) {
         /**
