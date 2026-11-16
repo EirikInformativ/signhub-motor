@@ -36,6 +36,13 @@ export type { Forhandsvisning, ForhandsvisValg } from "./forhandsvis.ts";
 export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
+/** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
+const MAKS_FILER = 6;
+const SAMLE_M2 = 5;
+/** En farge som stikker minst saa langt ut rundt fargen over, kan monteres for haand. */
+const HAAND_MARGIN_MM = 3;
+/** Deler av samme farge lenger fra hverandre enn dette blir egne elementer naar en logo tas ut av registeret. */
+const DEL_AVSTAND_MM = 50;
 /** Hvor langt en farge gaar inn under en annen naar de produseres hver for seg. */
 const UNDERLAP_MM = 5;
 /** Fargene overlapper under denne andelen av den minste: de kan deles. */
@@ -360,6 +367,96 @@ function heltKonveks(f: MultiPoly): boolean {
  * konvekse flater uten hull (bare thru-cut, ingenting aa luke). Begge utfall
  * meldes med tallene.
  */
+/**
+ * Faerre produksjonsfiler (Eirik 16.11.2026, Vito: «naar vi begynner aa
+ * snakke opp mot 10 produksjonsfiler med saa lite totalt areal boer man
+ * vurdere tiltak for aa redusere antallet»). Hver logo med flere farger
+ * faar ellers sitt eget oppsett i register, med én fil per folie. Blir det
+ * mer enn MAKS_FILER filer for under SAMLE_M2 folie, tas logoer som kan
+ * monteres for haand ut av registeret: hver farge legges paa det ordinaere
+ * oppsettet for sin folie, og montoeren legger fargene paa hverandre etterpaa
+ * (bakruta: det hvite legges paa den sorte 961-bunnen).
+ *
+ * En logo kan monteres for haand naar hver farge enten staar ved siden av de
+ * andre, eller ligger paa en farge som stikker minst HAAND_MARGIN_MM ut paa
+ * alle kanter. En smalere kant maa treffes i register (XL-boksen, Finsaas).
+ * Fargen under fylles under fargen over, og der fargene moetes side om side
+ * gaar fargen under UNDERLAP_MM inn under.
+ */
+function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
+  const filer = (es: Elem[]) => {
+    const n = new Set(es.map((e) => [...new Set(e.deler.map((d) => d.folie.kode))].sort().join("|")));
+    return [...n].reduce((t, k) => t + k.split("|").length, 0);
+  };
+  const m2 = elementer.reduce((t, e) => t + e.deler.reduce((u, d) =>
+    u + areal(d.flate) * Math.pow(e.skala / MM, 2), 0) * e.antall, 0) / 1e6;
+  const foer = filer(elementer);
+  if (foer <= MAKS_FILER || m2 > SAMLE_M2) return elementer;
+  const ut: Elem[] = [];
+  const tatt: string[] = [];
+  for (const e of elementer) {
+    if (e.deler.length < 2 || e.trykk?.length || e.thruForm || e.deler.some((d) => d.folie.prisM2 || d.folie.print)) { ut.push(e); continue; }
+    try {
+      const mm = (x: number) => (x * MM) / e.skala;
+      const fylt = e.deler.map((d) => pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly);
+      const ytre = (f: MultiPoly, d: number) => pc.union(...(offsetRinger(f.map((poly) => poly[0].slice(0, -1) as [number, number][]), d, true)
+        .map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
+      let ok = true;
+      for (let i = 0; i < fylt.length && ok; i++) for (let j = i + 1; j < fylt.length && ok; j++) {
+        const U = fylt[i], L = fylt[j];
+        const ov = areal(pc.intersection(U, L));
+        if (ov < 0.1 * Math.min(areal(U), areal(L))) continue;           // ved siden av
+        const rund = ytre(U, mm(HAAND_MARGIN_MM));
+        if (areal(pc.difference(rund, L)) > 0.02 * areal(rund)) ok = false;   // for smal kant
+      }
+      if (!ok) { ut.push(e); continue; }
+      const u = mm(UNDERLAP_MM);
+      e.deler.forEach((d, i) => {
+        const over = e.deler.slice(0, i);
+        let flate: MultiPoly = d.flate;
+        if (over.length) {
+          const O = pc.union(...(over.map((o) => o.flate) as [any])) as MultiPoly;
+          // under fargene over: fylt innenfor egen form, og UNDERLAP_MM inn der de moetes
+          flate = pc.union(d.flate, pc.intersection(O, pc.union(fylt[i], ytre(d.flate, u)))) as MultiPoly;
+        }
+        /**
+         * Deler av samme farge som ligger langt fra hverandre (den roede
+         * trekanten under D-en og CENTER) blir egne elementer, saa de ikke
+         * deler en ramme som nesten bare er luft.
+         */
+        const boks = (f: MultiPoly): [number, number, number, number] => {
+          const pk = f.flat(2);
+          return [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+            Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+        };
+        const klynger: MultiPoly[] = [];
+        for (const poly of flate) klynger.push([poly]);
+        const naer = (a: MultiPoly, b: MultiPoly) => {
+          const x = boks(a), y = boks(b), g = mm(DEL_AVSTAND_MM);
+          return x[0] - g <= y[2] && y[0] - g <= x[2] && x[1] - g <= y[3] && y[1] - g <= x[3];
+        };
+        for (let endret = true; endret;) {
+          endret = false;
+          for (let a = 0; a < klynger.length && !endret; a++) for (let c = a + 1; c < klynger.length && !endret; c++) {
+            if (naer(klynger[a], klynger[c])) { klynger[a] = klynger[a].concat(klynger[c]); klynger.splice(c, 1); endret = true; }
+          }
+        }
+        klynger.forEach((k, ki) => {
+          const bb = boks(k);
+          ut.push({ navn: `${e.navn} ${d.folie.kode}${klynger.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
+            breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
+            antall: e.antall, deler: [{ ...d, flate: k }], omriss: k });
+        });
+      });
+      tatt.push(e.navn);
+    } catch { ut.push(e); }
+  }
+  if (tatt.length) advarsler.push(`Faerre filer: ${foer} filer for ${m2.toFixed(1).replace(".", ",")} m² folie er for mange, ` +
+    `saa ${tatt.length} logo${tatt.length > 1 ? "er" : ""} legges paa det ordinaere oppsettet farge for farge og monteres ` +
+    `paa hverandre for haand (${tatt.join(", ")}). Naa ${filer(ut)} filer.`);
+  return ut;
+}
+
 function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: string[]): Elem[] {
   const timekost = b.timekostKr ?? TIMEKOST_KR, minPerBit = b.overteipMinPerBit ?? OVERTEIP_MIN_PER_BIT;
   const nokkel = (e: Elem) => e.deler.map((d) => d.folie.kode).slice().sort().join("|");
@@ -1177,7 +1274,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   // gjor at delene treffer hverandre nar folien legges pa.
   // dyr folie: ut av oppsettet og tett, naar det er billigere enn tiden det
   // tar aa legge bitene over for hand
-  const vurdert = tettArk(elementer, grunngeo, b, advarsler);
+  const vurdert = tettArk(samleFiler(elementer, advarsler), grunngeo, b, advarsler);
   const grupper = new Map<string, Elem[]>();
   for (const e of vurdert) {
     /**
@@ -1255,6 +1352,16 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
           if (!beste || kutt.length < beste.length ||
               (kutt.length === beste.length && ujevn < Math.max(...bg!.slice(1).map((z, i) => z - bg![i])))) beste = kutt;
         }
+        /**
+         * Stripen legges paa langs av rullen og deles bare i to, i den
+         * skjoeten som ligger naermest midten (Eirik 16.11.2026: «legge
+         * stripene paa langs av rullen men kun delt paa 2»). Faerre stykker
+         * er faerre skjoeter aa treffe; stykkene trenger ikke faa plass paa
+         * tvers.
+         */
+        const midt = (b0 + b1) / 2;
+        const naermest = steder.slice().sort((x, y) => Math.abs(x - midt) - Math.abs(y - midt))[0];
+        if (naermest !== undefined && (!beste || beste.length > 1)) beste = [naermest];
         if (beste) {
           const g = [b0, ...beste, b1];
           stykker = g.slice(1).map((z, i) => [Math.max(b0, g[i] - (i ? ov : 0)), Math.min(b1, z + (i < g.length - 2 ? ov : 0))] as [number, number]);
@@ -1335,6 +1442,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const hel = new Set<Elem>();
     const sett = () => g.flatMap((e) => biterAv.has(e) && !hel.has(e) ? biterAv.get(e)! : [e]);
     for (const e of biterAv.keys()) {
+      if (bilskjot.has(e)) continue;   // skjoetes alltid i bilens skjoet (Eirik 16.11.2026)
       const delt = lengde(sett());
       hel.add(e);
       const helL = lengde(sett());

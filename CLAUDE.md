@@ -631,6 +631,14 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
 - Printede elementer: hullene beholdes i utfallet (`utfallendeHull`), saa
   punsene ikke fylles.
 - `helfoliering: true` paa folien gir ren Thru-fil uten applisering.
+- Stripe med bilskjoet: paa langs av rullen, delt i to i skjoeten naermest
+  midten, aldri hel og aldri flere stykker.
+- Faerre filer (`samleFiler`): over `MAKS_FILER` filer for under `SAMLE_M2`
+  m² tas logoer som kan monteres for haand (farger ved siden av hverandre,
+  eller paa en farge med minst `HAAND_MARGIN_MM` kant) ut av registeret.
+  Hver farge gaar paa det ordinaere oppsettet for sin folie, fargen under
+  fylles under fargen over, og deler lenger fra hverandre enn
+  `DEL_AVSTAND_MM` blir egne elementer. Vito: 9 til 5 filer.
 
 ## Ikke endre
 
