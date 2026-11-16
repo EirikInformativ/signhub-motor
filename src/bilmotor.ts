@@ -18,7 +18,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM } from "./klippkant.ts";
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
 import type { Bilde, LerretFabrikk } from "./skisse_kunde.ts";
@@ -287,14 +287,50 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     });
   }
   for (const { o, valgte } of valgtPerOmraade) {
-    const deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
+    let deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
+    /**
+     * En del som ikke faar plass paa rullen paa noen leddet, deles finere
+     * (Vito bak: den roede flaten naar nesten bort til «CENTER», og logoen,
+     * flaten og tekstene ble ett element paa 1,6 m). Bare delene som staar
+     * inntil hverandre holdes sammen.
+     */
+    const forStor = (d: Bane[]) => (minsteBredde(d) / MM) * malestokk > MAKS_DEL_MM;
+    // samme regler, men aldri sammen til noe som er for stort
+    deler = deler.flatMap((d) => forStor(d)
+      ? samleDeler(d, (3 / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM, (x) => !forStor(x), (a, b) => {
+          // en stor flate (den roede bak) tar ikke med seg bokstaver og tall
+          // som bare staar ved siden av; to store flater kan hoere sammen
+          const stor = (x: Bane[]) => (Math.min(
+            Math.max(...x.map((q) => q.boks.x1)) - Math.min(...x.map((q) => q.boks.x0)),
+            Math.max(...x.map((q) => q.boks.y1)) - Math.min(...x.map((q) => q.boks.y0))) / MM) * malestokk > STOR_FLATE_MM &&
+            x.reduce((n, q) => n + (q.segs as any[]).filter((y) => y.t === "m").length, 0) <= 4;
+          return stor(a) === stor(b);
+        }) : [d]);
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
     deler.forEach((d, k) => arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d }));
     logg.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
       "(tekst og striper som bare staar ved siden av hverandre).");
   }
   for (const { o, valgte: raa } of arbeid) {
-    const rett = rettOpp(raa);
+    let rett = rettOpp(raa);
+    /**
+     * Faar elementet ikke plass paa tvers av rullen med vanlig retting, leses
+     * grunnlinjen ogsaa ved stoerre helning (Vito: logoen er skraadd 20°,
+     * og staar den slik, er den 1,2 m hoey).
+     */
+    const minside = (bs: Bane[]) => {
+      const w = Math.max(...bs.map((b) => b.boks.x1)) - Math.min(...bs.map((b) => b.boks.x0));
+      const h = Math.max(...bs.map((b) => b.boks.y1)) - Math.min(...bs.map((b) => b.boks.y0));
+      return (Math.min(w, h) / MM) * malestokk;
+    };
+    {
+      const areal = (bs: Bane[]) => (Math.max(...bs.map((b) => b.boks.x1)) - Math.min(...bs.map((b) => b.boks.x0))) *
+        (Math.max(...bs.map((b) => b.boks.y1)) - Math.min(...bs.map((b) => b.boks.y0)));
+      const stor = rettOpp(raa, STOR_GRAD);
+      // stor helning bare naar elementet ellers ikke faar plass, eller rammen blir mye mindre
+      if (stor.vinkel && (minside(rett.baner) > MAKS_DEL_MM ? minside(stor.baner) < minside(rett.baner)
+        : areal(stor.baner) < STOR_GEVINST * areal(rett.baner))) rett = stor;
+    }
     const valgte = rett.baner;
     if (rett.vinkel) logg.push(`${o.vis} ${o.navn}: rettet opp ${Math.abs(rett.vinkel).toFixed(1).replace(".", ",")}° i ` +
       `produksjonsfila (sparer ${rett.spartProsent.toFixed(0)} % ramme). Monteres med samme helning som paa skissen.`);
@@ -318,7 +354,12 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       if (se.lav) forleng.push(liggende ? "venstre" : "bunn");
       if (se.hoy) forleng.push(liggende ? "hoyre" : "topp");
     }
-    let pdf = await skrivPdf(valgte, undefined, forleng);
+    // bilens naturlige skjoeter langs en stripe: der skal den skjoetes (Vito)
+    const fylte = raa.filter((b) => b.fyll);
+    const skjot = fylte.length >= 1 && fylte.length <= 2 ? skjoterLangs(fylte.slice().sort((a, b) =>
+      (b.boks.x1 - b.boks.x0) * (b.boks.y1 - b.boks.y0) - (a.boks.x1 - a.boks.x0) * (a.boks.y1 - a.boks.y0))[0],
+      baner, (x) => alleDekor.has(x), (SKJOT_TOL_MM / malestokk) * MM, (SKJOT_KANT_MM / malestokk) * MM) : [];
+    let pdf = await skrivPdf(valgte, undefined, forleng, skjot);
     let brukte = valgte;
     let per = await lesTrygt(pdf);
     let tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
@@ -376,7 +417,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
        */
       const igjen = valgte.filter((b) => !horerTilPlaten(b, platehex));
       if (igjen.length && igjen.length < valgte.length) {
-        pdf = await skrivPdf(igjen, undefined, forleng);
+        pdf = await skrivPdf(igjen, undefined, forleng, skjot);
         brukte = igjen;
         // alt som meldes utledes na av den fila som faktisk leveres
         per = await lesTrygt(pdf);
@@ -488,9 +529,30 @@ export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
   const f = (i: number): number => (p[i] === i ? i : (p[i] = f(p[i])));
   const av = (a: Bane["boks"], b: Bane["boks"]) => Math.hypot(
     Math.max(0, a.x0 - b.x1, b.x0 - a.x1), Math.max(0, a.y0 - b.y1, b.y0 - a.y1));
+  /**
+   * En stripe limes ikke fast i det som staar inntil den (Vito: bunnen av
+   * «VILLANGER» naar ned til den roede stripen, og hele siden ble ett
+   * element paa 3,5 m). Stripen staar som egen del; samleDeler slaar den
+   * sammen med naboen bare naar den felles rammen ikke blir for luftig
+   * (ÅTG-streken paa Kia hoerer fortsatt til bokstavene).
+   */
+  const stripe = (b: Bane["boks"]) => {
+    const w = b.x1 - b.x0, h = b.y1 - b.y0, l = Math.max(w, h), t = Math.min(w, h);
+    return l >= 8 * Math.max(t, 1e-9) && l >= 20 * glippe;
+  };
+  // en stor flate (den roede bak paa Vito) limes ikke fast i bokstavene inntil den
+  const storFlate = (b: Bane["boks"]) => Math.min(b.x1 - b.x0, b.y1 - b.y0) > 40 * glippe;
+  // ... men det som ligger oppaa flaten (bokstaver paa en plate, XL i ruta) hoerer til
+  const inniStor = (a: Bane["boks"], b: Bane["boks"]) => {
+    const [st, sm] = storFlate(a) ? [a, b] : [b, a];
+    const ox = Math.max(0, Math.min(st.x1, sm.x1) - Math.max(st.x0, sm.x0));
+    const oy = Math.max(0, Math.min(st.y1, sm.y1) - Math.max(st.y0, sm.y0));
+    return ox * oy >= 0.5 * (sm.x1 - sm.x0) * (sm.y1 - sm.y0);
+  };
   for (let i = 0; i < d.length; i++)
     for (let j = i + 1; j < d.length; j++)
-      if (av(d[i].boks, d[j].boks) <= glippe) p[f(i)] = f(j);
+      if (av(d[i].boks, d[j].boks) <= glippe && stripe(d[i].boks) === stripe(d[j].boks) &&
+          (storFlate(d[i].boks) === storFlate(d[j].boks) || inniStor(d[i].boks, d[j].boks))) p[f(i)] = f(j);
   const grupper = new Map<number, typeof d>();
   d.forEach((x, i) => { const r = f(i); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
   return [...grupper.values()].map((g) => {
@@ -507,6 +569,31 @@ export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
 }
 
 
+/**
+ * Smaleste bredde paa banene naar de kan dreies inntil STOR_GRAD (i
+ * skissens enheter). En logo skraadd 20° (Vito) er 1,2 m hoey slik den
+ * staar, men 0,6 m langs sin egen grunnlinje.
+ */
+const STOR_GRAD = 35;
+/** stor helning brukes naar rammen da blir under denne andelen */
+const STOR_GEVINST = 0.75;
+function minsteBredde(baner: Bane[], maks = STOR_GRAD): number {
+  const pts: [number, number][] = [];
+  for (const b of baner) for (const sg of b.segs as any[]) { if (sg.p) pts.push(sg.p); if (sg.c) pts.push(sg.a, sg.b, sg.c); }
+  if (!pts.length) return 0;
+  let best = Infinity;
+  for (let g = -maks; g <= maks; g += 1) {
+    const r = (g * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) {
+      const X = c * x - sn * y, Y = sn * x + c * y;
+      if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+    }
+    best = Math.min(best, Math.min(x1 - x0, y1 - y0));
+  }
+  return best;
+}
+
 /** minste helning som rettes opp, og minste gevinst i ramme */
 const RETT_MIN_GRAD = 0.3;
 const RETT_MAKS_GRAD = 6;
@@ -521,7 +608,7 @@ const RETT_MAKS_GRAD = 6;
  * RETT_MIN_GRAD og rammen krymper minst RETT_MIN_GEVINST; en logo som
  * staar rett, eller nesten rett, roeres ikke.
  */
-function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: number } {
+function rettOpp(baner: Bane[], maksGrad = RETT_MAKS_GRAD): { baner: Bane[]; vinkel: number; spartProsent: number; funnet?: boolean; linje?: number; styrke?: number } {
   const pts: [number, number][] = [];
   for (const b of baner) for (const s of b.segs as any[]) { if (s.p) pts.push(s.p); if (s.a) pts.push(s.a, s.b, s.c); }
   if (pts.length < 3) return { baner, vinkel: 0, spartProsent: 0 };
@@ -574,7 +661,7 @@ function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: 
         const dx = sg.p[0] - forrige[0], dy = sg.p[1] - forrige[1], len = Math.hypot(dx, dy);
         let g = (Math.atan2(dy, dx) * 180) / Math.PI;
         if (g > 90) g -= 180; if (g < -90) g += 180;
-        if (len > 0 && Math.abs(g) <= RETT_MAKS_GRAD) {
+        if (len > 0 && Math.abs(g) <= maksGrad) {
           const mx = (sg.p[0] + forrige[0]) / 2, my = (sg.p[1] + forrige[1]) / 2;
           const e = 0.1;   // tegnede punkter: tynt nok for en tynn stripe
           // underkant: formen over, luft under (y peker opp i PDF)
@@ -599,7 +686,9 @@ function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: 
   const bestA = flate(best);
   const gevinst = 1 - bestA / Math.max(null0, 1e-9);
   // grunnlinjen avgjoer; gevinsten i ramme meldes bare
-  if (Math.abs(best) < RETT_MIN_GRAD) return { baner, vinkel: 0, spartProsent: 0 };
+  const funnet = sw > 0 && modeV >= 0.05 * bredde;
+  const styrke = modeV / Math.max(bredde, 1e-9);
+  if (Math.abs(best) < RETT_MIN_GRAD) return { baner, vinkel: 0, spartProsent: 0, funnet, linje: best, styrke };
   const r = (best * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
   const rot = (p: [number, number]): [number, number] =>
     [cx + c * (p[0] - cx) - sn * (p[1] - cy), cy + sn * (p[0] - cx) + c * (p[1] - cy)];
@@ -611,7 +700,7 @@ function rettOpp(baner: Bane[]): { baner: Bane[]; vinkel: number; spartProsent: 
     return { ...b, segs, boks: { x0: Math.min(...q.map((p) => p[0])), y0: Math.min(...q.map((p) => p[1])),
       x1: Math.max(...q.map((p) => p[0])), y1: Math.max(...q.map((p) => p[1])) } } as Bane;
   });
-  return { baner: ut, vinkel: best, spartProsent: gevinst * 100 };
+  return { baner: ut, vinkel: best, spartProsent: gevinst * 100, funnet, linje: best, styrke };
 }
 
 /** delene innenfor denne avstanden (ekte mm) kan hoere sammen */
@@ -620,9 +709,103 @@ const DEL_GLIPPE_MM = 50;
 const DEL_FIN_MM = 10;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
+/** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
+const SKJOT_TOL_MM = 15;
+const SKJOT_KANT_MM = 200;
+/** tekst med grunnlinjer som avviker mer enn dette, er ikke samme tekst (grader) */
+const TEKST_VINKEL = 5;
+/** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */
+const TEKST_HOYDE = 1.8;
+/** linjer i samme tekst kan staa opptil dette ganger bokstavhoeyden fra hverandre */
+const TEKST_LINJE = 1.2;
+/** bredeste del som faar plass paa tvers av rullen (1260 minus kant og regmarks) */
+const MAKS_DEL_MM = 1150;
+/** en flate tykkere enn dette (ekte mm) er en stor flate, ikke tekst */
+const STOR_FLATE_MM = 400;
+/** naboen maa spenne over minst denne andelen av stripen for aa vaere samme element */
+const STRIPE_SPENN = 0.9;
 
-function samleDeler(baner: Bane[], fin: number, glippe: number): Bane[][] {
+function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[]) => boolean,
+                    par?: (a: Bane[], b: Bane[]) => boolean): Bane[][] {
   let g = delIDeler(baner, fin);
+  /**
+   * Hva hoerer sammen? (Eirik 16.11.2026, Vito: «24 timers service:» og
+   * «41770011» er én gruppe, logoen en annen, «men hvorfor? det er jo det
+   * som er kunsten å svare på»). Svaret: det som er skrevet i samme
+   * retning og i samme stoerrelse, er én tekst. Logoen er skraadd 20° og
+   * har dobbelt saa hoeye bokstaver som telefonnummeret ved siden av, saa
+   * den er noe annet selv om den staar inntil. Hver del faar grunnlinjens
+   * vinkel (der den har en) og bokstavhoeydene sine; to deler med ulik
+   * retning, eller to tekster med ulik bokstavhoeyde, slaas ikke sammen.
+   */
+  type Info = { vinkel: number | null; hoyder: number[] };
+  // tekst paa hoykant (taket): grunnlinjen leses ogsaa med banene dreid 90°
+  const dreid = (gg: Bane[]) => gg.map((b) => {
+    const r = (p: [number, number]): [number, number] => [-p[1], p[0]];
+    const segs = (b.segs as any[]).map((sg) => sg.t === "c" ? { t: "c", a: r(sg.a), b: r(sg.b), c: r(sg.c) } : sg.p ? { t: sg.t, p: r(sg.p) } : sg);
+    return { ...b, segs, boks: { x0: -b.boks.y1, y0: b.boks.x0, x1: -b.boks.y0, y1: b.boks.x1 } } as Bane;
+  });
+  const infoAv = (gg: Bane[]): Info => {
+    const flater = gg.reduce((n, b) => n + (b.segs as any[]).filter((x) => x.t === "m").length, 0);
+    const r0 = rettOpp(gg, STOR_GRAD);
+    // paa hoykant bare naar det er tekst og ingen grunnlinje liggende
+    // tekst paa hoykant: flere tegn, og mye hoeyere enn bred
+    const bw = Math.max(...gg.map((b) => b.boks.x1)) - Math.min(...gg.map((b) => b.boks.x0));
+    const bh = Math.max(...gg.map((b) => b.boks.y1)) - Math.min(...gg.map((b) => b.boks.y0));
+    const r9 = flater >= 3 && bh > 2 * bw ? rettOpp(dreid(gg), STOR_GRAD) : null;
+    const r = r9 ? r9 : r0;
+    let v = r.funnet ? (r.linje ?? 0) + (r === r9 ? 90 : 0) : null;
+    // en strek (ikke tekst) har retningen til sin lange akse, ikke til enden
+    // (den gronne streken under ÅTG paa taket staar paa hoykant)
+    if (flater < 3 && Math.max(bw, bh) >= 3 * Math.min(bw, bh)) {
+      const t = Math.min(...gg.map((b) => b.boks.y0)), u = Math.max(...gg.map((b) => b.boks.y1));
+      void t; void u;
+      v = bw >= bh ? (r0.funnet ? (r0.linje ?? 0) : 0) : 90;
+    }
+    // bokstavhoeyden: korteste side av hver flate, med teksten rettet opp
+    const hoyder = delbaner_hoyder(r.funnet ? r.baner : gg, r.funnet);
+    return { vinkel: v, hoyder };
+  };
+  let info = g.map((x) => infoAv(x));
+  // bokstavhoeyden: 75-persentilen, saa smaa tegn (punktum, kolon) ikke trekker ned
+  const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length * 0.75)];
+  const tekst = (a: Info) => a.hoyder.length >= 3;
+  function delbaner_hoyder(gg: Bane[], rettet: boolean): number[] {
+    const hs: number[] = [];
+    for (const b of gg) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, har = false;
+      const slutt = () => { if (har) hs.push(rettet ? y1 - y0 : Math.min(x1 - x0, y1 - y0)); x0 = y0 = Infinity; x1 = y1 = -Infinity; har = false; };
+      for (const sg of b.segs as any[]) {
+        if (sg.t === "m") slutt();
+        for (const q of sg.t === "c" ? [sg.a, sg.b, sg.c] : sg.p ? [sg.p] : []) {
+          har = true; x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]);
+        }
+      }
+      slutt();
+    }
+    // smaa flater (hull i bokstaver, prikker) teller ikke som bokstaver
+    const maks = Math.max(...hs, 0);
+    return hs.filter((h) => h > 0.3 * maks);
+  }
+  const ulikTekst = (a: Info, b: Info, ra: Bane["boks"], rb: Bane["boks"]) => {
+    if (a.vinkel !== null && b.vinkel !== null) {
+      // modulo 90: en firkant (XL-boksen) har ingen sikker side opp, og paa
+      // taket staar alt paa hoykant (e-expert, panseret)
+      const d = Math.abs(a.vinkel - b.vinkel) % 90;
+      if (Math.min(d, 90 - d) > TEKST_VINKEL) return true;
+    }
+    // en flate som er tykkere enn bokstavene, er ikke en strek under teksten
+    // (Vito bak: den roede og den hvite flaten er ikke en del av logoen)
+    const tykk = (r: Bane["boks"]) => Math.min(r.x1 - r.x0, r.y1 - r.y0);
+    // og stoerre enn teksten selv (et ikon ved siden av teksten hoerer til)
+    const ar = (r: Bane["boks"]) => (r.x1 - r.x0) * (r.y1 - r.y0);
+    if (tekst(a) && !tekst(b) && tykk(rb) > TEKST_HOYDE * median(a.hoyder) && ar(rb) > ar(ra)) return true;
+    if (tekst(b) && !tekst(a) && tykk(ra) > TEKST_HOYDE * median(b.hoyder) && ar(ra) > ar(rb)) return true;
+    return false;
+  };
+  /** linjeavstanden i en tekst kan vaere stoerre enn glippen naar bokstavene er store */
+  const glippeFor = (a: Info, b: Info) => tekst(a) && tekst(b)
+    ? Math.max(glippe, TEKST_LINJE * Math.min(median(a.hoyder), median(b.hoyder))) : glippe;
   const ramme = (bs: Bane[]) => ({
     x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
     x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
@@ -634,9 +817,25 @@ function samleDeler(baner: Bane[], fin: number, glippe: number): Bane[][] {
     for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) {
       const ri = ramme(g[i]), rj = ramme(g[j]);
       const d = av(ri, rj);
-      if (d > glippe) continue;
+      if (d > glippeFor(info[i], info[j])) continue;
       const felles = ar(ramme([...g[i], ...g[j]]));
       if (felles > DEL_LUFT * (ar(ri) + ar(rj))) continue;
+      /**
+       * En stripe hoerer bare til naboen naar naboen spenner over det meste
+       * av stripen (ÅTG over den gronne streken paa Kia). Paa Vito staar
+       * logoen paa én del av en 2,5 m lang stripe: de skjaeres hver for seg.
+       */
+      const langs = (r: Bane["boks"]) => Math.max(r.x1 - r.x0, r.y1 - r.y0);
+      // en stripe er én flate (eller to), ikke en tekstlinje med mange bokstaver
+      const flater = (gg: Bane[]) => gg.reduce((a, b) => a + (b.segs as any[]).filter((x) => x.t === "m").length, 0);
+      const erStripe = (r: Bane["boks"], gg: Bane[]) => flater(gg) <= 2 &&
+        langs(r) >= 8 * Math.min(r.x1 - r.x0, r.y1 - r.y0) && langs(r) >= 20 * fin;
+      const spenn = (a: Bane["boks"], st: Bane["boks"]) => (st.x1 - st.x0 >= st.y1 - st.y0 ? a.x1 - a.x0 : a.y1 - a.y0);
+      if ((erStripe(ri, g[i]) && spenn(rj, ri) < STRIPE_SPENN * langs(ri)) ||
+          (erStripe(rj, g[j]) && spenn(ri, rj) < STRIPE_SPENN * langs(rj))) continue;
+      if (ok && !ok([...g[i], ...g[j]])) continue;
+      if (par && !par(g[i], g[j])) continue;
+      if (ulikTekst(info[i], info[j], ri, rj)) { continue; }
       if (!best || d < best[2]) best = [i, j, d];
     }
     if (!best) break;
@@ -644,7 +843,10 @@ function samleDeler(baner: Bane[], fin: number, glippe: number): Bane[][] {
     // samme bane delt paa to deler blir en bane igjen
     const samlet = [...g[i], ...g[j]];
     g = g.filter((_, k) => k !== i && k !== j);
-    g.push(slaaSammenBaner(samlet, baner));
+    info = info.filter((_, k) => k !== i && k !== j);
+    const ny = slaaSammenBaner(samlet, baner);
+    g.push(ny);
+    info.push(infoAv(ny));
   }
   return g;
 }

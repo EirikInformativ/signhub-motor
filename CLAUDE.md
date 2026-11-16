@@ -373,6 +373,42 @@ elementet og en merknad sier fra.
 tekst som mangler ved siden av et element, eller samme merke skåret to
 ganger.
 
+**Mørk bil: hvitt er dekor, sort er lakken** (Eirik 16.11.2026, Mercedes
+Vito i sort). `finnDekor` i `src/dekorfinn.ts` avgjør `moerkBil` ut fra om
+sort eller hvitt dekker mest. På mørk bil byttes reglene for sort og hvitt:
+sort avslutter en dekorbolk, hvit i en dekorbolk er kandidat, og en bolk med
+minst `LYS_BOLK = 6` hvite flater teller som dekor («24 timers service» på
+ruta). Sort i dekoren skjæres likevel alltid: på glass er sort kontur
+bunnfolie med sterkere lim (961).
+
+**Hva hører sammen?** (Eirik: «det er jo det som er kunsten å svare på»).
+`samleDeler` i `src/bilmotor.ts`:
+- det som er skrevet i samme retning er én tekst; to deler med grunnlinjer
+  som avviker mer enn `TEKST_VINKEL = 5°` (modulo 90) slås ikke sammen. Vito:
+  logoen er skrådd 20°, telefonnummeret står vannrett ved siden av;
+- linjer i samme tekst kan stå opptil `TEKST_LINJE = 1,2` ganger
+  bokstavhøyden fra hverandre («24 timers service:» over «41770011»);
+- en flate tykkere enn bokstavene og større enn teksten tar ikke med seg
+  tekst som står ved siden av (den røde flaten bak på Vito);
+- en stripe (én eller to flater, minst 8:1) limes ikke fast i det som står
+  inntil, og hører bare til naboen når naboen spenner over minst
+  `STRIPE_SPENN = 0,9` av den (ÅTG-streken på Kia hører til bokstavene,
+  logoen på Vito-stripen gjør ikke);
+- en del som ikke får plass på tvers av rullen (`MAKS_DEL_MM = 1150` målt
+  dreid inntil 35°) deles finere, og en stor flate (over `STOR_FLATE_MM`)
+  tar da ikke med bokstaver ved siden av.
+Skrådde logoer rettes opp etter grunnlinjen inntil `STOR_GRAD = 35°` når
+rammen da blir under `STOR_GEVINST = 0,75` av den vanlige, eller elementet
+ellers ikke får plass.
+
+**Stripen skjøtes i bilens egen skjøt** (Eirik 16.11.2026, Vito: «viktig da
+med god overlapp slik at vi kan bruke bilens naturlige skjøt»; «minimum 3
+cm»). `skjoterLangs` i `src/klippkant.ts` finner bilens linjer som krysser
+hele stripen (på nedre kvartil, midten og øvre kvartil), og `skrivPdf`
+skriver dem som `signhub-skjot:<andel>,...`. `kjorJobb` velger færrest og
+jevnest skjøter som gir stykker som får plass, og hvert stykke går
+`SKJOT_BIL_MM = 30` inn på den andre siden.
+
 **Merknadene er bare det et menneske må gjøre noe med** (Eirik
 16.11.2026: «dette er bare støy for menneske. vi vil bare at det funker»).
 `lesBilskisse` gir `merknader` (levende tekst, samme merke to ganger, synlig
@@ -578,6 +614,63 @@ rett inn paa siden med `skjaereOps()`. `test/skjultkutt.ts` feiler hvis en
 produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
 
 **Feilsignatur:** en ekstra rute paa logoens storrelse i wild-skjaeringen.
+
+**Vito-reglene (Eirik 16.11.2026, kveld):**
+- Stripeender under bilen foelger kantene videre i sin retning
+  (`stripeKanter` i `src/klippkant.ts`, `strekkUt` i `src/motor.ts`), aldri
+  et rektangel paa full bredde. Feilsignatur: en firkant paa enden av en
+  stripe som smalner av.
+- Kiss+thru med rektangulaere rammer legges kant i kant (`kantIKant`):
+  thru er sammenslaatte linjer (`slaaSammenKanter`). Kiss ligger ALDRI
+  innenfor thru (da blir en stripe folie staaende rundt logoen): mellom
+  elementene skjaerer thru folien, og ut mot sidene gaar kiss `boksKiss`
+  utenfor, rundt hele blokken. Paa ark uten thru gaar kiss paa linjen.
+  Formede rammer bare naar de gir kortere ark.
+- Ingen ytre kiss-ramme rundt hele arket.
+- Et felt (ett helt, konvekst stykke over `DELT_FELT` av elementet) og
+  farger som nesten ikke overlapper det (`DELT_OVERLAPP`), produseres hver
+  for seg naar det sparer minst `DELT_SPAR` av arkene. Fargen under gaar
+  `UNDERLAP_MM` inn under der de moetes. Folie med pris er tettArk sitt.
+- Printede elementer: hullene beholdes i utfallet (`utfallendeHull`), saa
+  punsene ikke fylles.
+- `helfoliering: true` paa folien gir ren Thru-fil uten applisering.
+- Stripe med bilskjoet: paa langs av rullen, delt i to i skjoeten naermest
+  midten, aldri hel og aldri flere stykker.
+- Faerre filer (`samleFiler`): over `MAKS_FILER` filer for under `SAMLE_M2`
+  m² tas logoer som kan monteres for haand (farger ved siden av hverandre,
+  eller paa en farge med minst `HAAND_MARGIN_MM` kant) ut av registeret.
+  Hver farge gaar paa det ordinaere oppsettet for sin folie, fargen under
+  fylles under fargen over, og deler lenger fra hverandre enn
+  `DEL_AVSTAND_MM` blir egne elementer.
+- Teip inn i oppsettet (Eirik 16.11.2026): i en slik logo er fargen med
+  stoerst flate oppsettet, og den skjaerer ogsaa omrisset av de andre
+  fargene som kiss (markering). De andre fargene kiss-cuttes, lukes og
+  thru-cuttes i rektangulaere rammer kant i kant paa eget ark (`egetArk`,
+  aldri sammen med striper), og teipes inn i oppsettet. De appliseres ikke.
+  Bunnfarger (961 under det hvite) er egne elementer. Vito: 9 til 6 filer.
+- Kant i kant vinner alltid, med mindre formede rammer gir minst
+  `KANT_FORTRINN` (10 %) kortere ark. Glipper under `KANT_GLIPPE_MM` (5 mm)
+  mellom to thru-linjer lukkes: den korteste kanten flyttes ut til den
+  lengste (`kantRekt`), saa den lange linjen er rett.
+- Kant i kant vinner ogsaa naar arket blir inntil `KANT_TOLERANSE_MM`
+  (10 mm) lengre. `pakkKant` snur et element 180° (`snu`) saa en rett kant
+  vender mot naboens rette kant: striper som smalner av, med én rett lang
+  kant, legges parvis med felles thru-linje. `slaaSammenLinjer` og
+  `strekkUt` tar hensyn til `snu`.
+- Appliser+thru skyves sammen etter formen (`skyvSammen`): stykker kant i
+  kant er én enhet, og hver enhet proeves som den ligger og snudd 180°, og
+  skyves til venstre til formen er `gap` fra det som ligger der. Er kantene
+  som moetes parallelle (avvik under `PARALLELL_MM`), legges de kant i kant
+  med én thru-linje. Et felt alene proeves ogsaa dreid saa en side ligger
+  langs naboens kant. Vito: feltet fra 1020 til 880 mm bredt.
+- `slaaSammenKanter` slaar sammen linjer med samme retning (innenfor
+  `LINJE_VINKEL`) som ligger under `LINJE_AVSTAND_MM` fra hverandre: kniven
+  gaar én gang, langs den lengste. Feilsignatur: to thru-linjer et par
+  tideler fra hverandre.
+- Et helt felt (én farge, konvekst, ikke stripe) dreies til minste ramme
+  (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
+- `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i
+  rammen (formede rammer). Feilsignatur: et felt som overlapper en stripe.
 
 ## Ikke endre
 

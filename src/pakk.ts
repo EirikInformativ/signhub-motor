@@ -194,9 +194,13 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
    * de andre beholder halve gapet hver, saa mellomrommet mot en skraa kant
    * aldri blir mindre enn gap/2.
    */
+  let kant = false;
   if (motiver.length && motiver.every((m) => m.sider)) {
     const k = pakkKant(motiver, items, brukbar, geo.gap, tillatRotasjon);
-    if (k && k.h < best.h + 1e-6) best = k;
+    // enveis thru er verdt litt lengde: kant i kant vinner ogsaa naar arket
+    // blir inntil KANT_TOLERANSE_MM lengre (Eirik 16.11.2026: «bruk alltid
+    // enveisthru der det er mulig»)
+    if (k && k.h <= best.h + KANT_TOLERANSE_MM) { best = k; kant = true; }
   }
 
   /**
@@ -207,13 +211,22 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
   let formet = false;
   if (motiver.some((m) => m.omriss?.length)) {
     const p = pakkProfil(motiver, items, brukbar, geo, tillatRotasjon);
-    if (p && p.h < best.h - 1) { best = p; formet = true; }
+    /**
+     * Kant i kant (enveis thru) brukes alltid der det er mulig (Eirik
+     * 16.11.2026). Formede rammer vinner bare naar de gir et ark som er
+     * minst KANT_FORTRINN kortere.
+     */
+    const grense = kant ? best.h * (1 - KANT_FORTRINN) : best.h - 1;
+    if (p && p.h < grense) { best = p; formet = true; kant = false; }
   }
 
   // formnestingen brukes bare naar den gir kortere ark enn rammene
   const nestet = !!nest && nest.h < best.h - 1;
   if (nestet) { best = nest!; formet = false; }
-  const feil = formet ? sjekkFormet(best.ut, geo.gap) : nestet ? [] : sjekk(best.ut, brukbar, geo.gap);
+  // kant i kant: mellomrommet er bygget inn per side (0 eller gap/2), saa
+  // rektangelsjekken med fullt gap ville meldt falsk. Der sjekkes bare overlapp.
+  const feil = formet ? sjekkFormet(best.ut, geo.gap) : nestet ? []
+    : sjekk(best.ut, brukbar, kant ? 0 : geo.gap);
   // Arket blir bare sa bredt som jobben faktisk trenger. Resten av rullen
   // ligger urort, og forbrukstallet blir aerlig.
   const brukt = Math.max(...best.ut.map((p) => p.x + p.w));
@@ -382,6 +395,7 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
     for (const r of rot ? [true, false] : [false]) {
       const sky = new Skyline(brukbar);
       const ut: Plassering[] = [];
+      const padUt: ReturnType<typeof retning>[] = [];
       let ok = true;
       for (const it of items.slice().sort(st.key)) {
         const m = motiver[it.id];
@@ -393,9 +407,27 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
           if (f && (!valgt || f.top < valgt.top - 1e-9)) valgt = { x: f.x, y: f.y, w, h, rr, top: f.top, p };
         }
         if (!valgt) { ok = false; break; }
+        /**
+         * Snudd 180° bytter venstre og hoeyre side (og topp og bunn). En
+         * stripe som smalner av har bare én rett lang kant; ligger naboen
+         * til venstre med sin rette kant mot oss, snus stripen saa dens
+         * rette kant vender mot naboens, og linjen skjaeres én gang (Eirik
+         * 16.11.2026: «holder jo at en av de lange kantene er helt bein»).
+         * Ellers snus den saa den rette kanten vender mot hoeyre, klar for
+         * neste.
+         */
+        let snu = false;
+        const p0 = valgt.p, p1 = { pl: p0.pr, pr: p0.pl, pt: p0.pb, pb: p0.pt };
+        if (p0.pl !== p1.pl) {
+          const naboRett = ut.some((q, qi) => Math.abs(q.x + q.w + padUt[qi].pr - valgt!.x) < 1e-6 && padUt[qi].pr === 0 &&
+            q.y < valgt!.y + valgt!.h && valgt!.y < q.y + q.h);
+          snu = naboRett ? p1.pl === 0 : p1.pr === 0;
+        }
+        const p = snu ? p1 : p0;
         sky.legg(valgt.x, valgt.y, valgt.w, valgt.h);
-        ut.push({ x: valgt.x + valgt.p.pl, y: valgt.y + valgt.p.pt,
-          w: valgt.rr ? it.h : it.w, h: valgt.rr ? it.w : it.h, rotated: valgt.rr, id: it.id });
+        padUt.push(p);
+        ut.push({ x: valgt.x + p.pl, y: valgt.y + p.pt,
+          w: valgt.rr ? it.h : it.w, h: valgt.rr ? it.w : it.h, rotated: valgt.rr, id: it.id, ...(snu ? { snu: true } : {}) });
       }
       if (!ok || !ut.length) continue;
       const h = Math.max(...ut.map((p) => p.y + p.h));
@@ -413,6 +445,10 @@ function pakkKant(motiver: Motiv[], items: Item[], brukbar: number, gap: number,
  * fire retninger og legges der toppen blir lavest (saa lengst til venstre).
  */
 const NEST_RES = 2.5;
+/** Formede rammer maa gi saa mye kortere ark for aa slaa kant i kant. */
+const KANT_FORTRINN = 0.1;
+/** Kant i kant vinner selv om arket blir inntil saa mye lengre. */
+const KANT_TOLERANSE_MM = 10;
 const MM = 72 / 25.4;
 function nestForm(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, rot: boolean):
   { ut: Plassering[]; h: number; navn: string } | null {

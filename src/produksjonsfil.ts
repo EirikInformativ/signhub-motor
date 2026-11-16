@@ -16,6 +16,8 @@ import { PDFDocument, PDFName, PDFString, PDFRef } from "pdf-lib";
 import type { MultiPoly } from "./pdfbaner.ts";
 import { skjaereOps, separasjon } from "./skjaereform.ts";
 import { offsetRinger } from "./ramme.ts";
+import * as pcModul from "polygon-clipping";
+const pc: any = (pcModul as any).default ?? pcModul;
 
 export const MM = 72 / 25.4;
 const KAPPA = 0.5522847498307936;
@@ -84,6 +86,11 @@ export interface Motiv {
   thruForm?: MultiPoly;
   /** flater som vises med sitt fyll og kiss-strek (det som er lagt tett) */
   markering?: { flate: MultiPoly; fyllOp: string }[];
+  /**
+   * Printet element: fargene som printes (nederst foerst). flate er da
+   * skjaerelinjen (kiss), og den tegnes bare som strek.
+   */
+  trykk?: { flate: MultiPoly; fyllOp: string; spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } } }[];
 }
 
 export interface Plassering {
@@ -129,6 +136,66 @@ const PRINT_BLEED_MM = 2;
 function utfallende(flate: MultiPoly, d: number): MultiPoly {
   return flate.map((poly) => offsetRinger([poly[0].map(([x, y]) => [x, y] as [number, number])], d, true)
     .map((r) => [...r, r[0]] as [number, number][]));
+}
+
+/**
+ * Utfallende som beholder hullene: ytterkanten vokser og hullene krymper
+ * med samme mål. Uten dette ble punsene i bokstavene (o, b, e) fylt helt
+ * med farge paa Facebook-logoen (Eirik 16.11.2026: «helt unødvendig»).
+ */
+function utfallendeHull(flate: MultiPoly, d: number): MultiPoly {
+  const sa = (r: [number, number][]) => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+  const ringer = offsetRinger(flate.flatMap((poly) => poly.map((r) => r.slice(0, -1).map(([x, y]) => [x, y] as [number, number]))), d, true);
+  const lukk = (r: [number, number][]) => [[...r, r[0]]];
+  const pos = ringer.filter((r) => sa(r as any) > 0).map((r) => lukk(r as any));
+  const neg = ringer.filter((r) => sa(r as any) < 0).map((r) => lukk(r as any));
+  if (!pos.length) return flate;
+  let ut = pc.union(...(pos as [any]));
+  if (neg.length) ut = pc.difference(ut, ...(neg as [any]));
+  return ut as MultiPoly;
+}
+
+/**
+ * Rammene kant i kant, med smaa glipper lukket (Eirik 16.11.2026: «dersom
+ * gapet er mindre enn 5 mm boer du legge de sammen til 1»). To kanter som
+ * vender mot hverandre med under KANT_GLIPPE_MM mellom seg, blir én linje:
+ * den korteste kanten flyttes ut til den lengste, saa den lange linjen er
+ * rett og den korte rammen blir litt stoerre (det horisontale elementet
+ * viker, saa det vertikale ikke faar et trappetrinn midt i thru-cuten).
+ */
+const KANT_GLIPPE_MM = 5;
+function kantRekt<T extends { x: number; y: number; w: number; h: number; id: number }>(ps: T[]): T[] {
+  const r = ps.map((p) => ({ ...p }));
+  for (let runde = 0; runde < 4; runde++) {
+    let endret = false;
+    for (const a of r) for (const b of r) {
+      if (a === b) continue;
+      const yOv = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      const xOv = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const gx = b.x - (a.x + a.w), gy = b.y - (a.y + a.h);
+      if (yOv > 1e-6 && gx > 1e-6 && gx < KANT_GLIPPE_MM) {
+        if (a.h <= b.h) a.w += gx; else { b.x -= gx; b.w += gx; }
+        endret = true;
+      } else if (xOv > 1e-6 && gy > 1e-6 && gy < KANT_GLIPPE_MM) {
+        if (a.w <= b.w) a.h += gy; else { b.y -= gy; b.h += gy; }
+        endret = true;
+      }
+    }
+    if (!endret) break;
+  }
+  return r;
+}
+
+/** Bare strek i et fargerom (kiss eller thru), i elementets enheter. */
+function strekOpsFlate(flate: MultiPoly, skala: number, cs: string, strek = 0.25): string {
+  let o = `/${cs} CS\n1 SCN\n${(strek / skala).toFixed(6)} w\n`;
+  for (const poly of flate) for (const r of poly) {
+    if (r.length < 3) continue;
+    o += `${f4(r[0][0])} ${f4(r[0][1])} m\n`;
+    for (const q of r.slice(1)) o += `${f4(q[0])} ${f4(q[1])} l\n`;
+    o += "h\nS\n";
+  }
+  return o;
 }
 
 /** Bare fyll, ingen strek: flatene i foliens farge. */
@@ -180,6 +247,10 @@ export interface ArkValg {
   print?: boolean;
   /** spotfargen fyllet skal printes i (fra skissen), ellers skjermfargen */
   spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } };
+  /** rektangulaere rammer kant i kant: thru som sammenslaatte linjer, kiss-boks innenfor */
+  kantIKant?: boolean;
+  /** helfolieringsfolie: bare thru-cut langs stykkene, ingen applisering */
+  helfoliering?: boolean;
 }
 
 export async function byggProduksjonsfil(
@@ -205,6 +276,20 @@ export async function byggProduksjonsfil(
       ]))
     : separasjon(doc, valg.spot.navn, valg.spot.cmyk);
   if (valg.spot) folieFyll = `/CS2 cs\n${f4(valg.spot.tint)} scn`;
+  // spotfargene i printede elementer: ett fargerom per navn (CS3, CS4, ...)
+  const ekstraCs: [string, PDFRef][] = [];
+  const csFor = (sp: NonNullable<ArkValg["spot"]>) => {
+    const finnes = ekstraCs.findIndex(([n]) => n === sp.navn);
+    if (finnes >= 0) return `CS${3 + finnes}`;
+    const ref = sp.lab
+      ? doc.context.register(doc.context.obj([PDFName.of("Separation"), PDFName.of(sp.navn),
+          doc.context.obj([PDFName.of("Lab"), doc.context.obj({ WhitePoint: sp.lab.wp, Range: [-128, 127, -128, 127] })]),
+          doc.context.register(doc.context.obj({ FunctionType: 2, Domain: [0, 1], C0: [100, 0, 0], C1: sp.lab.c1, N: 1,
+            Range: [0, 100, -128, 127, -128, 127] }))]))
+      : separasjon(doc, sp.navn, sp.cmyk);
+    ekstraCs.push([sp.navn, ref]);
+    return `CS${3 + ekstraCs.length - 1}`;
+  };
 
   const ocg = (navn: string): PDFRef =>
     doc.context.register(doc.context.obj({
@@ -228,6 +313,25 @@ export async function byggProduksjonsfil(
     if (!harForm[i]) return;   // elementet finnes ikke i denne folien
     // Appliser+thru: bare fyll, saa det synes hvilken farge det er. Linjene
     // skjaeres fra Thru-cut-laget, slaatt sammen (Eirik 16.11.2026).
+    /**
+     * Printet element: fargene printes hver for seg, nederst foerst, og de
+     * fargede lagene printes PRINT_BLEED_MM ut forbi skjaerelinjen (bare
+     * utover, ikke inn i det hvite, som er mediet selv). Skjaerelinjen er
+     * hele elementet, som kiss i CutContour, uten fyll.
+     */
+    if (m.trykk?.length && !valg.kunThru) {
+      const bl = (PRINT_BLEED_MM * MM) / m.skala;
+      let alle: MultiPoly = [];
+      try { alle = pc.union(...(m.trykk.map((t) => t.flate).concat([m.flate]) as [any])); } catch { alle = m.flate; }
+      let o = "";
+      for (const t of m.trykk) {
+        let fl: MultiPoly = t.flate;
+        try { fl = pc.union(t.flate as any, pc.difference(utfallendeHull(t.flate, bl) as any, alle as any)) as MultiPoly; } catch { /* uten utfall */ }
+        o += fyllOps(fl, t.spot ? `/${csFor(t.spot)} cs\n${f4(t.spot.tint)} scn` : t.fyllOp);
+      }
+      formOps[i] = o + strekOpsFlate(m.flate, m.skala, "CS1");
+      return;
+    }
     formOps[i] = valg.kunThru
       ? fyllOps(valg.print ? utfallende(m.flate, (PRINT_BLEED_MM * MM) / m.skala) : m.flate, folieFyll)
       : skjaereOps(m.flate, m.skala, folieFyll, geo.strek, "CS1").ops;
@@ -323,7 +427,19 @@ export async function byggProduksjonsfil(
      * ogsa naar elementet ikke har noe i denne folien, for de andre
      * fargene legges oppa nettopp dette stykket.
      */
-    for (const p of ark.plasseringer) {
+    if (valg.kantIKant) {
+      // hver delte kant skjaeres én gang, i sammenhengende linjer
+      const kanter: [Pkt, Pkt][] = [];
+      for (const p of kantRekt(ark.plasseringer)) {
+        const a: Pkt[] = [[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h]];
+        for (let i = 0; i < 4; i++) kanter.push([a[i], a[(i + 1) % 4]]);
+      }
+      for (const bane of slaaSammenKanter(kanter)) {
+        let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+        for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+        ops.push(o + "S\n");
+      }
+    } else for (const p of ark.plasseringer) {
       if (p.ramme) ops.push(ringOps(p.ramme, ytop));
       else ops.push(`${f4(p.x * MM)} ${f4(ytop(p.y + p.h))} ${f4(p.w * MM)} ${f4(p.h * MM)} re\nS\n`);
     }
@@ -355,7 +471,32 @@ export async function byggProduksjonsfil(
    */
   // kiss-boksen (uten fyll) rundt hvert element staar ogsaa paa ark med
   // thru-cut (Eirik 16.11.2026). Bare rene thru-ark (kunThru) har ingen.
-  for (const p of valg.kunThru ? [] : ark.plasseringer) {
+  /**
+   * Kant i kant (Eirik 16.11.2026): kiss kan aldri ligge innenfor thru, for
+   * da blir en stripe folie mellom dem staaende rundt logoen. Inne mellom
+   * elementene skjaerer thru allerede gjennom folien, saa der trengs ingen
+   * egen kiss. Ut mot sidene gaar kiss boksKiss utenfor thru, rundt hele
+   * blokken. Paa ark uten thru gaar kiss paa linjen der thru er paa
+   * primaerarket, én gang per linje.
+   */
+  if (valg.kantIKant && !valg.kunThru) {
+    const rekt = kantRekt(ark.plasseringer).filter((p) => harForm[p.id])
+      .map((p) => [[[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h], [p.x, p.y]]]);
+    if (valg.thruCut && rekt.length) {
+      const blokk = pc.union(...(rekt as [any])) as MultiPoly;
+      for (const poly of blokk) for (const r of offsetRinger([poly[0].slice(0, -1) as [number, number][]], geo.boksKiss, true))
+        ops.push(ringOps([...r, r[0]], ytop));
+    } else if (rekt.length) {
+      const kanter: [Pkt, Pkt][] = [];
+      for (const x of rekt) { const r = x[0] as Pkt[]; for (let i = 0; i < 4; i++) kanter.push([r[i], r[i + 1]]); }
+      for (const bane of slaaSammenKanter(kanter)) {
+        let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+        for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+        ops.push(o + "S\n");
+      }
+    }
+  }
+  for (const p of valg.kunThru || valg.kantIKant ? [] : ark.plasseringer) {
     if (!harForm[p.id]) continue;
     const k = geo.boksKiss;
     if (p.kiss) { ops.push(ringOps(p.kiss, ytop)); continue; }
@@ -392,6 +533,7 @@ export async function byggProduksjonsfil(
   cs.set(PDFName.of("CS0"), csThrough);
   cs.set(PDFName.of("CS1"), csCut);
   if (csSpot) cs.set(PDFName.of("CS2"), csSpot);
+  ekstraCs.forEach(([, ref], i) => cs.set(PDFName.of(`CS${3 + i}`), ref));
   res.set(PDFName.of("ColorSpace"), cs);
   const props = doc.context.obj({});
   props.set(PDFName.of("L0"), oc[0]);
@@ -408,7 +550,9 @@ export async function byggProduksjonsfil(
   }));
 
   const medKiss = motiver.some((m) => m.thruForm);
-  doc.setTitle(valg.kunThru && (valg.print || medKiss)
+  doc.setTitle(valg.helfoliering
+    ? `${jobb} | Thru | ${folieTekst} | Helfolieringsfolie: thru-cut langs stykkene, ingen applisering`
+    : valg.kunThru && (valg.print || medKiss)
     ? `${jobb} | ${valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru") : "Kiss+thru"} | ${folieTekst}` +
       (valg.spot ? ` | print i ${valg.spot.navn}` : "")
     : valg.kunThru
@@ -432,9 +576,14 @@ export function slaaSammenLinjer(motiver: Motiv[], ark: Ark, geo: Geo): Pkt[][] 
   for (const p of ark.plasseringer) {
     const m = motiver[p.id];
     const b = m.bbox, k = m.skala / MM, bl = geo.bleed;
-    const til = ([X, Y]: number[]): Pkt => p.rotated
+    const til0 = ([X, Y]: number[]): Pkt => p.rotated
       ? [p.x + bl + (b[3] - Y) * k, p.y + p.h - bl - (X - b[0]) * k]
       : [p.x + bl + (X - b[0]) * k, p.y + p.h - bl - (Y - b[1]) * k];
+    // snudd 180° innenfor plasseringen, som iElement
+    const til = (q: number[]): Pkt => {
+      const [x, y] = til0(q);
+      return p.snu ? [2 * p.x + p.w - x, 2 * p.y + p.h - y] : [x, y];
+    };
     for (const poly of m.flate) for (const r of poly) {
       for (let i = 0; i < r.length - 1; i++) {
         const a = til(r[i]), c = til(r[i + 1]);
@@ -442,21 +591,35 @@ export function slaaSammenLinjer(motiver: Motiv[], ark: Ark, geo: Geo): Pkt[][] 
       }
     }
   }
-  // grupper paa linje: retning (vinkel mod 180) og avstand fra origo
-  const grupper = new Map<string, { ux: number; uy: number; d: number; iv: [number, number][] }>();
-  for (const [a, c] of kanter) {
+  return slaaSammenKanter(kanter);
+}
+
+/** Kanter paa samme linje slaas sammen; sammenhengende stykker blir én bane. */
+const LINJE_VINKEL = 0.01;      // radianer
+const LINJE_AVSTAND_MM = 1;
+export function slaaSammenKanter(kanter: [Pkt, Pkt][]): Pkt[][] {
+  /**
+   * Grupper paa linje: retning og avstand fra origo. Linjer som ligger
+   * nesten oppaa hverandre (samme retning innenfor LINJE_VINKEL og under
+   * LINJE_AVSTAND_MM fra hverandre i begge ender) er samme linje, og kniven
+   * gaar én gang, langs den lengste (Eirik 16.11.2026: to thru-linjer et par
+   * millimeter fra hverandre fungerer daarlig i praksis). Lengste foerst, saa
+   * den lange linjen er den som staar.
+   */
+  const grupper: { ux: number; uy: number; d: number; iv: [number, number][] }[] = [];
+  const sortert = kanter.slice().sort((x, y) => Math.hypot(y[1][0] - y[0][0], y[1][1] - y[0][1]) - Math.hypot(x[1][0] - x[0][0], x[1][1] - x[0][1]));
+  for (const [a, c] of sortert) {
     let ux = c[0] - a[0], uy = c[1] - a[1];
     const l = Math.hypot(ux, uy); ux /= l; uy /= l;
     if (ux < -1e-9 || (Math.abs(ux) < 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
-    const d = -uy * a[0] + ux * a[1];
-    const nokkel = `${Math.round(Math.atan2(uy, ux) * 1e4)}|${Math.round(d * 100)}`;
-    const g = grupper.get(nokkel) ?? { ux, uy, d, iv: [] };
-    const t0 = ux * a[0] + uy * a[1], t1 = ux * c[0] + uy * c[1];
+    let g = grupper.find((h) => Math.abs(h.ux * uy - h.uy * ux) < LINJE_VINKEL &&
+      Math.abs(-h.uy * a[0] + h.ux * a[1] - h.d) < LINJE_AVSTAND_MM && Math.abs(-h.uy * c[0] + h.ux * c[1] - h.d) < LINJE_AVSTAND_MM);
+    if (!g) { g = { ux, uy, d: -uy * a[0] + ux * a[1], iv: [] }; grupper.push(g); }
+    const t0 = g.ux * a[0] + g.uy * a[1], t1 = g.ux * c[0] + g.uy * c[1];
     g.iv.push([Math.min(t0, t1), Math.max(t0, t1)]);
-    grupper.set(nokkel, g);
   }
   const ut: [Pkt, Pkt][] = [];
-  for (const g of grupper.values()) {
+  for (const g of grupper) {
     g.iv.sort((x, y) => x[0] - y[0]);
     const slaatt: [number, number][] = [];
     for (const [t0, t1] of g.iv) {

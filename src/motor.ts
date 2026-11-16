@@ -36,6 +36,25 @@ export type { Forhandsvisning, ForhandsvisValg } from "./forhandsvis.ts";
 export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
+/** To skraa kanter som avviker mindre enn dette fra parallelle, legges kant i kant. */
+const PARALLELL_MM = 0.5;
+/** Et felt dreies naar rammen blir minst saa mye mindre. */
+const DREI_GEVINST = 0.1;
+/** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
+const MAKS_FILER = 6;
+const SAMLE_M2 = 5;
+/** En farge som stikker minst saa langt ut rundt fargen over, kan monteres for haand. */
+const HAAND_MARGIN_MM = 3;
+/** Deler av samme farge lenger fra hverandre enn dette blir egne elementer naar en logo tas ut av registeret. */
+const DEL_AVSTAND_MM = 50;
+/** Hvor langt en farge gaar inn under en annen naar de produseres hver for seg. */
+const UNDERLAP_MM = 5;
+/** Fargene overlapper under denne andelen av den minste: de kan deles. */
+const DELT_OVERLAPP = 0.1;
+/** Et felt dekker minst denne andelen av elementets ramme. */
+const DELT_FELT = 0.2;
+/** Delingen maa spare minst denne andelen av arkene. */
+const DELT_SPAR = 0.3;
 export const MIN_DETALJ = 1.5;
 /**
  * Renner smalere enn dette regnes som en del av formen, ikke som luft
@@ -59,6 +78,8 @@ const SPOR_MM = 4;
 const RAMME_FYLL = 0.995;
 /** overlapp i skjoeten paa lange striper, mm */
 const SKJOT_MM = 10;
+/** stykket gaar minst saa langt forbi bilens skjoet (Eirik 16.11.2026: «minimum 3 cm») */
+const SKJOT_BIL_MM = 30;
 /** en stripe er minst saa mange ganger lengre enn hoy */
 const STRIPE_FORHOLD = 8;
 /** tekst skjoetes i mellomrom mellom bokstaver paa minst saa mye */
@@ -178,6 +199,12 @@ export interface Folie {
    * hvit, skjaeres folien som den er; har den farge, printes den.
    */
   print?: boolean;
+  /**
+   * Helfolieringsfolie (Avery Carmine Red o.l.). Hele felt trenger ikke
+   * appliseres (Eirik 16.11.2026): stykkene thru-cuttes rett langs kanten,
+   * uten kiss og uten luking, og legges paa bilen uten applikasjonstape.
+   */
+  helfoliering?: boolean;
 }
 
 export interface Bestilling {
@@ -344,6 +371,187 @@ function heltKonveks(f: MultiPoly): boolean {
  * konvekse flater uten hull (bare thru-cut, ingenting aa luke). Begge utfall
  * meldes med tallene.
  */
+/**
+ * Faerre produksjonsfiler (Eirik 16.11.2026, Vito: «naar vi begynner aa
+ * snakke opp mot 10 produksjonsfiler med saa lite totalt areal boer man
+ * vurdere tiltak for aa redusere antallet»). Hver logo med flere farger
+ * faar ellers sitt eget oppsett i register, med én fil per folie. Blir det
+ * mer enn MAKS_FILER filer for under SAMLE_M2 folie, tas logoer som kan
+ * monteres for haand ut av registeret: hver farge legges paa det ordinaere
+ * oppsettet for sin folie, og montoeren legger fargene paa hverandre etterpaa
+ * (bakruta: det hvite legges paa den sorte 961-bunnen).
+ *
+ * En logo kan monteres for haand naar hver farge enten staar ved siden av de
+ * andre, eller ligger paa en farge som stikker minst HAAND_MARGIN_MM ut paa
+ * alle kanter. En smalere kant maa treffes i register (XL-boksen, Finsaas).
+ * Fargen under fylles under fargen over, og der fargene moetes side om side
+ * gaar fargen under UNDERLAP_MM inn under.
+ */
+/**
+ * Et helt felt (én farge, ett konvekst stykke, ikke en stripe) dreies til
+ * den vinkelen som gir minst ramme (Eirik 16.11.2026, Vito: «forstaar ikke
+ * hvorfor du vegrer deg for aa rotere de 2 store feltene paa bakluke»).
+ * Vinkelen er langs en av sidene i det konvekse skallet, som alltid gir den
+ * minste rammen rundt en konveks form. Bare naar rammen blir minst
+ * DREI_GEVINST mindre. Montoeren legger feltet etter skissen uansett.
+ */
+function dreiFelt(elementer: Elem[], advarsler: string[]): Elem[] {
+  return elementer.map((e) => {
+    if (e.deler.length !== 1 || e.trykk?.length || e.thruForm || e.markering?.length || e.forleng?.size ||
+        e.skjoter?.length || e.lagvis) return e;
+    const f = e.deler[0].flate;
+    if (f.length !== 1 || f[0].length !== 1 || !heltKonveks(f)) return e;
+    if (Math.max(e.breddeMm, e.hoydeMm) >= STRIPE_FORHOLD * Math.min(e.breddeMm, e.hoydeMm)) return e;
+    const sk = konvekstSkall(f[0][0].slice(0, -1) as [number, number][]);
+    const flate0 = (e.bbox[2] - e.bbox[0]) * (e.bbox[3] - e.bbox[1]);
+    let best = { a: 0, A: flate0 };
+    for (let i = 0; i < sk.length; i++) {
+      const p = sk[i], q = sk[(i + 1) % sk.length];
+      const a = -Math.atan2(q[1] - p[1], q[0] - p[0]);
+      const c = Math.cos(a), sn = Math.sin(a);
+      const xs = sk.map(([x, y]) => x * c - y * sn), ys = sk.map(([x, y]) => x * sn + y * c);
+      const A = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+      if (A < best.A) best = { a, A };
+    }
+    if (best.A > (1 - DREI_GEVINST) * flate0) return e;
+    const c = Math.cos(best.a), sn = Math.sin(best.a);
+    const dr = (m: MultiPoly): MultiPoly => m.map((poly) => poly.map((r) => r.map(([x, y]) => [x * c - y * sn, x * sn + y * c] as [number, number])));
+    const ny = dr(f);
+    const pk = ny.flat(2);
+    const bb: [number, number, number, number] = [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+      Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+    const w = ((bb[2] - bb[0]) * e.skala) / MM, h = ((bb[3] - bb[1]) * e.skala) / MM;
+    advarsler.push(`${e.navn}: dreid ${Math.abs(best.a * 180 / Math.PI).toFixed(0)}° paa arket, ramme ${Math.round(e.breddeMm)} x ` +
+      `${Math.round(e.hoydeMm)} til ${Math.round(w)} x ${Math.round(h)} mm. Monteres etter skissen.`);
+    return { ...e, bbox: bb, breddeMm: w, hoydeMm: h, deler: [{ ...e.deler[0], flate: ny }], omriss: ny };
+  });
+}
+
+function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
+  const filer = (es: Elem[]) => {
+    const n = new Set(es.map((e) => [...new Set(e.deler.map((d) => d.folie.kode))].sort().join("|")));
+    return [...n].reduce((t, k) => t + k.split("|").length, 0);
+  };
+  const m2 = elementer.reduce((t, e) => t + e.deler.reduce((u, d) =>
+    u + areal(d.flate) * Math.pow(e.skala / MM, 2), 0) * e.antall, 0) / 1e6;
+  const foer = filer(elementer);
+  if (foer <= MAKS_FILER || m2 > SAMLE_M2) return elementer;
+  const ut: Elem[] = [];
+  const tatt: string[] = [];
+  for (const e of elementer) {
+    if (e.deler.length < 2 || e.trykk?.length || e.thruForm || e.deler.some((d) => d.folie.prisM2 || d.folie.print)) { ut.push(e); continue; }
+    try {
+      const mm = (x: number) => (x * MM) / e.skala;
+      const fylt = e.deler.map((d) => pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly);
+      const ytre = (f: MultiPoly, d: number) => pc.union(...(offsetRinger(f.map((poly) => poly[0].slice(0, -1) as [number, number][]), d, true)
+        .map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
+      let ok = true;
+      for (let i = 0; i < fylt.length && ok; i++) for (let j = i + 1; j < fylt.length && ok; j++) {
+        const U = fylt[i], L = fylt[j];
+        const ov = areal(pc.intersection(U, L));
+        if (ov < 0.1 * Math.min(areal(U), areal(L))) continue;           // ved siden av
+        const rund = ytre(U, mm(HAAND_MARGIN_MM));
+        if (areal(pc.difference(rund, L)) > 0.02 * areal(rund)) ok = false;   // for smal kant
+      }
+      if (!ok) { ut.push(e); continue; }
+      const u = mm(UNDERLAP_MM);
+      const boks = (f: MultiPoly): [number, number, number, number] => {
+        const pk = f.flat(2);
+        return [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+          Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+      };
+      const mmAv = (bb: number[]) => [((bb[2] - bb[0]) * e.skala) / MM, ((bb[3] - bb[1]) * e.skala) / MM];
+      /**
+       * Deler av samme farge som ligger langt fra hverandre (den roede
+       * trekanten under D-en og CENTER) blir egne elementer, saa de ikke
+       * deler en ramme som nesten bare er luft.
+       */
+      const klyng = (flate: MultiPoly): MultiPoly[] => {
+        const klynger: MultiPoly[] = flate.map((poly) => [poly]);
+        const naer = (a: MultiPoly, b: MultiPoly) => {
+          const x = boks(a), y = boks(b), g = mm(DEL_AVSTAND_MM);
+          return x[0] - g <= y[2] && y[0] - g <= x[2] && x[1] - g <= y[3] && y[1] - g <= x[3];
+        };
+        for (let endret = true; endret;) {
+          endret = false;
+          for (let a = 0; a < klynger.length && !endret; a++) for (let c = a + 1; c < klynger.length && !endret; c++) {
+            if (naer(klynger[a], klynger[c])) { klynger[a] = klynger[a].concat(klynger[c]); klynger.splice(c, 1); endret = true; }
+          }
+        }
+        return klynger;
+      };
+      // bunnfarger: farger som en annen farge ligger paa (961 under det hvite paa bakruta)
+      const erBunn = e.deler.map((_, j) => e.deler.slice(0, j).some((_, i) =>
+        areal(pc.intersection(fylt[i], fylt[j])) >= 0.1 * Math.min(areal(fylt[i]), areal(fylt[j]))));
+      e.deler.forEach((d, j) => {
+        if (!erBunn[j]) return;
+        const O = pc.union(...(e.deler.slice(0, j).map((o) => o.flate) as [any])) as MultiPoly;
+        // fylt under fargene over, og UNDERLAP_MM inn der de moetes
+        const flate = pc.union(d.flate, pc.intersection(O, pc.union(fylt[j], ytre(d.flate, u)))) as MultiPoly;
+        const kl = klyng(flate);
+        kl.forEach((k, ki) => {
+          const bb = boks(k), [w, h] = mmAv(bb);
+          ut.push({ navn: `${e.navn} ${d.folie.kode}${kl.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
+            breddeMm: w, hoydeMm: h, antall: e.antall, deler: [{ ...d, flate: k }], omriss: k });
+        });
+      });
+      /**
+       * Fargene oppaa bunnen, eller ved siden av hverandre (Eirik 16.11.2026,
+       * Vito: «751-010 oppsettet maa skjaere baade de roede og hvite
+       * elementene i logoene ... dermed kan man teipe over de roede
+       * elementene inn i det hvite oppsettet»). Fargen med stoerst flate er
+       * oppsettet; den skjaerer ogsaa omrisset av de andre fargene som kiss
+       * (markering), saa montoeren ser hvor de skal. De andre fargene
+       * kiss-cuttes tett, lukes og thru-cuttes rundt hver logo, og teipes inn
+       * i oppsettet. De trenger ikke appliseres.
+       */
+      const topp = e.deler.filter((_, j) => !erBunn[j]);
+      const hoved = topp.slice().sort((x, y) => areal(y.flate) - areal(x.flate))[0];
+      const alleTopp = pc.union(...(topp.map((d) => d.flate) as [any])) as MultiPoly;
+      for (const k of klyng(alleTopp)) {
+        const bbK = boks(k);
+        const iKlynge = (f: MultiPoly) => f.filter((poly) => {
+          const b2 = boks([poly]);
+          return b2[0] >= bbK[0] - 1e-6 && b2[2] <= bbK[2] + 1e-6 && b2[1] >= bbK[1] - 1e-6 && b2[3] <= bbK[3] + 1e-6;
+        });
+        const hovedHer = iKlynge(hoved.flate);
+        const andreHer = topp.filter((d) => d !== hoved).map((d) => ({ d, f: iKlynge(d.flate) })).filter((x) => x.f.length);
+        const [w, h] = mmAv(bbK);
+        if (hovedHer.length) {
+          ut.push({ navn: `${e.navn} ${hoved.folie.kode}`, lagvis: false, bbox: bbK, skala: e.skala, breddeMm: w, hoydeMm: h,
+            antall: e.antall, deler: [{ ...hoved, flate: hovedHer }], omriss: k,
+            ...(andreHer.length ? { markering: andreHer.map((x) => ({ flate: x.f, hex: x.d.folie.hex ?? x.d.hex })) } : {}) });
+        }
+        for (const x of andreHer) {
+          if (!hovedHer.length) {
+            const bb = boks(x.f), [w2, h2] = mmAv(bb);
+            ut.push({ navn: `${e.navn} ${x.d.folie.kode}`, lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2,
+              antall: e.antall, deler: [{ ...x.d, flate: x.f }], omriss: x.f });
+            continue;
+          }
+          // hver del av fargen for seg (CENTER og trekanten under D-en)
+          const kl = klyng(x.f);
+          /**
+           * Rammen er saa firkantet som mulig (Eirik 16.11.2026: «det er
+           * bedre at den er saa firkantet som mulig og gjerne har enveisthru
+           * mot andre elementer»): vanlig rektangulaer ramme, kant i kant.
+           */
+          kl.forEach((f, ki) => {
+            const bb = boks(f), [w2, h2] = mmAv(bb);
+            ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
+              breddeMm: w2, hoydeMm: h2, antall: e.antall, deler: [{ ...x.d, flate: f }], omriss: f, egetArk: true });
+          });
+        }
+      }
+      tatt.push(e.navn);
+    } catch { ut.push(e); }
+  }
+  if (tatt.length) advarsler.push(`Faerre filer: ${foer} filer for ${m2.toFixed(1).replace(".", ",")} m² folie er for mange, ` +
+    `saa ${tatt.length} logo${tatt.length > 1 ? "er" : ""} legges paa det ordinaere oppsettet farge for farge og monteres ` +
+    `paa hverandre for haand (${tatt.join(", ")}). Naa ${filer(ut)} filer.`);
+  return ut;
+}
+
 function tettArk(elementer: Elem[], grunngeo: Geo, b: Bestilling, advarsler: string[]): Elem[] {
   const timekost = b.timekostKr ?? TIMEKOST_KR, minPerBit = b.overteipMinPerBit ?? OVERTEIP_MIN_PER_BIT;
   const nokkel = (e: Elem) => e.deler.map((d) => d.folie.kode).slice().sort().join("|");
@@ -469,6 +677,15 @@ const naerHex = (a: string, b: string) => {
   return Math.max(...x.map((v, i) => Math.abs(v - y[i]))) <= 3 / 255;
 };
 
+/** Bilens skjoeter langs en stripe (PDF-noekkelord fra bilskissen). */
+async function lesSkjoter(pdf: Uint8Array): Promise<number[]> {
+  try {
+    const d = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
+    const m = /signhub-skjot:([\d.,]+)/.exec(d.getKeywords() ?? "");
+    return m ? m[1].split(",").map(Number).filter((x) => x > 0 && x < 1) : [];
+  } catch { return []; }
+}
+
 /** Endene en bilskisse har merket som skjult under bilen (PDF-noekkelord). */
 async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
   try {
@@ -487,6 +704,200 @@ async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
  * er rette, ellers gap) eller til kanten av feltet. Bare elementer i ett
  * eksemplar, saa én plassering er ett element.
  */
+/**
+ * Skyver stykkene paa et Appliser+thru-ark inntil hverandre etter formen,
+ * ikke rammen (Eirik 16.11.2026: «om du roterer det ene paret 180 grader
+ * kan du bruke enda mindre folie. besparelse i bredden er ogsaa
+ * besparelse»). Stykker som allerede ligger kant i kant er én enhet (et par
+ * striper med felles rett kant). Hver enhet, fra venstre, proeves som den
+ * ligger og snudd 180°, og skyves saa langt til venstre som formen tillater
+ * med gap til det som allerede ligger der. Avstanden maales paa tvers i
+ * smale skiver. Gir antall mm spart i bredden.
+ */
+function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld: string[] = []): number {
+  const ps = ark.plasseringer;
+  if (ps.length < 2) return 0;
+  type R = [number, number][];
+  const bl = geo.bleed;
+  const tilArk = (p: any, X: number, Y: number): [number, number] => {
+    const e = gruppe[p.id], b = e.bbox, k = e.skala / MM;
+    const [x, y] = p.rotated ? [p.x + bl + (b[3] - Y) * k, p.y + p.h - bl - (X - b[0]) * k]
+      : [p.x + bl + (X - b[0]) * k, p.y + p.h - bl - (Y - b[1]) * k];
+    return p.snu ? [2 * p.x + p.w - x, 2 * p.y + p.h - y] : [x, y];
+  };
+  // fra arket tilbake til elementets enheter (motsatt av tilArk)
+  const fraArk = (p: any, x: number, y: number): [number, number] => {
+    const e = gruppe[p.id], b = e.bbox, k = e.skala / MM;
+    if (p.snu) { x = 2 * p.x + p.w - x; y = 2 * p.y + p.h - y; }
+    return p.rotated ? [b[0] + (p.y + p.h - bl - y) / k, b[3] - (x - p.x - bl) / k]
+      : [b[0] + (x - p.x - bl) / k, b[1] + (p.y + p.h - bl - y) / k];
+  };
+  const form = (p: any): R[] => gruppe[p.id].deler.flatMap((d) => d.flate.map((poly) => poly[0].map(([X, Y]) => tilArk(p, X, Y))));
+  const spenn = (ringer: R[], y: number): [number, number] | null => {
+    let lo = Infinity, hi = -Infinity;
+    for (const r of ringer) for (let i = 0; i < r.length - 1; i++) {
+      const [x1, y1] = r[i], [x2, y2] = r[i + 1];
+      if (y < Math.min(y1, y2) || y > Math.max(y1, y2)) continue;
+      if (Math.abs(y2 - y1) < 1e-9) { lo = Math.min(lo, x1, x2); hi = Math.max(hi, x1, x2); continue; }
+      const x = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
+      lo = Math.min(lo, x); hi = Math.max(hi, x);
+    }
+    return lo <= hi ? [lo, hi] : null;
+  };
+  // enheter: plasseringer som ligger kant i kant
+  const enhet: number[] = ps.map((_, i) => i);
+  const rot = (i: number): number => (enhet[i] === i ? i : (enhet[i] = rot(enhet[i])));
+  for (let i = 0; i < ps.length; i++) for (let j = 0; j < ps.length; j++) {
+    const a = ps[i], b = ps[j];
+    if (i !== j && Math.abs(a.x + a.w - b.x) < 0.05 && a.y < b.y + b.h && b.y < a.y + a.h) enhet[rot(j)] = rot(i);
+  }
+  const grupper = new Map<number, any[]>();
+  ps.forEach((p, i) => { const r = rot(i); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(p); });
+  const enheter = [...grupper.values()].sort((a, b) => Math.min(...a.map((p) => p.x)) - Math.min(...b.map((p) => p.x)));
+  const x0Alle = Math.min(...ps.map((p) => p.x));
+  const bredde0 = Math.max(...ps.map((p) => p.x + p.w)) - x0Alle;
+  const lagt: R[] = [];
+  const snuEnhet = (u: any[]) => {
+    const ux0 = Math.min(...u.map((p) => p.x)), ux1 = Math.max(...u.map((p) => p.x + p.w));
+    const uy0 = Math.min(...u.map((p) => p.y)), uy1 = Math.max(...u.map((p) => p.y + p.h));
+    for (const p of u) { p.x = ux0 + ux1 - (p.x + p.w); p.y = uy0 + uy1 - (p.y + p.h); p.snu = !p.snu; }
+  };
+  /**
+   * Hvor langt enheten kan skyves til venstre. Ligger kanten som vender mot
+   * naboen parallelt med naboens (avvik under PARALLELL_MM over minst
+   * halvparten av det de ligger mot hverandre), legges de kant i kant uten
+   * gap, og linjen skjaeres én gang (Eirik 16.11.2026: «hvorfor legger du
+   * ikke parene kant i kant med enveisthru?»). Ellers holdes gap.
+   */
+  const plassering = (ringer: R[]): { s: number; kontakt: boolean } => {
+    const ys = new Set<number>();
+    const y0 = Math.min(...ringer.flat().map((q) => q[1])), y1 = Math.max(...ringer.flat().map((q) => q[1]));
+    for (const r of ringer) for (const q of r) ys.add(q[1]);
+    for (const r of lagt) for (const q of r) if (q[1] >= y0 && q[1] <= y1) ys.add(q[1]);
+    for (let y = y0; y <= y1; y += 2) ys.add(y);
+    const d: number[] = [];
+    let min = Infinity, kant = Infinity;
+    for (const y of ys) {
+      const b = spenn(ringer, y);
+      if (!b) continue;
+      kant = Math.min(kant, b[0] - x0Alle);
+      let best = Infinity;
+      for (const a of lagt) {
+        const sp = spenn([a], y);
+        if (sp && sp[1] <= b[0] + 1e-6) best = Math.min(best, b[0] - sp[1]);
+        else if (sp && sp[0] < b[1]) best = Math.min(best, 0);
+      }
+      if (best < Infinity) { d.push(best); min = Math.min(min, best); }
+    }
+    if (min === Infinity) return { s: Math.max(0, kant), kontakt: false };
+    const naer = d.filter((x) => x - min < PARALLELL_MM);
+    const kontakt = d.length > 3 && naer.length >= 0.5 * d.length;
+    if (kontakt && min <= kant) return { s: Math.max(0, min), kontakt: true };
+    return { s: Math.max(0, Math.min(kant, min - geo.gap - 0.5)), kontakt: false };
+  };
+  /**
+   * Kanten som vender mot naboen flyttes inn paa naboens linje (avviket er
+   * under PARALLELL_MM), saa de to linjene blir én og slaas sammen.
+   */
+  const snapp = (u: any[]) => {
+    for (const p of u) {
+      const e = gruppe[p.id];
+      const ny = e.deler.map((dl) => ({ ...dl, flate: dl.flate.map((poly) => poly.map((r) => r.map(([X, Y]) => {
+        const [x, y] = tilArk(p, X, Y);
+        let bestX: number | null = null;
+        for (const a of lagt) {
+          const sp = spenn([a], y);
+          if (sp && x >= sp[1] - 1e-6 && x - sp[1] < PARALLELL_MM + 0.05) bestX = sp[1];
+        }
+        return bestX === null ? [X, Y] as [number, number] : fraArk(p, bestX, y);
+      }))) }));
+      e.deler = ny;
+      e.omriss = e.deler[0].flate;
+    }
+  };
+  /** Elementets form dreid gamma grader (mot klokka paa arket), med rotert/snudd bakt inn. */
+  const dreid = (e: Elem, flate: MultiPoly, rotert: boolean, snudd: boolean, gamma: number) => {
+    const tot = ((rotert ? 90 : 0) + (snudd ? 180 : 0) + gamma) * Math.PI / 180;
+    const c = Math.cos(tot), sn = Math.sin(tot);
+    const fl = flate.map((poly) => poly.map((r) => r.map(([x, y]) => [x * c - y * sn, x * sn + y * c] as [number, number])));
+    const pk = fl.flat(2);
+    const bb: [number, number, number, number] = [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+      Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+    return { fl, bb, w: ((bb[2] - bb[0]) * e.skala) / MM, h: ((bb[3] - bb[1]) * e.skala) / MM };
+  };
+  for (const u of enheter) {
+    const ringerAv = () => u.flatMap((p) => form(p));
+    if (!lagt.length) { lagt.push(...ringerAv()); continue; }
+    const xFoer = Math.min(...u.map((p) => p.x));
+    const proev = () => { const r = plassering(ringerAv()); return { ...r, hoyre: Math.max(...u.map((p) => p.x + p.w)) - r.s }; };
+    let a0 = proev();
+    snuEnhet(u);
+    const a1 = proev();
+    if (a1.hoyre > a0.hoyre - 0.5 && !(a1.kontakt && !a0.kontakt && a1.hoyre <= a0.hoyre + 0.5)) snuEnhet(u); else a0 = a1;
+    /**
+     * Et felt alene kan dreies saa en av sidene ligger parallelt med naboens
+     * kant, og legges inntil med enveis thru (Eirik 16.11.2026: «snu det
+     * store roede feltet til bakluke litt mer for saa aa koble den paa med
+     * enveis-thru»). Vinkelen som gir minst ark vinner.
+     */
+    const e0 = u.length === 1 ? gruppe[u[0].id] : null;
+    if (e0 && e0.deler.length === 1 && e0.deler[0].flate.length === 1 && heltKonveks(e0.deler[0].flate) &&
+        !e0.skjoter?.length && !e0.forleng?.size) {
+      const p = u[0];
+      const foer = { flate: e0.deler[0].flate, bbox: e0.bbox, b: e0.breddeMm, h: e0.hoydeMm, x: p.x, y: p.y, w: p.w, hh: p.h, rot: p.rotated, snu: !!p.snu };
+      const pad = p.w - (p.rotated ? e0.hoydeMm : e0.breddeMm);
+      const tilbake = () => {
+        e0.deler = [{ ...e0.deler[0], flate: foer.flate }]; e0.bbox = foer.bbox; e0.breddeMm = foer.b; e0.hoydeMm = foer.h;
+        p.rotated = foer.rot; p.snu = foer.snu; p.w = foer.w; p.h = foer.hh; p.x = foer.x; p.y = foer.y;
+      };
+      const sett = (g: number) => {
+        const d = dreid(e0, foer.flate, foer.rot, foer.snu, g);
+        e0.deler = [{ ...e0.deler[0], flate: d.fl }]; e0.bbox = d.bb; e0.breddeMm = d.w; e0.hoydeMm = d.h;
+        p.rotated = false; p.snu = false; p.w = d.w + pad; p.h = d.h + pad; p.x = foer.x; p.y = foer.y;
+      };
+      // naboens kant: hoeyre side av det som er lagt, innenfor feltets hoeyde
+      const ya = p.y + 0.15 * p.h, yb = p.y + 0.85 * p.h;
+      const sa = lagt.map((r) => spenn([r], ya)).filter(Boolean).sort((x, y) => y![1] - x![1])[0];
+      const sb = lagt.map((r) => spenn([r], yb)).filter(Boolean).sort((x, y) => y![1] - x![1])[0];
+      const vinkler = [0];
+      if (sa && sb) {
+        const theta = Math.atan2(-(yb - ya), sb[1] - sa[1]) * 180 / Math.PI;   // arket med y opp
+        const d0 = dreid(e0, foer.flate, foer.rot, foer.snu, 0);
+        const sk = konvekstSkall(d0.fl[0][0].slice(0, -1) as [number, number][]);
+        for (let i = 0; i < sk.length; i++) {
+          const q0 = sk[i], q1 = sk[(i + 1) % sk.length];
+          const phi = Math.atan2(q1[1] - q0[1], q1[0] - q0[0]) * 180 / Math.PI;
+          vinkler.push(theta - phi, theta - phi + 180);
+        }
+      }
+      const andreH = Math.max(...ps.filter((q) => !u.includes(q)).map((q) => q.y + q.h));
+      const andreB = Math.max(...ps.filter((q) => !u.includes(q)).map((q) => q.x + q.w));
+      let best: { g: number; areal: number; kontakt: boolean } | null = null;
+      for (const g of vinkler) {
+        try {
+          sett(g);
+          const a = proev();
+          const areal = Math.max(a.hoyre, andreB) * Math.max(andreH, p.y + p.h);
+          if (!best || areal < best.areal - 1 || (Math.abs(areal - best.areal) <= 1 && a.kontakt && !best.kontakt)) best = { g, areal, kontakt: a.kontakt };
+        } catch { /* proev neste */ }
+        tilbake();
+      }
+      if (best && best.g !== 0) {
+        sett(best.g);
+        e0.omriss = e0.deler[0].flate;
+        meld.push(`${e0.navn}: dreid til saa en side ligger mot naboens kant${best.kontakt ? " (enveis thru)" : ""}.`);
+      }
+      a0 = proev();
+    }
+    if (a0.s > 0) for (const p of u) p.x -= a0.s;
+    if (Math.min(...u.map((p) => p.x)) > xFoer) for (const p of u) p.x -= Math.min(...u.map((q) => q.x)) - xFoer;
+    if (a0.kontakt) snapp(u);
+    lagt.push(...ringerAv());
+  }
+  const bredde1 = Math.max(...ps.map((p) => p.x + p.w)) - Math.min(...ps.map((p) => p.x));
+  return bredde0 - bredde1;
+}
+
 function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }, geo: Geo, fra: number, til: number): string[] {
   const ps = ark.plasseringer;
   const meld: string[] = [];
@@ -494,14 +905,17 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
   const feltV = fra, feltH = til;
   const feltO = Math.min(...ps.map((p) => p.y)), feltN = Math.max(...ps.map((p) => p.y + p.h));
   // arkretning for hver side av elementet
-  const retning = (rot: boolean, side: string) => (rot
+  const retning0 = (rot: boolean, side: string) => (rot
     ? ({ venstre: "N", hoyre: "O", bunn: "H", topp: "V" } as any)[side]
     : ({ venstre: "V", hoyre: "H", bunn: "N", topp: "O" } as any)[side]) as "V" | "H" | "O" | "N";
+  const motsatt = { V: "H", H: "V", O: "N", N: "O" } as const;
+  // snudd 180° (pakkKant): hver side vender motsatt vei paa arket
+  const retning = (rot: boolean, side: string, snu = false) => (snu ? motsatt[retning0(rot, side)] : retning0(rot, side)) as "V" | "H" | "O" | "N";
   const rettMot = (q: any, mot: "V" | "H" | "O" | "N") => {
     const sd = motiver[q.id].sider; if (!sd) return false;
     // siden av naboen som vender mot oss, i naboens egen retning
     const arkSide = { V: "H", H: "V", O: "N", N: "O" }[mot];
-    const idx = (["venstre", "hoyre", "bunn", "topp"] as const).findIndex((x) => retning(q.rotated, x) === arkSide);
+    const idx = (["venstre", "hoyre", "bunn", "topp"] as const).findIndex((x) => retning(q.rotated, x, q.snu) === arkSide);
     return idx >= 0 && sd[idx];
   };
   for (const p of ps) {
@@ -509,19 +923,25 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
     if (!e.forleng?.size || e.antall !== 1 || e.deler.length !== 1) continue;
     let totalt = 0;
     for (const side of e.forleng) {
-      const r = retning(p.rotated, side);
+      const r = retning(p.rotated, side, p.snu);
       const andre = ps.filter((q) => q !== p);
       const overlappY = (q: any) => q.y < p.y + p.h - 1e-6 && p.y < q.y + q.h - 1e-6;
       const overlappX = (q: any) => q.x < p.x + p.w - 1e-6 && p.x < q.x + q.w - 1e-6;
+      /**
+       * Naboer som allerede griper inn i rammen (formede rammer nestes inn i
+       * hverandre) stenger veien: da blir ledig plass negativ og enden
+       * strekkes ikke (Eirik 16.11.2026: feltet bak paa Vito overlappet en
+       * stripe som var strukket tvers gjennom det).
+       */
       const ledig = (r: "V" | "H" | "O" | "N") => {
         let fri = 0;
-        if (r === "H") fri = Math.min(feltH, ...andre.filter((q) => overlappY(q) && q.x >= p.x + p.w - 1e-6)
+        if (r === "H") fri = Math.min(feltH, ...andre.filter((q) => overlappY(q) && q.x + q.w > p.x + p.w + 1e-6)
           .map((q) => q.x - (rettMot(q, "H") ? 0 : geo.gap))) - (p.x + p.w);
-        if (r === "V") fri = p.x - Math.max(feltV, ...andre.filter((q) => overlappY(q) && q.x + q.w <= p.x + 1e-6)
+        if (r === "V") fri = p.x - Math.max(feltV, ...andre.filter((q) => overlappY(q) && q.x < p.x - 1e-6)
           .map((q) => q.x + q.w + (rettMot(q, "V") ? 0 : geo.gap)));
-        if (r === "N") fri = Math.min(feltN, ...andre.filter((q) => overlappX(q) && q.y >= p.y + p.h - 1e-6)
+        if (r === "N") fri = Math.min(feltN, ...andre.filter((q) => overlappX(q) && q.y + q.h > p.y + p.h + 1e-6)
           .map((q) => q.y - (rettMot(q, "N") ? 0 : geo.gap))) - (p.y + p.h);
-        if (r === "O") fri = p.y - Math.max(feltO, ...andre.filter((q) => overlappX(q) && q.y + q.h <= p.y + 1e-6)
+        if (r === "O") fri = p.y - Math.max(feltO, ...andre.filter((q) => overlappX(q) && q.y < p.y - 1e-6)
           .map((q) => q.y + q.h + (rettMot(q, "O") ? 0 : geo.gap)));
         return fri;
       };
@@ -547,7 +967,32 @@ function strekkUt(gruppe: Elem[], motiver: Motiv[], ark: { plasseringer: any[] }
       const flytt = (x: number, y: number): [number, number] =>
         side === "hoyre" && x > b[2] - tol ? [x + du, y] : side === "venstre" && x < b[0] + tol ? [x - du, y]
         : side === "topp" && y > b[3] - tol ? [x, y + du] : side === "bunn" && y < b[1] + tol ? [x, y - du] : [x, y];
-      f.flate = f.flate.map((poly) => poly.map((ring) => ring.map(([x, y]) => flytt(x, y))));
+      /**
+       * Enden foelger kantene videre i den retningen de gaar (Eirik
+       * 16.11.2026), ikke vannrett: en stripe som smalner av, fortsetter aa
+       * smalne av. Hjoernet flyttes langs kanten det kommer fra, innenfor
+       * elementets hoeyde (bredde), saa det aldri vokser inn i naboen.
+       */
+      const xAkse = side === "hoyre" || side === "venstre";
+      const iEnden = (x: number, y: number) => flytt(x, y)[0] !== x || flytt(x, y)[1] !== y;
+      f.flate = f.flate.map((poly) => poly.map((ring) => {
+        const n = ring.length - 1;   // lukket ring
+        return ring.map(([x, y], i) => {
+          if (!iEnden(x, y)) return [x, y] as [number, number];
+          const ii = i % n;
+          const nb = [ring[(ii + n - 1) % n], ring[(ii + 1) % n]].find(([qx, qy]) => !iEnden(qx, qy));
+          if (nb) {
+            const dx = x - nb[0], dy = y - nb[1];
+            const langs = xAkse ? dx : dy, tvers = xAkse ? dy : dx;
+            if (Math.abs(langs) > 1e-9 && Math.abs(tvers / langs) < 0.5) {
+              const t = tvers * (du / Math.abs(langs));
+              if (xAkse) return [flytt(x, y)[0], Math.min(b[3], Math.max(b[1], y + t))] as [number, number];
+              return [Math.min(b[2], Math.max(b[0], x + t)), flytt(x, y)[1]] as [number, number];
+            }
+          }
+          return flytt(x, y);
+        });
+      }));
       e.omriss = f.flate;
       if (side === "hoyre") b[2] += du; else if (side === "venstre") b[0] -= du;
       else if (side === "topp") b[3] += du; else b[1] -= du;
@@ -662,6 +1107,8 @@ interface Elem {
   omriss: MultiPoly;
   /** sider (i elementets retning) som ligger under bilen og kan forlenges paa arket */
   forleng?: Set<string>;
+  /** bilens naturlige skjoeter langs en stripe, som andel av lengden (bilskisse) */
+  skjoter?: number[];
   /**
    * Tett gruppe (tettArk): thru-cut-linjen rundt bitene, i elementets
    * enheter. Bitene selv kiss-cuttes.
@@ -672,6 +1119,13 @@ interface Elem {
    * og kiss-strek, saa montoeren ser hvor de skal (Eirik 16.11.2026).
    */
   markering?: { flate: MultiPoly; hex: string }[];
+  /**
+   * Printet element (Eirik 16.11.2026, Facebook-merket paa Vito): fargene
+   * som printes, hver for seg. Skjaerelinjen er hele elementet (deler[0]).
+   */
+  trykk?: { flate: MultiPoly; hex: string; spot?: Spot }[];
+  /** bitene som teipes inn i et oppsett: eget ark, aldri sammen med striper */
+  egetArk?: boolean;
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -707,7 +1161,9 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
 
   for (const l of b.linjer) {
     const forleng = await lesForleng(l.pdf);
+    let trykk: Elem["trykk"];
     const spotter = await lesSpot(l.pdf);
+    const skjoter = await lesSkjoter(l.pdf);
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
     // som star igjen nar hvitt er visket bort.
     const g0 = await medNavn<Geometri | GeometriPerFarge>(l.navn, () =>
@@ -777,7 +1233,23 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        * Maales for sammenslaingen under, som er nettopp det som skjuler
        * symptomet ved a gjore de mange lagene til ett.
        */
-      if (deler.length > 1 && new Set(deler.map((d) => d.folie.kode)).size === 1) {
+      /**
+       * Printes flere fargelag paa samme printmedium, er det ett printet
+       * element: fargene printes hver for seg, og skjaerelinjen er hele
+       * elementet (Eirik 16.11.2026: «facebook logo/tekst skal være print»).
+       */
+      const printKode = deler.find((d) => printes(d))?.folie.kode;
+      /**
+       * Printet element (Facebook-logoen paa Vito): hele elementet ligger paa
+       * printmediet. Et enkelt, helt konvekst stykke er Print+thru og
+       * haandteres som foer; alt annet printes med kiss langs formen.
+       */
+      if (printKode && deler.every((d) => d.folie.kode === printKode) &&
+          (deler.length > 1 || !heltKonveks(deler[0].flate))) {
+        trykk = deler.filter((d) => d.folie.kode === printKode && printes(d)).reverse()
+          .map((d) => ({ flate: d.flate, hex: d.hex, ...(d.spot ? { spot: d.spot } : {}) }));
+      }
+      if (deler.length > 1 && new Set(deler.map((d) => d.folie.kode)).size === 1 && !printKode) {
         advarsler.push(
           `${l.navn}: alle ${deler.length} fargelagene har samme foliekode ` +
           `${deler[0].folie.kode}. Motivet skjaeres da som en flate, og ` +
@@ -1021,10 +1493,70 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       foliekoder: deler.map((d) => d.folie.kode),
     });
 
-    elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
+    /**
+     * Farger som ikke ligger paa hverandre, produseres hver for seg (Eirik
+     * 16.11.2026, Vito: bakluka med feltet og det hvite elementet: «det er det som er kunsten
+     * aa finne ut. egentlig fordi det skaper saa mye ekstra-kapp»). Lagt i
+     * register maa hver farge ha et ark paa hele elementets stoerrelse, og
+     * det meste blir kapp. Hver for seg trenger hver farge bare sin egen
+     * ramme, og montoeren legger delene inntil hverandre.
+     *
+     * Bare naar fargene nesten ikke overlapper (under DELT_OVERLAPP av den
+     * minste, maalt med hullene fylt), og naar det sparer minst DELT_SPAR av
+     * arket. En logo der en farge ligger inni en annen (XL-boksen, Finsaas)
+     * blir staaende lagvis. Der fargene moetes, gaar fargen under
+     * UNDERLAP_MM inn under fargen over, saa det aldri blir en glippe.
+     */
+    const rammeAv = (f: MultiPoly): [number, number, number, number] => {
+      const pk = f.flat(2);
+      return [Math.min(...pk.map((q) => q[0])), Math.min(...pk.map((q) => q[1])),
+              Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
+    };
+    const bxA = (b: number[]) => (b[2] - b[0]) * (b[3] - b[1]);
+    const mmAv = (b: number[]) => [((b[2] - b[0]) * skala) / MM, ((b[3] - b[1]) * skala) / MM];
+    let delt = false;
+    // folie med pris vurderes av tettArk, som regner paa kroner i stedet
+    if (deler.length >= 2 && !trykk?.length && deler.every((d) => d.flate.length && !d.folie.prisM2)) {
+      try {
+        const fylt = deler.map((d) => pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly);
+        let overlapp = 0;
+        for (let i = 0; i < fylt.length; i++) for (let j = i + 1; j < fylt.length; j++) {
+          const ov = areal(pc.intersection(fylt[i], fylt[j]));
+          overlapp = Math.max(overlapp, ov / Math.max(1e-9, Math.min(areal(fylt[i]), areal(fylt[j]))));
+        }
+        const hel = bxA(boks) * deler.length, hver = deler.reduce((t, d) => t + bxA(rammeAv(d.flate)), 0);
+        // et felt: én farge er ett helt, konvekst stykke som dekker en stor
+        // del av elementet (bakluka paa Vito). Logoer der fargene staar
+        // sammen (ÅTG paa Kia) skal ligge i register og deles ikke.
+        const felt = fylt.some((f) => f.length === 1 && f[0].length === 1 && heltKonveks(f) &&
+          areal(f) >= DELT_FELT * bxA(boks));
+        if (felt && overlapp < DELT_OVERLAPP && hver < (1 - DELT_SPAR) * hel) {
+          const u = (UNDERLAP_MM * MM) / skala;
+          const nye = deler.map((d, i) => {
+            const over = deler.slice(0, i);
+            if (!over.length) return d;
+            const ut = offsetRinger(d.flate.map((poly) => poly[0].slice(0, -1) as [number, number][]), u, true)
+              .map((r) => [[...r, r[0]]]);
+            const under = pc.intersection(pc.union(...(over.map((o) => o.flate) as [any])), pc.union(...(ut as [any])));
+            return { ...d, flate: pc.union(d.flate, under) as MultiPoly };
+          });
+          for (const d of nye) {
+            const r = rammeAv(d.flate), [w, h] = mmAv(r);
+            elementer.push({ navn: `${l.navn} ${d.folie.kode}`, lagvis: false, bbox: r, skala,
+              breddeMm: w, hoydeMm: h, antall: l.antall, deler: [d], omriss: d.flate });
+          }
+          advarsler.push(`${l.navn}: fargene ligger ikke paa hverandre og produseres hver for seg ` +
+            `(${nye.map((d) => d.folie.kode).join(", ")}). Sparer ${Math.round((1 - hver / hel) * 100)} % av arkene. ` +
+            "Montoeren legger delene inntil hverandre" + (overlapp > 0 ? `, med ${UNDERLAP_MM} mm under der de moetes.` : "."));
+          delt = true;
+        }
+      } catch { /* da staar elementet lagvis som foer */ }
+    }
+    if (!delt) elementer.push({ navn: l.navn, lagvis: (l.lagvis ?? true) && deler.length > 1,
                      bbox: boks, skala,
                      breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
-                     ...(forleng.size ? { forleng } : {}) });
+                     ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}),
+                     ...(trykk?.length ? { trykk } : {}) });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -1042,7 +1574,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
   // gjor at delene treffer hverandre nar folien legges pa.
   // dyr folie: ut av oppsettet og tett, naar det er billigere enn tiden det
   // tar aa legge bitene over for hand
-  const vurdert = tettArk(elementer, grunngeo, b, advarsler);
+  const vurdert = tettArk(dreiFelt(samleFiler(elementer, advarsler), advarsler), grunngeo, b, advarsler);
   const grupper = new Map<string, Elem[]>();
   for (const e of vurdert) {
     /**
@@ -1050,7 +1582,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * lukes og legges over paa det sorte oppsettet, mens stripene har sin
      * egen fil (Appliser+thru). De skal aldri paa samme ark.
      */
-    const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|") + (e.thruForm ? "|tett" : "");
+    const nokkel = e.deler.map((d) => d.folie.kode).slice().sort().join("|") + (e.thruForm || e.egetArk ? "|tett" : "");
     if (!grupper.has(nokkel)) grupper.set(nokkel, []);
     grupper.get(nokkel)!.push(e);
   }
@@ -1083,6 +1615,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      */
     const biterAv = new Map<Elem, Elem[]>();
     const erTekst = new Set<Elem>();
+    const bilskjot = new Set<Elem>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
       const f = e.deler.length === 1 ? e.deler[0].flate : [];
@@ -1093,7 +1626,49 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       const lengdeMm = (a: number, z: number) => ((z - a) * e.skala) / MM;
       /** stykkene som [fra, til] langs elementet */
       let stykker: [number, number][] | null = null;
-      if (f.length === 1 && f[0].length === 1) {
+      /**
+       * Har bilen en naturlig skjoet langs stripen (doerskjoeten), skjoetes
+       * stripen der, og hvert stykke gaar minst SKJOT_BIL_MM inn paa den
+       * andre siden (Eirik 16.11.2026, Vito: «minimum 3 cm»). Montoeren
+       * legger skjoeten i bilens egen skjoet. Det velges faerrest mulig
+       * skjoeter som gir stykker som faar plass paa tvers.
+       */
+      if (f.length === 1 && f[0].length === 1 && e.skjoter?.length) {
+        const ov = mmTil(SKJOT_BIL_MM);
+        const steder = e.skjoter.map((x) => b0 + x * (b1 - b0));
+        const ok = (kutt: number[]) => {
+          const g = [b0, ...kutt, b1];
+          return g.slice(1).every((z, i) => lengdeMm(Math.max(b0, g[i] - (i ? ov : 0)), Math.min(b1, z + (i < g.length - 2 ? ov : 0))) <= maksLengde);
+        };
+        // alle delmengder av skjoetene, faerrest og jevnest foerst
+        let beste: number[] | null = null;
+        const n = steder.length;
+        for (let maske = 1; maske < (1 << Math.min(n, 10)); maske++) {
+          const kutt = steder.filter((_, i) => maske & (1 << i));
+          if (!ok(kutt)) continue;
+          const g = [b0, ...kutt, b1];
+          const ujevn = Math.max(...g.slice(1).map((z, i) => z - g[i]));
+          const bg = beste ? [b0, ...beste, b1] : null;
+          if (!beste || kutt.length < beste.length ||
+              (kutt.length === beste.length && ujevn < Math.max(...bg!.slice(1).map((z, i) => z - bg![i])))) beste = kutt;
+        }
+        /**
+         * Stripen legges paa langs av rullen og deles bare i to, i den
+         * skjoeten som ligger naermest midten (Eirik 16.11.2026: «legge
+         * stripene paa langs av rullen men kun delt paa 2»). Faerre stykker
+         * er faerre skjoeter aa treffe; stykkene trenger ikke faa plass paa
+         * tvers.
+         */
+        const midt = (b0 + b1) / 2;
+        const naermest = steder.slice().sort((x, y) => Math.abs(x - midt) - Math.abs(y - midt))[0];
+        if (naermest !== undefined && (!beste || beste.length > 1)) beste = [naermest];
+        if (beste) {
+          const g = [b0, ...beste, b1];
+          stykker = g.slice(1).map((z, i) => [Math.max(b0, g[i] - (i ? ov : 0)), Math.min(b1, z + (i < g.length - 2 ? ov : 0))] as [number, number]);
+          bilskjot.add(e);
+        }
+      }
+      if (!stykker && f.length === 1 && f[0].length === 1) {
         // en stripe: like lange stykker med SKJOT_MM overlapp
         const n = Math.ceil(lang / maksLengde);
         const steg = (b1 - b0) / n, ov = mmTil(SKJOT_MM / 2);
@@ -1167,6 +1742,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
     const hel = new Set<Elem>();
     const sett = () => g.flatMap((e) => biterAv.has(e) && !hel.has(e) ? biterAv.get(e)! : [e]);
     for (const e of biterAv.keys()) {
+      if (bilskjot.has(e)) continue;   // skjoetes alltid i bilens skjoet (Eirik 16.11.2026)
       const delt = lengde(sett());
       hel.add(e);
       const helL = lengde(sett());
@@ -1179,7 +1755,10 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         : erTekst.has(e)
           ? `${e.navn}: ${lang.toFixed(0)} mm lang tekst er skjoetet i ${biter.length} stykker i mellomrommet mellom bokstavene. ` +
             `Hvert stykke tar med ${TEKST_PASS_MM} mm av neste bokstav som passmerke: legg neste stykke slik at bokstaven dekker stubben.`
-          : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
+          : bilskjot.has(e)
+            ? `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker i bilens egen skjoet. ` +
+              `Hvert stykke gaar ${SKJOT_BIL_MM} mm inn paa den andre siden av skjoeten.`
+            : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
     }
     grupper.set(nokkel, sett());
   }
@@ -1317,8 +1896,11 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
      * Uten kiss trengs heller ingen regmarks, for det er bare én oppgave paa
      * summaen. Ingen bleed: kanten ER kuttet.
      */
-    const kunThru = folier.length === 1 &&
-      gruppe.every((e) => e.deler.length === 1 && (e.thruForm || heltKonveks(e.deler[0].flate)));
+    // helfolieringsfolie: hver flate er selve stykket, ogsaa naar den ikke er konveks
+    const helfol = folier.length === 1 && !!folier[0].helfoliering &&
+      gruppe.every((e) => e.deler.length === 1 && !e.trykk && e.deler[0].flate.every((p) => p.length === 1));
+    const kunThru = helfol || (folier.length === 1 &&
+      gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || heltKonveks(e.deler[0].flate))));
     /**
      * Printet folie: samme tette ark, men med regmarks og utfallende print.
      * Materialet sier om det KAN printes; innholdet avgjoer (Eirik
@@ -1360,21 +1942,34 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       // alle fire sider rette: tegnes paa nytt som et eksakt rektangel paa rammens maal
       if (sider.every(Boolean)) d.flate = [[[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]]];
     }
+    const kantKiss = !kunThru && gruppe.reduce((t, e) => t + e.antall, 0) > 1 && gruppe.every((e) => !e.thruForm && !e.markering?.length);
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
       ...(e.thruForm ? { thruForm: e.thruForm } : {}),
       ...(kunThru ? { sider: e.thruForm ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
-        : retteSider(e.deler[0].flate, e.bbox, e.skala) } : {}),
+        : retteSider(e.deler[0].flate, e.bbox, e.skala) }
+        /**
+         * Kiss+thru med rektangulaere rammer legges kant i kant, som
+         * klebemerkene (Eirik 16.11.2026: «1 veis kjoering av thru»). Thru
+         * blir rette linjer tvers over arket, skaaret én gang, og kiss-boksen
+         * ligger innenfor rammen. Formede rammer brukes bare naar de gir
+         * kortere ark.
+         */
+        : kantKiss ? { sider: [true, true, true, true] as [boolean, boolean, boolean, boolean] } : {}),
     }));
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
+    const kantIKant = kantKiss && ark.strategi.startsWith("kant i kant");
     if (kunThru) {
       // feltet er skjaerebredden innenfor regmark-kolonnene (ingen paa Appliser+thru)
       const reservert = geo.kissInset + geo.regClear + (geo.regmarkD + 2 * geo.regmarkKiss) + geo.regClear;
       // med regmarks staar arkbredden og regmark-kolonnene fast: strekk innenfor dem
       advarsler.push(...strekkUt(gruppe, tilPakking, ark, geo, reservert,
         regThru ? ark.breddeMm - reservert : reservert + ark.brukbarBredde));
+      const spart = skyvSammen(gruppe, ark, geo, advarsler);
+      if (spart >= 1) advarsler.push(`${folier[0].kode}: stykkene er snudd og skjovet inntil hverandre etter formen, ` +
+        `${Math.round(spart)} mm smalere felt.`);
     }
     /**
      * Appliser+thru: arket ER feltet som skal appliseres. Det legges rundt
@@ -1391,12 +1986,13 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
       ark.breddeMm = Math.ceil((x1 - x0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
       ark.arklengde = Math.ceil((y1 - y0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
       ark.regY = []; ark.regBokser = [];
-      if (ark.breddeMm > foliebredde) advarsler.push(`Feltet som skal appliseres er ${ark.breddeMm} mm bredt, ` +
+      if (!helfol && ark.breddeMm > foliebredde) advarsler.push(`Feltet som skal appliseres er ${ark.breddeMm} mm bredt, ` +
         `bredere enn folien (${foliebredde} mm).`);
     }
 
-    // rammen trengs bare nar flere folier skal legges oppa hverandre
-    const ramme = folier.length > 1;
+    // ingen ytre kiss-ramme helt ytterst paa arket (Eirik 16.11.2026: «det
+    // trenger ikke vaere en ytre kiss-cut ramme paa helt paa utsiden»)
+    const ramme = false;
     /**
      * Wild males pa den ytterste skjaerelinjen, ikke pa arkmalet. Ytterst
      * ligger rammen, eller regmark-kolonnen naar det ikke er noen ramme.
@@ -1421,6 +2017,7 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
         bbox: e.bbox, skala: e.skala, breddeMm: e.breddeMm,
         hoydeMm: e.hoydeMm, antall: e.antall,
         ...(e.thruForm ? { thruForm: e.thruForm } : {}),
+        ...(e.trykk?.length ? { trykk: e.trykk.map((t) => ({ flate: t.flate, fyllOp: rgbOp(t.hex), ...(t.spot ? { spot: t.spot } : {}) })) } : {}),
         // markeringen av det som er lagt tett, bare paa primaerarket
         ...(rolleNr === 0 && e.markering?.length
           ? { markering: e.markering.map((m) => ({ flate: m.flate, fyllOp: rgbOp(m.hex) })) } : {}),
@@ -1445,13 +2042,13 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
        */
       const varianter: { navn: string; valg: ArkValg }[] = kunThru
         ? [{ navn: rolle, valg: { thruCut: true, regmark: regThru, dobleRegmarks: regThru && !wildGar, ytreRamme: false, kunThru: true,
-            print: printThru, ...(spot ? { spot } : {}) } }]
+            print: printThru, ...(helfol ? { helfoliering: true } : {}), ...(spot ? { spot } : {}) } }]
         : rolleNr === 0
         ? [wildGar
-            ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme } }
-            : { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme } }]
+            ? { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: false, ytreRamme: ramme, ...(kantIKant ? { kantIKant: true } : {}) } }
+            : { navn: rolle, valg: { thruCut: true, regmark: true, dobleRegmarks: true, ytreRamme: ramme, ...(kantIKant ? { kantIKant: true } : {}) } }]
         : [{ navn: rolle,
-             valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme } }];
+             valg: { thruCut: false, regmark: false, dobleRegmarks: false, ytreRamme: ramme, ...(kantIKant ? { kantIKant: true } : {}) } }];
 
       for (const v of varianter) {
         /**
@@ -1460,9 +2057,12 @@ export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
          * staar i navnet, saa produksjonen ser hva som skal appliseres foer
          * fila aapnes.
          */
+        const harTrykk = gruppe.some((e) => e.trykk?.length);
         const prosess = v.valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru")
-          : v.valg.kunThru ? (medKiss ? "Kiss+thru" : "Appliser+thru") : v.valg.thruCut ? "Kiss+thru" : "Kiss";
-        const felt = v.valg.kunThru && !regThru ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
+          : helfol && v.valg.kunThru ? "Thru"
+          : v.valg.kunThru ? (medKiss ? "Kiss+thru" : "Appliser+thru")
+          : harTrykk && v.valg.thruCut ? "Print+kiss+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
+        const felt = v.valg.kunThru && !regThru && !helfol ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
           navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,
