@@ -211,7 +211,19 @@ forskyvning gir en tynn stripe. Med gull i bunn som rektangel og svart
 oppå med XL skåret ut finnes ingen slik kant. Regelen i `kjorJobb`: et
 lag som ikke er nederst, men som med hullene fylt dekker minst
 `RAMME_FYLL = 0.995` av motivet, flyttes til bunnen. Den lagvise
-oppbyggingen fyller det så. Det synlige bildet er det samme.
+oppbyggingen fyller det så. Det synlige bildet er det samme. Regelen
+gjelder **per øy**, ikke per element: på panser og bakluke står XL-boksen
+ved siden av PROFF i samme element, og der danner gull bare kanten av
+XL-boksen. Fargen flyttes når den dekker hver øy der den ligger sammen med
+andre farger.
+
+**Glipper ingen kniv kan skjære er tegnefeil og fylles.** På XL-logoen når
+den svarte ruten nesten opp til gullrammen: en glippe 710 mm lang og
+0,01 mm bred. Med gull i bunn ble den to skjærelinjer tvers over gullet.
+Hull med snittbredde under `GLIPPE_MM = 0.1` fylles med folie og meldes
+(«Ingenting er fjernet»). Grensen er **absolutt**, aldri relativ til
+logoens størrelse: den gamle restfjerningen var relativ og tok hele
+bokstaver. Dette legger til folie, det trekker aldri fra.
 `test/lagbunn.ts` vokter dette og de to reglene over.
 
 **Feilsignatur:** to like kanter som må treffe hverandre ved montering,
