@@ -23,6 +23,22 @@ const HARSTREK_FORHOLD = 30;
 const KLYNGE_MM = 3;          // tegnet glippe innenfor ett element
 const MINSTE_EKTE_MM = 30;    // mindre enn dette er ikke folie
 
+/**
+ * Farger som tilhoerer selve bilen i CCVision-tegningene, uansett om de
+ * ogsaa brukes til harstrek. Regel 2 fanger lyktefargen bare naar skissen
+ * tilfeldigvis har en harstrek i samme farge. Proace-skissen har det,
+ * e-expert-skissen (309916) har det ikke, og der ble baklykter, refleks,
+ * hjul og hele taket lest som dekor. Lista er fasit, ikke gjetning: hver
+ * farge staar her fordi en ekte skisse viste at den er bilens, og
+ * test/bilfarger.ts vokter det.
+ *
+ *   0.00,1.00,1.00,0.15   lykter og refleks (CMYK)
+ */
+/** over denne andelen bilgraatt er klyngen en del av bilen */
+const BILGRAA_ANDEL = 0.25;
+
+export const BILFARGER = new Set<string>(["0.00,1.00,1.00,0.15"]);
+
 export interface DekorOmraade {
   x0: number; y0: number; x1: number; y1: number;
   vis: string; navn: string;
@@ -173,6 +189,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
   //    Dette ma gjores forst, for malpilene binder visningene sammen
   //    til en klump hvis de far vaere med naar visningene skal finnes.
   const malfarge = new Set<string>();
+  for (const b of kulorte) if (BILFARGER.has(fargenavn(b))) malfarge.add(fargenavn(b));
   for (const b of kulorte) {
     const w = (b.x1 - b.x0) / MM, h = (b.y1 - b.y0) / MM;
     const t = Math.min(w, h), L = Math.max(w, h);
@@ -220,6 +237,24 @@ export function finnDekor(lest: LettLest, malestokk: number,
       if (!nye.length) break;
       med = med.concat(nye);
       r = ramme(med);
+    }
+    /**
+     * 6. Bilen er tegnet i rene graatoner (bare K). Bestaar en klynge
+     *    for en stor del av slike flater, har vi fanget en del av bilen,
+     *    ikke dekor. Paa 309916 e-expert var det dekket paa bakhjulet,
+     *    tegnet i rik sort, med felg og hjulbue i K-graatt rundt.
+     *    Dekor i graatt kommer fra kunden som RGB eller med kuloer, og
+     *    rammes ikke.
+     */
+    const flate = (b: Boks) => (b.x1 - b.x0) * (b.y1 - b.y0);
+    const rentGraatt = (b: Boks) => !!b.farge && b.farge.length === 4 &&
+      Math.max(b.farge[0], b.farge[1], b.farge[2]) < 0.01 && b.farge[3] > 0.03 && b.farge[3] < 0.97;
+    const graaAndel = med.filter(rentGraatt).reduce((a, b) => a + flate(b), 0) /
+      Math.max(med.reduce((a, b) => a + flate(b), 0), 1e-9);
+    if (graaAndel > BILGRAA_ANDEL) {
+      forkastet.push({ hva: `${med.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
+        grunn: `${(graaAndel * 100).toFixed(0)} % er bilens graatoner` });
+      continue;
     }
     const v = visninger.find((vv) => andelInni(r, vv) >= 0.5);
     omraader.push({
