@@ -226,6 +226,16 @@ logoens størrelse: den gamle restfjerningen var relativ og tok hele
 bokstaver. Dette legger til folie, det trekker aldri fra.
 `test/lagbunn.ts` vokter dette og de to reglene over.
 
+**Passmerke mellom elementer som er delt for å spare folie** (Eirik
+16.11.2026). XL-boksen og PROFF er ett merke, men skjæres hver for seg.
+`leggPassmerker` i `src/bilmotor.ts` finner par i samme visning, side om
+side med luft under halve høyden, i omtrent samme høyde og med en felles
+farge. Det høyeste elementet får en strimmel på 5 mm i den mørkeste
+felles fargen langs underkanten av naboen, 5 mm inn under den. Montøren
+legger naboen der strimmelen viser og river strimmelen av. Elementer som
+telles i flere eksemplarer får ikke passmerke. Feltet `passmerke` på
+elementet og en merknad sier fra.
+
 **Feilsignatur:** to like kanter som må treffe hverandre ved montering,
 tekst som mangler ved siden av et element, eller samme merke skåret to
 ganger.

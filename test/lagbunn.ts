@@ -14,6 +14,7 @@
  *    av. Tegnefeilen (glippe 0,01 mm) fylles og meldes.
  *  - «XL-BYGG Osteroy» paa bakluken og paa den ene siden er levende tekst
  *    og meldes ved elementet sitt.
+ *  - passmerke fra XL-boksen 5 mm inn under P i PROFF paa begge sider.
  *  - XL PROFF paa panseret i frontvisningen meldes som samme merke som
  *    det i toppvisningen.
  */
@@ -34,8 +35,8 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
   const lerret = (b: number, h: number) => createCanvas(Math.round(b), Math.round(h)) as any;
   const lest = await lesBilskisse(new Uint8Array(fs.readFileSync("eexpert.pdf")), { jobb: "x", bilder, lerret });
 
-  const xl = lest.elementer.find((e) => e.breddeMm === 777)!;
-  const r: any = await kjorJobb({ jobb: "XL", linjer: [{ navn: "XL", pdf: xl.pdf, breddeMm: 777, antall: 1,
+  const xl = lest.elementer.find((e) => e.hoydeMm === 494)!;
+  const r: any = await kjorJobb({ jobb: "XL", linjer: [{ navn: "XL", pdf: xl.pdf, breddeMm: xl.breddeMm, antall: 1,
     folier: xl.farger.map((f) => f.hex === "#D7C46D" ? GULL : SORT) }] } as any);
   const prim = r.ark.find((a: any) => a.rolle === "primær");
   sjekk(prim?.foliekode === "751-070", `XL: svart oeverst som primaer (fikk ${prim?.foliekode})`);
@@ -76,6 +77,15 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
   const tekst = lest.levendeTekst.filter((t) => t.element && /Osterøy/.test(t.tekst));
   sjekk(tekst.length === 2, `levende tekst «XL-BYGG Osterøy» meldt ved 2 elementer (fikk ${tekst.length})`);
   sjekk(lest.merknader.some((m) => /IKKE med i skjaerefilene/.test(m)), "levende tekst gir tydelig merknad");
+
+  // passmerke: XL-boksen og PROFF er delt for aa spare folie. Strimmelen
+  // henger med XL-boksen og gaar inn under P, paa begge sider av bilen.
+  const pass = lest.elementer.filter((e) => e.passmerke);
+  sjekk(pass.length === 2 && pass.every((e) => e.passmerke!.hex === "#000000" && e.hoydeMm > 400),
+    `passmerke paa begge XL-boksene, i sort (${pass.map((e) => e.navn + " -> " + e.passmerke!.mot).join(", ")})`);
+  sjekk(lest.elementer.filter((e) => e.passmerke).every((e) => /PROFF|dekor 2/.test(e.passmerke!.mot)),
+    "passmerket peker mot PROFF");
+  sjekk(!lest.elementer.some((e) => e.passmerke && e.antall > 1), "ingen passmerke paa elementer i flere eksemplarer");
 
   const dobbel = lest.elementer.filter((e) => e.sammeSom);
   sjekk(dobbel.length === 1 && dobbel[0].breddeMm === 978 && dobbel[0].hoydeMm === 55,

@@ -92,6 +92,11 @@ export interface BilElement {
    * Elementet er ikke fjernet. Appen boer la brukeren ta det ut.
    */
   sammeSom?: string;
+  /**
+   * satt naar elementet har faatt et passmerke: en strimmel som viser hvor
+   * nabo-elementet skal ligge. Den rives av etter montering.
+   */
+  passmerke?: { mot: string; hex: string; lengdeMm: number };
 }
 
 export interface BilSkisseLest {
@@ -202,6 +207,8 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   };
 
   const elementer: BilElement[] = [];
+  /** banene som faktisk ligger i hvert elements PDF, til passmerkene */
+  const brukteBaner = new Map<BilElement, Bane[]>();
   for (const o of funn.omraader) {
     const valgte = baner.filter((b) => andel(b, o) >= 0.9);
     if (!valgte.length) continue;
@@ -214,6 +221,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       }
     };
     let pdf = await skrivPdf(valgte);
+    let brukte = valgte;
     let per = await lesTrygt(pdf);
     let tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
     let tegnetH = (per.bbox[3] - per.bbox[1]) / MM;
@@ -271,6 +279,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       const igjen = valgte.filter((b) => !horerTilPlaten(b, platehex));
       if (igjen.length && igjen.length < valgte.length) {
         pdf = await skrivPdf(igjen);
+        brukte = igjen;
         // alt som meldes utledes na av den fila som faktisk leveres
         per = await lesTrygt(pdf);
         tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
@@ -293,14 +302,16 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       }
     }
 
-    elementer.push({
+    const nytt: BilElement = {
       id: nokkel, vis: o.vis, navn: `${o.vis} ${o.navn}`, pdf,
       breddeMm: Math.round(tegnetB * malestokk),
       hoydeMm: Math.round(tegnetH * malestokk),
       antall: 1,
       farger: per.lag.map((l) => ({ hex: l.hex, andel: l.andel })),
       ...(bakgrunn ? { bakgrunn } : {}),
-    });
+    };
+    elementer.push(nytt);
+    brukteBaner.set(nytt, brukte);
   }
   if (!elementer.length) merknader.push("Ingen dekor a produsere i denne skissen.");
 
@@ -331,6 +342,8 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       "Ta det ut av jobben hvis det stemmer, ellers skjaeres det to ganger.");
   }
 
+  await leggPassmerker(elementer, brukteBaner, malestokk, merknader);
+
   const forside = tegnBilSkisse(baner, {
     jobb: v.jobb, malestokk,
     visninger: funn.visninger.map((x) => ({ x0: x.x0, y0: x.y0, x1: x.x1, y1: x.y1 })),
@@ -344,6 +357,84 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     visninger: funn.visninger.map((x) => ({ navn: x.navn, breddeEkteMm: x.breddeEkteMm, hoydeEkteMm: x.hoydeEkteMm })),
     elementer, forside, merknader, levendeTekst,
   };
+}
+
+/** passmerkets hoyde og hvor langt det gaar inn under nabo-elementet, i ekte mm */
+const PASS_HOYDE_MM = 5;
+const PASS_OVERLAPP_MM = 5;
+
+/**
+ * Passmerke mellom to elementer som hoerer sammen.
+ *
+ * Eirik 16.11.2026, 309916 e-expert: XL-boksen og PROFF er ett merke paa
+ * bilen, men skjaeres hver for seg for aa spare folie. Montoeren maa da
+ * maale inn PROFF i forhold til XL-boksen. Med et passmerke slipper han
+ * det: en strimmel i samme folie som henger med XL-boksen og gaar 5 mm inn
+ * under P. Montoeren legger P der strimmelen viser, og river strimmelen av.
+ *
+ * Motoren trenger ikke vite at de er ett merke. Den ser fra skissen at de
+ * staar i samme visning, side om side med lite luft imellom, i omtrent
+ * samme hoeyde, og har en farge felles. Det er kjennetegnet paa noe som
+ * er delt for aa spare folie.
+ *
+ * Strimmelen legges langs underkanten av naboen, fra baererens kant og
+ * PASS_OVERLAPP_MM inn under naboen, i den felles fargen. Baereren er det
+ * hoeyeste elementet, som monteres foerst. Elementer som telles i flere
+ * eksemplarer faar ikke passmerke, siden naboen bare staar ved ett av dem.
+ */
+async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Bane[]>,
+                              malestokk: number, merknader: string[]) {
+  const boks = (bs: Bane[]) => ({
+    x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
+    x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
+  const tilTegnet = (mm: number) => (mm / malestokk) * MM;
+  const brukt = new Set<BilElement>();
+  for (const a of elementer) for (const b of elementer) {
+    if (a === b || a.vis !== b.vis || brukt.has(a) || brukt.has(b)) continue;
+    if (a.antall !== 1 || b.antall !== 1 || a.sammeSom || b.sammeSom) continue;
+    const ba = baner.get(a), bb = baner.get(b);
+    if (!ba || !bb) continue;
+    const ra = boks(ba), rb = boks(bb);
+    if (rb.x0 <= ra.x1) continue;                     // b skal staa til hoyre for a
+    const ha = ra.y1 - ra.y0, hb = rb.y1 - rb.y0;
+    const luft = rb.x0 - ra.x1;
+    const overlappY = Math.min(ra.y1, rb.y1) - Math.max(ra.y0, rb.y0);
+    if (luft > 0.5 * Math.min(ha, hb)) continue;       // for langt fra hverandre
+    if (overlappY < 0.5 * Math.min(ha, hb)) continue;  // ikke i samme hoyde
+    if (Math.max(ha, hb) > 2 * Math.min(ha, hb)) continue;
+    const felles = a.farger.map((f) => f.hex).filter((h) => b.farger.some((g) => g.hex === h));
+    if (!felles.length) continue;
+    // morkeste felles farge: den ses best og er oftest naboens farge
+    const lum = (h: string) => parseInt(h.slice(1, 3), 16) + parseInt(h.slice(3, 5), 16) + parseInt(h.slice(5, 7), 16);
+    const hex = felles.sort((x, y) => lum(x) - lum(y))[0];
+    const [baerer, nabo] = ha >= hb ? [a, b] : [b, a];
+    const [rB, rN] = ha >= hb ? [ra, rb] : [rb, ra];
+    const kilde = (baner.get(nabo) ?? []).find((x) => x.fyll && baneHex(x.farge) === hex)
+      ?? (baner.get(baerer) ?? []).find((x) => x.fyll && baneHex(x.farge) === hex);
+    if (!kilde) continue;
+    const h = tilTegnet(PASS_HOYDE_MM), inn = tilTegnet(PASS_OVERLAPP_MM);
+    const y0 = rN.y0, y1 = rN.y0 + h;
+    const [x0, x1] = rN.x0 > rB.x1 ? [rB.x1, rN.x0 + inn] : [rN.x1 - inn, rB.x0];
+    const strimmel: Bane = {
+      segs: [{ t: "m", p: [x0, y0] }, { t: "l", p: [x1, y0] }, { t: "l", p: [x1, y1] },
+             { t: "l", p: [x0, y1] }, { t: "h" }] as any,
+      farge: kilde.farge.slice(), strekFarge: kilde.farge.slice(),
+      fyll: true, strek: false, bredde: 0,
+      boks: { x0, y0, x1, y1 },
+    };
+    const nye = [...(baner.get(baerer) ?? []), strimmel];
+    baerer.pdf = await skrivPdf(nye);
+    const per = await hentGeometriPerFarge(baerer.pdf, 1.0);
+    baerer.breddeMm = Math.round(((per.bbox[2] - per.bbox[0]) / MM) * malestokk);
+    baerer.hoydeMm = Math.round(((per.bbox[3] - per.bbox[1]) / MM) * malestokk);
+    baerer.farger = per.lag.map((l) => ({ hex: l.hex, andel: l.andel }));
+    baerer.passmerke = { mot: nabo.navn, hex, lengdeMm: Math.round(((x1 - x0) / MM) * malestokk) };
+    baner.set(baerer, nye);
+    brukt.add(a); brukt.add(b);
+    merknader.push(`${baerer.navn}: passmerke lagt inn mot ${nabo.navn}, en strimmel ` +
+      `${PASS_HOYDE_MM} mm hoy i ${hex} langs underkanten, ${PASS_OVERLAPP_MM} mm inn under ` +
+      "naboen. Montoeren legger naboen der strimmelen viser, og river strimmelen av.");
+  }
 }
 
 /**
