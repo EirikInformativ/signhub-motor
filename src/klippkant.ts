@@ -74,7 +74,7 @@ export function flate(ringer: Ring[]): any {
   try { return pc.xor(...(deler as [any])); } catch { return null; }
 }
 
-function utvid(mp: any, d: number): any {
+export function utvid(mp: any, d: number): any {
   const S = 1e3;
   const co = new ClipperLib.ClipperOffset(2, 0.25);
   for (const poly of mp) for (const r of poly)

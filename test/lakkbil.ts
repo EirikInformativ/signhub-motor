@@ -21,7 +21,7 @@
  *  - fotoene paa sidene er innsatte bilder og meldes.
  */
 import * as fs from "fs";
-import { lesBilskisse, DISCLAIMER, VANNMERKE } from "../src/motor";
+import { lesBilskisse, kjorJobb, DISCLAIMER, VANNMERKE } from "../src/motor";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 (async () => {
@@ -47,6 +47,16 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(sideEl.length >= 3 && sideEl.every((e: any) => e.antall === 2 && e.ensidig && !e.ensidig.speilet),
     "E-Partner: bare én side tegnet, tekst og logo paa siden telles to ganger uten speilvending");
   sjekk(!ep.elementer.some((e: any) => e.vis !== "side" && e.ensidig), "E-Partner: front, bak og topp dupliseres ikke");
+  {
+    // 3165-215 finnes i 1050 og 1370 (Eirik 17.11.2026): smal rull naar alt faar plass
+    const PRINT = { kode: "3165-215", hex: "#005BCE", breddeMm: 1370, bredderMm: [1050], print: true };
+    const F010 = { kode: "751-010", hex: "#FFFFFF", breddeMm: 1260 };
+    const r: any = await kjorJobb({ jobb: "ep", egenSkisse: false, linjer: ep.elementer.map((e: any) => ({ navn: e.navn, pdf: e.pdf,
+      breddeMm: e.breddeMm, antall: e.antall, folier: e.farger.map((f: any) => e.farger.length > 1 ? { ...PRINT, hex: f.hex } : F010) })) } as any);
+    const p = r.ark.find((a: any) => a.foliekode === "3165-215");
+    sjekk(p?.rullbreddeMm === 1050, `E-Partner: logoene printes paa 1050-rull (${p?.rullbreddeMm})`);
+    sjekk(!r.advarsler.some((a: string) => /svaert sma/.test(a)), "E-Partner: ingen mikroskopiske biter fra passmerkene");
+  }
   sjekk(!ep.elementer.some((e: any) => e.breddeMm > 470 && e.breddeMm < 600 && e.hoydeMm > 90 && e.hoydeMm < 140), "E-Partner: nummerskiltene er ikke dekor");
 
   const v: any = await lesBilskisse(new Uint8Array(fs.readFileSync("vito304160.pdf")), { jobb: "v", bilder, lerret } as any);
@@ -60,7 +70,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(!v.elementer.some((e: any) => e.farger.some((f: any) => f.hex === "#FF0000")), "Oesterboe: roed prikk i Informativ-logoen i bunnteksten er ikke dekor");
   sjekk(!v.elementer.some((e: any) => e.breddeMm < 60 && e.hoydeMm < 60), "Oesterboe: hvite flater helt under doerhaandtakene er ikke dekor");
   // Oesterboe (Eirik 17.11.2026)
-  sjekk(ø.every((e: any) => e.breddeMm > 1050), `Oesterboe: hele Oe-en, begge halvdelene (${ø.map((e: any) => Math.round(e.breddeMm)).join(", ")})`);
+  sjekk(ø.every((e: any) => e.breddeMm > 1050 && Math.abs(e.breddeMm - e.hoydeMm) < 0.03 * e.hoydeMm), `Oesterboe: hele Oe-en, ikke kuttet ved klippet (${ø.map((e: any) => Math.round(e.breddeMm)).join(", ")})`);
   sjekk(v.visninger.some((x: any) => x.navn === "topp") && v.visninger.some((x: any) => x.navn === "side ovre"), "Oesterboe: toppen er skilt fra siden under");
   sjekk(v.elementer.some((e: any) => Math.abs(e.breddeMm - 906) < 15 && Math.abs(e.hoydeMm - 362) < 15 && e.antall === 2),
     "Oesterboe: smoerbroedlista paa sidene er ett element med alle tre ikonene");

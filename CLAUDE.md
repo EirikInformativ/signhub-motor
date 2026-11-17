@@ -729,6 +729,21 @@ og Vito 304160):**
   `kuttVedBildeler`). Dette er ikke et unntak fra «motoren fjerner aldri
   noe»: det som synes, staar.
 
+- Passmerke-stubben er ett solid stykke: biter under `STUBB_MIN_ANDEL` av
+  den stoerste eller tynnere enn `STUBB_MIN_MM = 3` tas ikke med, og gir
+  tegnet ingen solid stubb, proeves neste. Hoeye tegn er de som naar opp til
+  linja mot logoen (D, l, !), ikke en g med underlengde (Eirik: «å lage de
+  mikroskopiske bitene der er ris til egen ræv»).
+- Bare striper kuttes ved klippebanen (`kuttVedKlipp`). Et logoikon som er
+  klippet langs karosseriet skjaeres helt (Oesterboe: hele Oe-en, 1138 mm).
+  Er banen selv avkuttet i skissen, er Eiriks maate aa hente ikonet fra en
+  komplett logo og skalere det. Det er ikke bygget ennaa.
+- `bredderMm` paa folien: andre rullbredder (3165 og 215 finnes i 1050 og
+  1370). Hovedbredden brukes saa langt det gaar (faerre rullbytter). Faar
+  alt plass paa en smalere rull uten nye skjoeter, og den sparer minst
+  `SMAL_RULL_SPAR = 0.1` av folien, brukes den og meldes. E-Partner: 2,24
+  til 1,63 m², og fila kan gaa paa wild.
+
 **Feilsignatur:** halv logo der designeren har tegnet den i to baner,
 ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
 

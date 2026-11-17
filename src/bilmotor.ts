@@ -18,7 +18,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -292,7 +292,17 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const valgtGraa = (b: Bane) => o.liste.some((x) => !!x.farge && x.farge.length === 4 &&
       Math.max(x.farge[0], x.farge[1], x.farge[2]) < 0.01 && x.farge[3] > 0.01 && x.farge[3] < 0.99) && likBoks(b);
     const valgte = baner.filter((b) => !b.gradient && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && (!erBil(b) || valgtGraa(b)) && likBoks(b))
-      .map((b) => kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM));
+      /**
+       * Bare striper kuttes ved klippet. Et logoikon som designeren har
+       * klippet langs karosseriet skjaeres helt (Eirik 17.11.2026, Oesterboe:
+       * «her hadde nok jeg bare kjørt hele logoikonet med alt med. lite å
+       * tjene på å kutte de ned litt og det gir montøren mer fleksibilitet»).
+       */
+      .map((b) => {
+        const w = b.boks.x1 - b.boks.x0, h = b.boks.y1 - b.boks.y0;
+        const stripe = Math.max(w, h) >= STRIPE_FORHOLD_BIL * Math.max(1e-9, Math.min(w, h));
+        return stripe ? kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM) : b;
+      });
     if (valgte.length) valgtPerOmraade.push({ o, valgte });
   }
   /**
@@ -932,6 +942,9 @@ const KORT_ORD_VINKEL = 12;
 const SVAK_GRUNNLINJE = 0.2;
 /** Saa mye av foerste og siste hoeye tegn ligger med i logoen som passmerke. */
 const TEKST_STUBB_MM = 10;
+/** stubbens biter: minst saa stor andel av den stoerste, og minst saa tykke (ekte mm) */
+const STUBB_MIN_ANDEL = 0.3;
+const STUBB_MIN_MM = 3;
 /** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */
 const TEKST_HOYDE = 1.8;
 /** linjer i samme tekst kan staa opptil dette ganger bokstavhoeyden fra hverandre */
@@ -980,7 +993,7 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
      * sammen med tekstene sine. Ekte skraadde logoer staar sterkt (Vito
      * sort: over 1,3 ganger bredden).
      */
-    if (v !== null && r.styrke < SVAK_GRUNNLINJE) {
+    if (v !== null && (r.styrke ?? 1) < SVAK_GRUNNLINJE) {
       const a = Math.abs(v) % 90;
       if (Math.min(a, 90 - a) > TEKST_VINKEL) v = null;
     }
@@ -1192,17 +1205,53 @@ async function leggTekstPassmerker(elementer: BilElement[], baner: Map<BilElemen
     if (komp.length < 2) continue;
     const hoyde = (k: typeof komp[number]) => vannrett ? k.b.y1 - k.b.y0 : k.b.x1 - k.b.x0;
     const maks = Math.max(...komp.map(hoyde));
-    const hoye = komp.filter((k) => hoyde(k) >= 0.9 * maks).sort((a, b) => vannrett ? a.b.x0 - b.b.x0 : b.b.y1 - a.b.y1);
-    const valgt = hoye.length > 1 ? [hoye[0], hoye[hoye.length - 1]] : hoye;
-    const stubber: Bane[] = [];
-    for (const k of valgt) {
-      // band ved kanten som vender mot logoen
+    /**
+     * Hoeye tegn er de som naar opp (eller ned) til linja som vender mot
+     * logoen: D, l, k, d og !. En g med underlengde er like hoey som en D,
+     * men naar ikke opp, og stubben ble en bue (Eirik 17.11.2026).
+     */
+    const venstreLogo = !vannrett && rt.x1 <= rl.x0 + 1e-6;
+    const kant = (k: typeof komp[number]) => vannrett ? (under ? k.b.y1 : -k.b.y0) : (venstreLogo ? k.b.x1 : -k.b.x0);
+    const toppKant = Math.max(...komp.map(kant));
+    const hoye = komp.filter((k) => hoyde(k) >= 0.5 * maks && kant(k) >= toppKant - 0.1 * maks).sort((a, b) => vannrett ? a.b.x0 - b.b.x0 : b.b.y1 - a.b.y1);
+    /**
+     * Stubben skal vaere ett solid stykke montoeren kan se og strippe
+     * (Eirik 17.11.2026: «å lage de mikroskopiske bitene der er ris til egen
+     * ræv»). Et baand gjennom en buet bokstav gir buer og smaa linser.
+     * Biter under STUBB_MIN_ANDEL av den stoerste, eller tynnere enn
+     * STUBB_MIN_MM, tas ikke med. Gir tegnet ingen solid stubb, proeves
+     * neste hoeye tegn innover.
+     */
+    const minTykk = (STUBB_MIN_MM / malestokk) * MM;
+    const lagStubb = (k: typeof komp[number]): { del: any; god: boolean } | null => {
       let r: number[];
       if (vannrett) r = under ? [k.b.x0 - 1, k.b.y1 - stubb, k.b.x1 + 1, k.b.y1 + 1] : [k.b.x0 - 1, k.b.y0 - 1, k.b.x1 + 1, k.b.y0 + stubb];
       else r = rt.x1 <= rl.x0 + 1e-6 ? [k.b.x1 - stubb, k.b.y0 - 1, k.b.x1 + 1, k.b.y1 + 1] : [k.b.x0 - 1, k.b.y0 - 1, k.b.x0 + stubb, k.b.y1 + 1];
       let del: any;
-      try { del = pc.intersection(k.f, [[[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]], [r[0], r[1]]]]); } catch { continue; }
-      if (!del?.length) continue;
+      try { del = pc.intersection(k.f, [[[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]], [r[0], r[1]]]]); } catch { return null; }
+      if (!del?.length) return null;
+      const arealer = del.map((p: any) => arealKlipp([p]));
+      const maksA = Math.max(...arealer);
+      const solid = (p: any) => { try { return arealKlipp(utvidKlipp([p], -minTykk / 2)) > 0; } catch { return true; } };
+      const beholdt = del.filter((p: any, i: number) => arealer[i] >= STUBB_MIN_ANDEL * maksA && solid(p));
+      if (!beholdt.length) return null;
+      const tot = arealer.reduce((a: number, b: number) => a + b, 0);
+      return { del: beholdt, god: beholdt.length === 1 && maksA >= 0.85 * tot };
+    };
+    const velgFra = (liste: typeof komp) => {
+      let reserve: { del: any } | null = null;
+      for (const k of liste.slice(0, 4)) {
+        const st = lagStubb(k);
+        if (st?.god) return st;
+        if (st && !reserve) reserve = st;
+      }
+      return reserve;
+    };
+    const valgt = hoye.length > 1 ? [velgFra(hoye), velgFra(hoye.slice().reverse())] : [velgFra(hoye)];
+    const stubber: Bane[] = [];
+    for (const st of valgt) {
+      if (!st) continue;
+      const del = st.del;
       const segs: any[] = [];
       for (const poly of del) for (const ring of poly) {
         segs.push({ t: "m", p: ring[0] });

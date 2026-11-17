@@ -65,6 +65,12 @@ export interface Folie {
   prisM2?: number;
   /** fargen printes paa folien (f.eks. hvit refleks). Tette ark blir da Print+thru med regmarks. */
   print?: boolean;
+  /**
+   * Andre rullbredder folien finnes i, for eksempel [1050] for 3165 og 215.
+   * breddeMm er hovedrullen. Faar alt plass paa en smalere rull uten nye
+   * skjoeter, og det sparer minst 10 prosent folie, brukes den og meldes.
+   */
+  bredderMm?: number[];
 }
 
 /**

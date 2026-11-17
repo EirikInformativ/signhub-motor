@@ -200,6 +200,13 @@ export interface Folie {
    */
   print?: boolean;
   /**
+   * Andre rullbredder folien finnes i (Eirik 17.11.2026: 3165 og 215 kommer
+   * ogsaa i 1050 mm). Hovedbredden er `breddeMm`, og den brukes saa langt
+   * det gaar, saa man slipper rullbytter. Faar alt plass paa en smalere
+   * rull, og det sparer minst SMAL_RULL_SPAR av folien, brukes den.
+   */
+  bredderMm?: number[];
+  /**
    * Helfolieringsfolie (Avery Carmine Red o.l.). Hele felt trenger ikke
    * appliseres (Eirik 16.11.2026): stykkene thru-cuttes rett langs kanten,
    * uten kiss og uten luking, og legges paa bilen uten applikasjonstape.
@@ -1151,7 +1158,47 @@ const lys = (f: Folie) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
 
+/** en smalere rull brukes naar den sparer minst saa stor andel av folien */
+const SMAL_RULL_SPAR = 0.1;
+
 export async function kjorJobb(b: Bestilling): Promise<JobbResultat> {
+  let best = await kjorJobbEn(b);
+  /**
+   * Smalere rull naar det aapenbart gaar (Eirik 17.11.2026): proev hver
+   * folie med alternative bredder, smaleste foerst, med de andre foliene
+   * som de er. Den smale vinner bare naar alt faar plass og folien paa den
+   * rullen er minst SMAL_RULL_SPAR mindre enn paa hovedrullen.
+   */
+  const koder = new Map<string, number[]>();
+  for (const l of b.linjer) for (const f of l.folier ?? []) {
+    if (f && typeof f === "object" && f.bredderMm?.length) koder.set(f.kode, f.bredderMm);
+  }
+  let bestilling = b;
+  for (const [kode, bredder] of koder) {
+    const m2 = (r: JobbResultat) => r.ark.filter((a) => a.foliekode === kode).reduce((s, a) => s + a.kvadratmeter, 0);
+    const hoved = m2(best);
+    const hovedBredde = best.ark.find((a) => a.foliekode === kode)?.rullbreddeMm;
+    for (const bredde of bredder.slice().sort((x, y) => x - y)) {
+      if (!hovedBredde || bredde >= hovedBredde) continue;
+      const proeve: Bestilling = { ...bestilling, linjer: bestilling.linjer.map((l) => ({ ...l,
+        folier: l.folier?.map((f) => f && typeof f === "object" && f.kode === kode ? { ...f, breddeMm: bredde } : f) })) };
+      let r: JobbResultat;
+      try { r = await kjorJobbEn(proeve); } catch { continue; }
+      const smal = m2(r);
+      // alt faar plass: ingen nye skjoeter fordi rullen er smalere
+      const skjot = (x: JobbResultat) => x.advarsler.filter((a) => /skjoetet/.test(a)).join("|");
+      if (smal > 0 && smal <= (1 - SMAL_RULL_SPAR) * hoved && skjot(r) === skjot(best)) {
+        r.advarsler.push(`${kode}: rull ${bredde} mm brukes i stedet for ${hovedBredde} mm. Alt faar plass, og folien gaar ` +
+          `fra ${hoved.toFixed(2).replace(".", ",")} til ${smal.toFixed(2).replace(".", ",")} m².`);
+        best = r; bestilling = proeve;
+        break;
+      }
+    }
+  }
+  return best;
+}
+
+async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
   const grunngeo: Geo = { ...STD_GEO, ...(b.geo ?? {}) };
   const advarsler: string[] = [];
   const analyse: Analyse[] = [];
