@@ -43,6 +43,13 @@ const svart = (b: Boks) => !!b.farge && b.farge.length === 4 && (
 /** over denne andelen bilgraatt er klyngen en del av bilen */
 const BILGRAA_ANDEL = 0.25;
 
+/** En graa flate bak en kuloer er dekor naar den er hoeyst saa mange ganger stoerre. */
+const GRAA_BAK_MAKS = 4;
+/** Hvit flate paa moerk bil stoerre enn dette er dekor uansett tegnerekkefoelge. */
+const STOR_LYS_MM = 300;
+/** Kuloeren som dekker mer enn denne andelen av det fylte, er bilens lakk. */
+const LAKK_ANDEL = 0.3;
+
 export const BILFARGER = new Set<string>(["0.00,1.00,1.00,0.15"]);
 
 export interface DekorOmraade {
@@ -128,9 +135,48 @@ function profilDel(bokser: Boks[], vannrett: boolean, glippe: number): Boks[][] 
   })).filter((g) => g.length);
 }
 
+/** Andelen av flaten som har et speilbilde om midtlinjen paa langs. Over dette er visningen toppen. */
+const SYMMETRI_TOPP = 0.5;
+function symmetri(bokser: Boks[], v: { x0: number; y0: number; x1: number; y1: number }): number {
+  const inni = bokser.filter((b) => b.x0 >= v.x0 - 1 && b.x1 <= v.x1 + 1 && b.y0 >= v.y0 - 1 && b.y1 <= v.y1 + 1
+    && (b.x1 - b.x0) * (b.y1 - b.y0) > 0);
+  const my = (v.y0 + v.y1) / 2, tol = 0.01 * (v.y1 - v.y0);
+  let tot = 0, treff = 0;
+  for (const b of inni) {
+    const a = (b.x1 - b.x0) * (b.y1 - b.y0);
+    if (a > 0.25 * (v.x1 - v.x0) * (v.y1 - v.y0)) continue;   // omrisset selv sier ingenting
+    tot += a;
+    const s0 = 2 * my - b.y1, s1 = 2 * my - b.y0;
+    if (inni.some((c) => c !== b && Math.abs(c.x0 - b.x0) < tol && Math.abs(c.x1 - b.x1) < tol
+      && Math.abs(c.y0 - s0) < tol && Math.abs(c.y1 - s1) < tol)
+      || (Math.abs(b.y0 + b.y1 - 2 * my) < tol)) treff += a;
+  }
+  return tot ? treff / tot : 0;
+}
+
 export function finnVisninger(bokser: Boks[], malestokk: number,
                               dim: { L: number | null; B: number | null; H: number | null }): Visning[] {
+  /**
+   * To visninger som overlapper litt i hoeyden blir ett baand. Paa
+   * Oesterboe (Vito 304160) stikker speilene paa toppvisningen opp forbi
+   * hjulene paa siden under, og toppen ble en del av siden. Et baand som er
+   * mye hoeyere enn bilen kan vaere, deles der faerrest baner krysser.
+   */
+  const maksH = dim.B && dim.H ? (Math.max(dim.B, dim.H) * 1000 / malestokk) * MM : Infinity;
+  const delHoyt = (band: Boks[]): Boks[][] => {
+    const y0 = Math.min(...band.map((b) => b.y0)), y1 = Math.max(...band.map((b) => b.y1));
+    if (y1 - y0 < 1.5 * maksH) return [band];
+    let best = -1, minst = Infinity;
+    for (let y = y0 + 0.3 * maksH; y <= y1 - 0.3 * maksH; y += MM) {
+      const n = band.filter((b) => b.y0 < y && b.y1 > y).length;
+      if (n < minst) { minst = n; best = y; }
+    }
+    if (best < 0 || minst > 6) return [band];
+    const over = band.filter((b) => (b.y0 + b.y1) / 2 > best), under = band.filter((b) => (b.y0 + b.y1) / 2 <= best);
+    return over.length && under.length ? [...delHoyt(over), ...delHoyt(under)] : [band];
+  };
   const grupper = profilDel(bokser, true, 2 * MM)
+    .flatMap(delHoyt)
     .flatMap((band) => profilDel(band, false, 2 * MM))
     .map((g) => ramme(g))
     .filter((r) => (r.x1 - r.x0) / MM > 20 && (r.y1 - r.y0) / MM > 20)
@@ -151,7 +197,15 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
    * bredden og hoyden nesten like store.
    */
   const langs = dim.L ? rader.filter((v) => naer(v.breddeEkteMm / 1000, dim.L!)) : [];
-  const ender = rader.filter((v) => !langs.includes(v));
+  /**
+   * En endevisning er like bred og hoey som bilen. Det som er igjen paa
+   * arket (Informativ-logoen i bunnteksten paa Oesterboe, med en roed
+   * prikk) er ikke en visning, og dekor der skal aldri skjaeres.
+   */
+  const erEnde = (v: Visning) => !dim.B || !dim.H ||
+    (naer(v.breddeEkteMm / 1000, dim.B) && Math.abs(v.hoydeEkteMm / 1000 / dim.H - 1) <= 0.5);
+  const ender = rader.filter((v) => !langs.includes(v) && erEnde(v));
+  for (const v of rader.filter((x) => !langs.includes(x) && !ender.includes(x))) rader.splice(rader.indexOf(v), 1);
 
   if (langs.length >= 3) {
     let beste: [Visning, Visning] | null = null, minst = Infinity;
@@ -167,6 +221,25 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
       v.navn = dim.B && dim.H
         ? (Math.abs(v.hoydeEkteMm / 1000 - dim.B) < Math.abs(v.hoydeEkteMm / 1000 - dim.H) ? "topp" : "side")
         : "langs";
+    }
+    /**
+     * Bare én side tegnet (E-Partner 306005): to visninger paa langs, en
+     * side og toppen. Paa en varebil er bredde og hoyde nesten like, saa
+     * begge kan bli «topp». CCVision legger toppen nederst paa arket.
+     */
+    if (langs.length === 2) {
+      /**
+       * Bredde og hoyde skiller ikke en varebil. Toppen er speilsymmetrisk om
+       * midtlinjen paa langs (venstre og hoyre side av bilen), siden er ikke
+       * det (tak over, hjul under). Vito 304160 har to sider og ingen topp;
+       * E-Partner 306005 har én side og toppen.
+       */
+      const sym = langs.map((v) => symmetri(bokser, v));
+      if (process.env.SIGNHUB_DEBUG) console.log("symmetri", sym.map((x) => x.toFixed(2)).join(" "));
+      if (sym.every((x) => x < SYMMETRI_TOPP)) { langs.forEach((v) => (v.navn = "side")); }
+      else if (sym[0] >= SYMMETRI_TOPP !== sym[1] >= SYMMETRI_TOPP) {
+        langs.forEach((v, i) => (v.navn = sym[i] >= SYMMETRI_TOPP ? "topp" : "side"));
+      }
     }
   }
   const sortert = ender.slice().sort((x, y) => x.x0 - y.x0);
@@ -186,12 +259,47 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
   return rader;
 }
 
-export function finnDekor(lest: LettLest, malestokk: number,
+export function finnDekor(lest0: LettLest, malestokk: number,
                           dim: { L: number | null; B: number | null; H: number | null }): DekorFunn {
   const merknader: string[] = [];
+  /**
+   * Innsatte bilder (foto) er ikke baner og kan ikke skjaeres. De holdes
+   * utenfor dekoren og meldes, saa et foto paa bilen aldri forsvinner i
+   * stillhet (Vito 304160: generatorbildet paa sidene).
+   */
+  const bilder = lest0.bokser.filter((b) => b.bilde);
+  const lest: LettLest = { ...lest0, bokser: lest0.bokser.filter((b) => !b.bilde) };
   const forkastet: { hva: string; grunn: string }[] = [];
 
-  const kulorte = lest.bokser.filter(kulor);
+  /**
+   * Lakkert bil i kuloer (Eirik 16.11.2026, Vito 304160 i moerkeblaa): den
+   * kuloerte fargen som dekker mest, og mer enn LAKK_ANDEL av alt som er
+   * fylt, er bilens lakk, ikke dekor. Den behandles som bilens egne farger,
+   * og er den moerk, er bilen moerk (hvitt er dekor).
+   */
+  const sideA0 = (lest.side.x1 - lest.side.x0) * (lest.side.y1 - lest.side.y0);
+  const flateA = (b: Boks) => (b.x1 - b.x0) * (b.y1 - b.y0);
+  const smaa = lest.bokser.filter((b) => flateA(b) < 0.25 * sideA0);
+  const perFarge = new Map<string, number>();
+  for (const b of smaa) if (kulor(b)) perFarge.set(fargenavn(b), (perFarge.get(fargenavn(b)) ?? 0) + flateA(b));
+  const totalt = smaa.reduce((a, b) => a + flateA(b), 0);
+  const [lakkNavn, lakkA] = [...perFarge].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  const lakk = lakkA > LAKK_ANDEL * totalt ? lakkNavn : "";
+  const erLakk = (b: Boks) => !!lakk && fargenavn(b) === lakk;
+  const lakkMoerk = (() => {
+    if (!lakk) return null;
+    const [c, m, y, k] = lakk.split(",").map(Number);
+    const lum = 0.3 * (1 - c) * (1 - k) + 0.59 * (1 - m) * (1 - k) + 0.11 * (1 - y) * (1 - k);
+    return lum < 0.5;
+  })();
+  if (lakk) merknader.push(`Bilen er lakkert i ${lakk} (CMYK). Den fargen regnes som bilen, ikke dekor.`);
+  /**
+   * Tegnede avstander er satt for et ark i 1:30. Er arket skalert (Vito
+   * 304160 er tegnet i 1:2,5, tolv ganger stoerre), skaleres de med, saa
+   * bokstavene i et ord fortsatt er én klynge.
+   */
+  const T = MM * Math.max(1, 30 / malestokk);
+  const kulorte = lest.bokser.filter((b) => kulor(b) && !erLakk(b) && !(lakkMoerk && svart(b)));
 
   /**
    * Moerk bil (Eirik 16.11.2026, Mercedes Vito, sort): da er sort bilens
@@ -200,11 +308,12 @@ export function finnDekor(lest: LettLest, malestokk: number,
    * kandidat og hentes inn som nabo («VILLANGER» under roed «CENTER» foran,
    * «24 timers service» paa ruta). Lys bil (Kia, Proace, e-expert) er som foer.
    */
-  const lys = (b: Boks) => !!b.farge && b.farge.length === 4 && Math.max(...b.farge) < 0.03;
+  // en bane som bare strekes, er ikke en hvit flate selv om fyllfargen som staar er hvit
+  const lys = (b: Boks) => !b.bareStrek && !!b.farge && b.farge.length === 4 && Math.max(...b.farge) < 0.03;
   const sideA = (lest.side.x1 - lest.side.x0) * (lest.side.y1 - lest.side.y0);
   const arealAv = (f: (b: Boks) => boolean) => lest.bokser.filter((b) => f(b) &&
     (b.x1 - b.x0) * (b.y1 - b.y0) < 0.25 * sideA).reduce((a, b) => a + (b.x1 - b.x0) * (b.y1 - b.y0), 0);
-  const moerkBil = arealAv(svart) > arealAv(lys);
+  const moerkBil = lakkMoerk ?? (arealAv(svart) > arealAv(lys));
   /** designerens noeytrale farge: sort paa lys bil, hvit paa moerk */
   const noytral = moerkBil ? lys : svart;
 
@@ -222,7 +331,27 @@ export function finnDekor(lest: LettLest, malestokk: number,
   /** ekte kuloer, ikke rik sort: CMY ulike */
   const ekte = (b: Boks) => !!b.farge &&
     Math.max(b.farge[0], b.farge[1], b.farge[2]) - Math.min(b.farge[0], b.farge[1], b.farge[2]) > 0.2;
-  const iDekorbolk = new Set<Boks>();
+  /**
+   * En graa flate rett bak en kuloert dekorflate er dekor, ikke bil (Eirik
+   * 17.11.2026, LTS Maskin paa E-Partner 306005: den graa ruten bak den
+   * roede haken). Kjennetegnet: den er tegnet rett foer kuloeren, kuloeren
+   * ligger inni den, og den er ikke mye stoerre enn kuloeren.
+   */
+  const graaBak = new Set<Boks>();
+  {
+    const bx = lest.bokser;
+    for (let i = 0; i < bx.length; i++) {
+      const g = bx[i];
+      if (!bilTone(g) || g.bareStrek) continue;
+      for (let j = i + 1; j <= Math.min(bx.length - 1, i + 2); j++) {
+        const k = bx[j];
+        if (!ekte(k) || k.bareStrek || BILFARGER.has(fargenavn(k)) || erLakk(k)) continue;
+        const aG = (g.x1 - g.x0) * (g.y1 - g.y0), aK = (k.x1 - k.x0) * (k.y1 - k.y0);
+        if (andelInni(k, g) >= 0.6 && aG <= GRAA_BAK_MAKS * aK) { graaBak.add(g); break; }
+      }
+    }
+  }
+  const iDekorbolk = new Set<Boks>(graaBak);
   {
     let bolk: Boks[] = [];
     let harKulor = false, lyse = 0;
@@ -237,7 +366,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       bolk = []; harKulor = false; lyse = 0;
     };
     for (const b of lest.bokser) {
-      if (bilTone(b) || BILFARGER.has(fargenavn(b)) || (moerkBil && svart(b))) { avslutt(); continue; }
+      if ((bilTone(b) && !graaBak.has(b)) || BILFARGER.has(fargenavn(b)) || erLakk(b) || (moerkBil && svart(b))) { avslutt(); continue; }
       bolk.push(b);
       if (ekte(b)) harKulor = true;
       if (lys(b)) lyse++;
@@ -261,13 +390,23 @@ export function finnDekor(lest: LettLest, malestokk: number,
   const rene = lest.bokser.filter((b) => !malfarge.has(fargenavn(b)));
   const visninger = finnVisninger(rene, malestokk, dim);
 
-  if (!kulorte.length) {
+  if (!kulorte.length && !lest.bokser.some((b) => noytral(b) && iDekorbolk.has(b))) {
     merknader.push("Skissen har ingen kulorte flater. Enten er den umalt, " +
       "eller sa er dekoren i sort og hvitt. Da ma dekoren merkes for hand.");
     return { visninger, omraader: [], forkastet, merknader };
   }
 
   const iVisning = (b: Boks) => visninger.some((v) => andelInni(b, v) >= 0.5);
+  /** et nummerskilt: 470-600 x 90-140 mm */
+  const skiltMaal = (b: Boks) => {
+    const w = (b.x1 - b.x0) / MM * malestokk, h = (b.y1 - b.y0) / MM * malestokk;
+    return w > 470 && w < 600 && h > 90 && h < 140;
+  };
+  const fotoer = bilder.filter((b) => iVisning(b) &&
+    Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= MINSTE_EKTE_MM);
+  if (fotoer.length) merknader.push(`Skissen har ${fotoer.length} innsatt${fotoer.length > 1 ? "e" : ""} bilde${fotoer.length > 1 ? "r" : ""} paa bilen ` +
+    `(${fotoer.map((b) => `${Math.round((b.x1 - b.x0) / MM * malestokk)} x ${Math.round((b.y1 - b.y0) / MM * malestokk)} mm`).join(", ")}). ` +
+    "Bilder er IKKE med i skjaerefilene. De maa printes fra originalfila.");
   const kandidater = kulorte.filter((b) => {
     if (malfarge.has(fargenavn(b))) return false;
     if (!iVisning(b)) return false;
@@ -278,7 +417,15 @@ export function finnDekor(lest: LettLest, malestokk: number,
      * Kia PV5 (310079) staar alene i sort. Sort fra en dekorbolk er
      * designerens og er en kandidat i seg selv.
      */
-    lest.bokser.filter((b) => !kulor(b) && noytral(b) && iDekorbolk.has(b) && iVisning(b)));
+    [...graaBak].filter(iVisning),
+    lest.bokser.filter((b) => !kulor(b) && noytral(b) && iVisning(b) && (iDekorbolk.has(b) ||
+      /**
+       * Paa moerk bil er en stor hvit flate dekor selv om den staar alene i
+       * tegnerekkefoelgen (Vito 304160: den store Ø-en paa venstre side er
+       * to flater, tegnet mellom bildeler). Bilens egne hvite deler er
+       * smaa (lys, refleks) eller nummerskiltet, som tas for seg.
+       */
+      (moerkBil && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM && !skiltMaal(b)))));
   const fjernetFarge = kulorte.filter((b) => malfarge.has(fargenavn(b))).length;
   if (fjernetFarge) forkastet.push({ hva: `${fjernetFarge} flater`, grunn: "skissens egne farger" });
   const utenfor = kulorte.filter((b) => !malfarge.has(fargenavn(b)) && !iVisning(b)).length;
@@ -286,13 +433,25 @@ export function finnDekor(lest: LettLest, malestokk: number,
 
   // 4. klynger, en klynge er ett element
   const omraader: DekorOmraade[] = [];
-  for (const g of klynger(kandidater, KLYNGE_MM * MM)) {
+  for (const g of klynger(kandidater, KLYNGE_MM * T)) {
     let r = ramme(g);
     const bE = ((r.x1 - r.x0) / MM) * malestokk;
     const hE = ((r.y1 - r.y0) / MM) * malestokk;
     if (bE < MINSTE_EKTE_MM && hE < MINSTE_EKTE_MM) {
       forkastet.push({ hva: `${g.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `bare ${bE.toFixed(0)} x ${hE.toFixed(0)} mm i virkeligheten` });
+      continue;
+    }
+    /**
+     * Nummerskiltet er bilens: et hvitt rektangel paa 520 x 110 mm (EU-skilt,
+     * Vito 304160 bak). Én eller to flater i hvitt i den stoerrelsen.
+     */
+    const fA = (b: Boks) => (b.x1 - b.x0) * (b.y1 - b.y0);
+    const lysAndel = g.filter(lys).reduce((a, b) => a + fA(b), 0) / Math.max(1e-9, g.reduce((a, b) => a + fA(b), 0));
+    // skiltet kan ha sort kant og tegnet tekst (E-Partner 306005: 567 x 117)
+    if (g.length <= 6 && lysAndel >= 0.6 && bE > 470 && bE < 600 && hE > 90 && hE < 140) {
+      forkastet.push({ hva: `${g.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
+        grunn: `nummerskilt (${bE.toFixed(0)} x ${hE.toFixed(0)} mm)` });
       continue;
     }
     // 5. hvite og sorte deler av samme logo
@@ -314,7 +473,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       // inntil A-en, ikke inntil den gronne streken
       for (let ledd = 0; ledd < 4; ledd++) {
         const naer = (b: Boks) => med.some((m) => Math.hypot(
-          Math.max(0, m.x0 - b.x1, b.x0 - m.x1), Math.max(0, m.y0 - b.y1, b.y0 - m.y1)) <= NABO_MM * MM);
+          Math.max(0, m.x0 - b.x1, b.x0 - m.x1), Math.max(0, m.y0 - b.y1, b.y0 - m.y1)) <= NABO_MM * T);
         const nabo = lest.bokser.filter((b) => !med.includes(b) && noytral(b) && iVisning(b) &&
           iDekorbolk.has(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) <= maks && naer(b));
         if (!nabo.length) break;
@@ -322,7 +481,7 @@ export function finnDekor(lest: LettLest, malestokk: number,
       }
     }
     for (let runde = 0; runde < 3; runde++) {
-      const pad = { x0: r.x0 - 1 * MM, y0: r.y0 - 1 * MM, x1: r.x1 + 1 * MM, y1: r.y1 + 1 * MM };
+      const pad = { x0: r.x0 - 1 * T, y0: r.y0 - 1 * T, x1: r.x1 + 1 * T, y1: r.y1 + 1 * T };
       // bare flater fra en dekorbolk: bilens deler inne i rammen er bil
       const nye = lest.bokser.filter((b) => !med.includes(b) && andelInni(b, pad) >= 0.9 &&
         iDekorbolk.has(b));
@@ -353,7 +512,9 @@ export function finnDekor(lest: LettLest, malestokk: number,
      *    inne i rammen holdes ute av elementet i bilmotor.ts.
      */
     const ekteKulor = g.some(ekte);
-    if (!ekteKulor && graaAndel > BILGRAA_ANDEL) {
+    // en stor hvit flate paa moerk bil er dekor selv om den ligger over hjul og lister
+    const storLys = moerkBil && g.some((b) => lys(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM);
+    if (!ekteKulor && !storLys && graaAndel > BILGRAA_ANDEL) {
       forkastet.push({ hva: `${med.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `${(graaAndel * 100).toFixed(0)} % er bilens graatoner` });
       continue;

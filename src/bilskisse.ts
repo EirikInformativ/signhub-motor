@@ -21,7 +21,11 @@ type Mat = [number, number, number, number, number, number];
 const ID: Mat = [1, 0, 0, 1, 0, 0];
 const MM = 72 / 25.4;
 
-export interface Boks { x0: number; y0: number; x1: number; y1: number; farge?: number[] }
+export interface Boks { x0: number; y0: number; x1: number; y1: number; farge?: number[];
+  /** banen strekes bare, fylles ikke: fargen er da fyllfargen som tilfeldigvis staar, ikke det som synes */
+  bareStrek?: boolean;
+  /** et innsatt bilde (foto), ikke en bane */
+  bilde?: boolean }
 /** levende tekst paa arket: hvor den staar, og hva den sier */
 export interface TekstBoks extends Boks { tekst: string; usynlig: boolean }
 export interface LettLest { tekst: string; bokser: Boks[]; side: Boks; levende: TekstBoks[] }
@@ -49,8 +53,16 @@ function streamText(obj: any): string {
 const TOKEN = /\/[^\s/[\]<>(){}]+|\((?:[^()\\]|\\.)*\)|<<|>>|\[|\]|[^\s[\]<>(){}/]+/g;
 
 function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
-             ut: Boks[], tekst: string[], levende: TekstBoks[] = []) {
+             ut: Boks[], tekst: string[], levende: TekstBoks[] = [], klipp0: Boks | null = null) {
   const stabel: Mat[] = [];
+  /**
+   * Klippebanen (W n) avgrenser det som synes. En flate helt utenfor
+   * klippet synes ikke og telles ikke; en flate delvis utenfor telles med
+   * den delen som synes (Vito 304160: en ekstra Ø laa klippet bort helt,
+   * og den store Ø-en paa venstre side er klippet langs bilens bakkant).
+   */
+  let klipp: Boks | null = klipp0;
+  const klippStabel: (Boks | null)[] = [];
   /**
    * Levende tekst: tekstmatrisen foelges grovt, nok til aa vite hvor
    * teksten staar. Bredden anslaas til en halv skriftstoerrelse per tegn.
@@ -89,7 +101,15 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
       if (py < boks.y0) boks.y0 = py; if (py > boks.y1) boks.y1 = py;
     }
   };
-  const lukk = () => { if (boks) { boks.farge = farge.slice(); ut.push(boks); boks = null; } };
+  const lukk = () => {
+    if (boks && klipp) {
+      const b: Boks = boks;
+      const x0 = Math.max(b.x0, klipp.x0), y0 = Math.max(b.y0, klipp.y0), x1 = Math.min(b.x1, klipp.x1), y1 = Math.min(b.y1, klipp.y1);
+      if (x1 <= x0 || y1 <= y0) { boks = null; return; }
+      b.x0 = x0; b.y0 = y0; b.x1 = x1; b.y1 = y1;
+    }
+    if (boks) { boks.farge = farge.slice(); ut.push(boks); boks = null; }
+  };
 
   for (const t of data.match(TOKEN) ?? []) {
     const n = Number(t);
@@ -120,8 +140,8 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
       if (op !== "Tj" && op !== "TJ") { tlm = mul([1, 0, 0, 1, 0, -lead], tlm); tm = tlm; }
       visTekst(biter.join("")); biter = [];
     }
-    if (op === "q") { stabel.push(cur); fargeStabel.push(farge); csStabel.push(fyllCs); }
-    else if (op === "Q") { cur = stabel.pop() ?? cur; farge = fargeStabel.pop() ?? farge; fyllCs = csStabel.pop() ?? fyllCs; }
+    if (op === "q") { stabel.push(cur); fargeStabel.push(farge); csStabel.push(fyllCs); klippStabel.push(klipp); }
+    else if (op === "Q") { cur = stabel.pop() ?? cur; farge = fargeStabel.pop() ?? farge; fyllCs = csStabel.pop() ?? fyllCs; klipp = klippStabel.length ? klippStabel.pop()! : klipp; }
     else if (op === "cs" && navn) fyllCs = csFraObj(res, navn);
     else if ((op === "scn" || op === "sc") && fyllCs) {
       const rgb = rgbScn(fyllCs, tall);
@@ -146,8 +166,17 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
       punkt(x, y); punkt(x + w, y); punkt(x + w, y + h); punkt(x, y + h);
     } else if ("f F f* B B* b b* S s n".split(" ").includes(op)) {
       // W og W* setter klipp; da skal ikke banen telle som tegning
+      const bare = op === "S" || op === "s";
+      if (bare && boks) (boks as Boks).bareStrek = true;
       lukk();
-    } else if (op === "W" || op === "W*") { boks = null; }
+    } else if (op === "W" || op === "W*") {
+      if (boks) {
+        const b: Boks = boks;
+        klipp = klipp ? { x0: Math.max(klipp.x0, b.x0), y0: Math.max(klipp.y0, b.y0), x1: Math.min(klipp.x1, b.x1), y1: Math.min(klipp.y1, b.y1) }
+          : { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+      }
+      boks = null;
+    }
     else if (op === "Do" && navn && dybde < 6) {
       const xo = res?.lookup(PDFName.of("XObject"), PDFDict);
       const form: any = xo?.lookup(PDFName.of(navn));
@@ -158,10 +187,12 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number,
           const mArr: any = dict.lookup(PDFName.of("Matrix"));
           const fm: Mat = mArr?.asArray ? (mArr.asArray().map((v: any) => v.asNumber()) as Mat) : ID;
           gaa(streamText(form), dict.lookup(PDFName.of("Resources"), PDFDict) ?? res,
-              mul(fm, cur), dybde + 1, ut, tekst, levende);
+              mul(fm, cur), dybde + 1, ut, tekst, levende, klipp);
         } else if (sub === "/Image") {
           // et bilde fyller enhetsruta i gjeldende matrise
-          punkt(0, 0); punkt(1, 0); punkt(1, 1); punkt(0, 1); lukk();
+          punkt(0, 0); punkt(1, 0); punkt(1, 1); punkt(0, 1);
+          if (boks) (boks as Boks).bilde = true;
+          lukk();
         }
       }
     }
@@ -272,6 +303,8 @@ export interface Skisse {
  *                             utledet
  */
 const GRENSE_PROSENT = 3;
+/** Inntil saa mye kan tegningen vaere skalert for aa passe arket. */
+const SKALERT_MAKS_PROSENT = 15;
 export function velgMalestokk(
   trykt: number | null, malt: number | null, merknader: string[]
 ): { malestokk: number | null; avvikProsent: number | null } {
@@ -292,11 +325,25 @@ export function velgMalestokk(
     return { malestokk: trykt, avvikProsent: 0 };
   }
   const forhold = trykt / malt;
-  if (Math.abs(forhold - Math.round(forhold)) < 0.05 && Math.round(forhold) !== 1) {
+  // relativ grense: et ark skalert 1200 prosent maales til 1:2,48, ikke 1:2,50
+  if (Math.round(forhold) >= 2 && Math.abs(forhold / Math.round(forhold) - 1) < 0.02) {
     merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +
       `Arket ser ut til a vaere skalert ${Math.round(forhold) * 100} prosent. ` +
-      `Reell malestokk er 1:${malt.toFixed(0)}, og den brukes.`);
+      `Reell malestokk er 1:${malt < 10 ? malt.toFixed(2) : malt.toFixed(0)}, og den brukes.`);
     return { malestokk: malt, avvikProsent: avvik };
+  }
+  /**
+   * Trykt malestokk er fasit ogsaa naar maalingen bommer med noen prosent
+   * (Eirik 17.11.2026, E-Partner 306005: teksten sier 1:30, L, B og H paa
+   * arket peker paa 1:32,4, men sidelogoen skal vaere 1739,7 mm, som er
+   * 1:30). Natt til 17.11 ble den maalte brukt, og alt ble 8 prosent for
+   * stort. Avvik under SKALERT_MAKS_PROSENT: trykt brukes, med merknad.
+   * Over det er skissen ikke til aa stole paa.
+   */
+  if (Math.abs(avvik) <= SKALERT_MAKS_PROSENT) {
+    merknader.push(`Teksten sier 1:${trykt}, men L, B og H paa arket peker paa 1:${malt.toFixed(1)} ` +
+      `(${avvik > 0 ? "+" : ""}${avvik.toFixed(1)} prosent). Den trykte malestokken brukes. Kontroller ett maal paa bilen.`);
+    return { malestokk: trykt, avvikProsent: avvik };
   }
   merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +
     `Det er verken samme malestokk eller en rent skalert utgave av den, saa ` +

@@ -125,6 +125,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx rammetest.ts  # formede, konvekse rammer med rett bunn
     npx tsx klipptest.ts  # kutt og forlengelse under bildelene
     npx tsx tettark.ts    # dyr folie ut av oppsettet naar det loenner seg
+    npx tsx lakkbil.ts    # lakkert bil i kuloer, skalert ark, klipp, bilder, tekst under logo
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -671,6 +672,92 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
   (`dreiFelt`) naar det sparer minst `DREI_GEVINST`.
 - `strekkUt` strekker aldri en ende inn i en nabo som allerede griper inn i
   rammen (formede rammer). Feilsignatur: et felt som overlapper en stripe.
+
+**Lakkert bil, skalerte ark og klipp (natt 16.–17.11.2026, E-Partner 306005
+og Vito 304160):**
+- `velgMalestokk`: et ark skalert til et rent forhold maales med relativ
+  grense (1200 prosent gir 1:2,48). Spriker maalingen inntil
+  `SKALERT_MAKS_PROSENT = 15` fra en trykt malestokk, brukes **den trykte**,
+  med merknad (Eirik 17.11.2026: sidelogoen paa E-Partner er 1739,7 mm i
+  printfila; den maalte 1:32,4 ga 1882 mm, 1:30 gir 1741 mm).
+- `finnDekor`: tegnede avstander skaleres med `30 / malestokk`. Kuloeren som
+  dekker mer enn `LAKK_ANDEL = 0.3` av alt fylt er lakken; er den moerk, er
+  bilen moerk. En hvit flate over `STOR_LYS_MM = 300` paa moerk bil er dekor
+  uansett tegnerekkefoelge, og graa-regelen gjelder ikke den. Nummerskilt
+  (hvitt, 470-600 x 90-140 mm) er bil.
+- `lesLett`: en bane som bare strekes (`S`) er ikke en hvit flate
+  (`bareStrek`), klippebaner (`W`) avgrenser det som synes, og innsatte bilder
+  (`bilde`) holdes utenfor dekoren og meldes («IKKE med i skjaerefilene»).
+- `bilmotor`: banene sammenlignes med det som synes innenfor klippet
+  (`synligBoks`), og klippet dekor kuttes `KLIPP_LUFT_MM` forbi klippet
+  (`kuttVedKlipp`). Korte ord (under `KORT_ORD_FLATER` flater) har ingen
+  sikker retning. Tekst i én farge utenfor en flerfarget logo, i en farge
+  logoen ogsaa har inni seg, skilles ut (LTS Maskin: logoen printes, teksten
+  skjaeres i 010). Tekst over, under og ved siden av logoen er hver sin del.
+
+**E-Partner og Oesterboe (17.11.2026, morgen):**
+- Passmerke for utskilt tekst er ikke en strimmel, men 10 mm
+  (`TEKST_STUBB_MM`) av **foerste og siste hoeye tegn** (minst 90 % av det
+  hoeyeste), fra kanten mot logoen, lagt inn i logoen i tekstfargen
+  (`leggTekstPassmerker`). Montoeren legger teksten saa tegnene dekker
+  stubbene. Bare naar logoen allerede har den fargen.
+- Graa rute bak en kuloer (haken hos LTS) er dekor (`graaBak` i
+  `finnDekor`, `valgtGraa` i bilmotor).
+- To visninger paa langs: toppen er speilsymmetrisk om midtlinjen
+  (`symmetri`, over `SYMMETRI_TOPP = 0.5`), siden er ikke. Et baand mye
+  hoeyere enn bilen deles der faerrest baner krysser (`delHoyt`: speilene
+  paa toppen stakk opp i siden under paa Oesterboe).
+- Bare én side tegnet: `dupliserSide`. Tekst og logo (flere farger eller
+  minst `TEKST_FLATER` flater) faar antall + 1 uten speilvending. Stripe
+  speilvendes som eget element. Ellers speilvendes én farge med
+  `ensidig.usikker`, og det meldes. Front, bak og topp dupliseres aldri.
+- `likBoks` godtar overlapp (`LIK_BOKS_OVERLAPP = 0.95`): lesLett og
+  synligBoks klipper ulikt, og halve Oe-en falt ut.
+- `samleDeler` slaar sammen deler paa samme linje foer deler over
+  hverandre (ikonene i en smoerbroedliste), og en svak grunnlinje langt fra
+  aksene (`SVAK_GRUNNLINJE`) gir ingen retning.
+- Samme merke sett fra to vinkler tas **ut** av `elementer` og legges i
+  `utelatt` (Eirik: den skviste panserlogoen i oppsettet er
+  «problematisk»). Ogsaa naar logoen er satt annerledes sammen forfra enn
+  ovenfra: endevisning, midt paa, samme farger, like bred paa tvers som et
+  merke i enden av toppvisningen, sammentrykt i hoeyden.
+
+- En endevisning er like bred og hoey som bilen (`erEnde`). Det som ellers
+  staar paa arket (Informativ-logoen i bunnteksten) er ikke en visning.
+- En flate som ligger helt under bilens egne deler (hvit flate under
+  doerhaandtaket) synes ikke paa bilen og er ikke dekor (`helSkjult` i
+  `kuttVedBildeler`). Dette er ikke et unntak fra «motoren fjerner aldri
+  noe»: det som synes, staar.
+
+- Passmerke-stubben er ett solid stykke: biter under `STUBB_MIN_ANDEL` av
+  den stoerste eller tynnere enn `STUBB_MIN_MM = 3` tas ikke med, og gir
+  tegnet ingen solid stubb, proeves neste. Hoeye tegn er de som naar opp til
+  linja mot logoen (D, l, !), ikke en g med underlengde (Eirik: «å lage de
+  mikroskopiske bitene der er ris til egen ræv»).
+- Passmerket tas fra foerste og siste tegn med stamme, saa langt fra
+  hverandre som mulig (Eirik: en skjev montering fordeler seg da over et
+  stoerre omraade). Grunnlinjen er en tilpasset rett linje (teksten kan
+  helle), prikker over i teller ikke, streken i ! teller selv om den staar
+  paa prikken, og i en blokk med flere linjer brukes linja naermest logoen.
+- Kort ord paa hoykant («Din» paa toppen av LTS) leses begge veier, og en
+  grunnlinje naer aksen vinner over kursive stammer (11°). Utskilt tekst
+  samles i klynger foer siden mot logoen avgjoeres.
+- Bare striper kuttes ved klippebanen (`kuttVedKlipp`). Et logoikon som er
+  klippet langs karosseriet skjaeres helt (Oesterboe: hele Oe-en, 1138 mm).
+  Er banen selv avkuttet i skissen, er Eiriks maate aa hente ikonet fra en
+  komplett logo og skalere det. Det er ikke bygget ennaa.
+- `bredderMm` paa folien: andre rullbredder (3165 og 215 finnes i 1050 og
+  1370). Hovedbredden brukes saa langt det gaar (faerre rullbytter). Faar
+  alt plass paa en smalere rull uten nye skjoeter, og den sparer minst
+  `SMAL_RULL_SPAR = 0.1` av folien, brukes den og meldes. E-Partner: 2,24
+  til 1,63 m², og fila kan gaa paa wild.
+
+**Feilsignatur:** halv logo der designeren har tegnet den i to baner,
+ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
+
+**Feilsignatur:** «Malestokken i skissen er ikke til a stole pa» paa et ark
+som bare er skalert, en lakkert bil der bilens linjer kommer som dekor,
+eller en dekor som ligger dobbelt fordi en klippet kopi telles med.
 
 ## Ikke endre
 

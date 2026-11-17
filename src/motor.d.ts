@@ -65,6 +65,12 @@ export interface Folie {
   prisM2?: number;
   /** fargen printes paa folien (f.eks. hvit refleks). Tette ark blir da Print+thru med regmarks. */
   print?: boolean;
+  /**
+   * Andre rullbredder folien finnes i, for eksempel [1050] for 3165 og 215.
+   * breddeMm er hovedrullen. Faar alt plass paa en smalere rull uten nye
+   * skjoeter, og det sparer minst 10 prosent folie, brukes den og meldes.
+   */
+  bredderMm?: number[];
 }
 
 /**
@@ -246,10 +252,19 @@ export interface BilElement {
    * fra `pdf`. Legg ikke til noe i folier-listen fordi dette er satt.
    */
   bakgrunn?: BilFarge;
-  /** trolig samme merke som dette elementet, sett fra en annen visning. Ikke fjernet. */
+  /** samme merke som dette elementet, sett fra en annen visning. Slike ligger i `utelatt`, ikke i `elementer`. */
   sammeSom?: string;
-  /** passmerke: strimmel som viser hvor naboen skal ligge, rives av etter montering */
+  /** passmerke mot naboen: strimmel, eller stubber av foerste og siste hoeye tegn i en utskilt tekst */
   passmerke?: { mot: string; hex: string; lengdeMm: number };
+  /** minst halvparten ligger paa en vindusrute (bare skisser som tegner rutene som gradienter) */
+  paaGlass?: boolean;
+  /**
+   * skissen viser bare én side, og elementet er lagt til for den andre.
+   * speilet: dette er den speilvendte kopien (kilde = originalen). Ellers er
+   * antall oeket. usikker: motoren er usikker paa valget, appen boer markere
+   * elementet (gul ramme) og la brukeren snu det.
+   */
+  ensidig?: { speilet: boolean; usikker: boolean; kilde?: string; grunn: string };
 }
 
 export interface BilSkisseLest {
@@ -272,6 +287,8 @@ export interface BilSkisseLest {
   hoydeM: number | null;
   visninger: { navn: string; breddeEkteMm: number; hoydeEkteMm: number }[];
   elementer: BilElement[];
+  /** samme merke sett fra en annen vinkel (panseret forfra). Tatt ut av elementer, kan legges inn igjen. */
+  utelatt: BilElement[];
   /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
   forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
   /** bare det et menneske maa gjoere noe med: dette vises paa skjermen */

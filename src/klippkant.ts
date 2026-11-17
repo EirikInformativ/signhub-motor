@@ -68,13 +68,13 @@ export function ringerAv(segs: any[]): Ring[] {
 }
 
 /** Flaten ringene dekker, etter partallsregelen. */
-function flate(ringer: Ring[]): any {
+export function flate(ringer: Ring[]): any {
   const deler = ringer.map((r) => [[[...r, r[0]]]]);
   if (!deler.length) return [];
   try { return pc.xor(...(deler as [any])); } catch { return null; }
 }
 
-function utvid(mp: any, d: number): any {
+export function utvid(mp: any, d: number): any {
   const S = 1e3;
   const co = new ClipperLib.ClipperOffset(2, 0.25);
   for (const poly of mp) for (const r of poly)
@@ -88,6 +88,56 @@ function utvid(mp: any, d: number): any {
 
 /** Bare ytterringene: et hull i det tillatte skal aldri bli hull i dekoren. */
 const utenHull = (mp: any) => mp.map((poly: any) => [poly[0]]);
+
+/**
+ * Klippebanen designeren har lagt paa en dekorbane (W n), som synlig del.
+ * Gir det synlige som flate, eller null naar banen ikke er klippet.
+ */
+export function klippFlate(b: Bane): any | null {
+  if (!b.klipp?.length) return null;
+  let k: any = null;
+  for (const kl of b.klipp) {
+    const f = flate(ringerAv(kl.segs as any[]));
+    if (!f) return null;
+    k = k ? pc.intersection(k, f) : f;
+  }
+  return k;
+}
+
+/** Rammen rundt det som synes av banen (klippet), eller hele banen. */
+export function synligBoks(b: Bane): { x0: number; y0: number; x1: number; y1: number } {
+  const k = klippFlate(b);
+  if (!k || !k.length) return b.boks;
+  const pk = k.flat(2) as Pt[];
+  return { x0: Math.max(b.boks.x0, Math.min(...pk.map((p) => p[0]))), y0: Math.max(b.boks.y0, Math.min(...pk.map((p) => p[1]))),
+    x1: Math.min(b.boks.x1, Math.max(...pk.map((p) => p[0]))), y1: Math.min(b.boks.y1, Math.max(...pk.map((p) => p[1]))) };
+}
+
+/**
+ * Dekor som designeren har klippet (Vito 304160: den store Ø-en klippet
+ * langs bilens bakkant) kuttes `luft` forbi klippet, som dekor under
+ * bilens deler (Eirik 16.11.2026: 50 mm). Bare naar banen gaar mer enn
+ * `luft` forbi klippet; ellers staar den hel.
+ */
+export function kuttVedKlipp(b: Bane, luft: number): Bane {
+  const k = klippFlate(b);
+  if (!k || !k.length) return b;
+  const egen = flate(ringerAv(b.segs as any[]));
+  if (!egen || !egen.length) return b;
+  let ny: any;
+  try { ny = pc.intersection(egen, utvid(utenHull(k), luft)); } catch { return b; }
+  const a0 = areal(egen), a1 = areal(ny);
+  if (!ny.length || a1 > a0 * 0.999) return b;
+  const segs: any[] = [];
+  for (const poly of ny) for (const r of poly) {
+    segs.push({ t: "m", p: r[0] });
+    for (let i = 1; i < r.length - 1; i++) segs.push({ t: "l", p: r[i] });
+    segs.push({ t: "h" });
+  }
+  const pts = segs.filter((x) => x.p).map((x) => x.p as Pt);
+  return { ...b, segs, boks: { x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
+    x1: Math.max(...pts.map((p) => p[0])), y1: Math.max(...pts.map((p) => p[1])) } } as Bane;
+}
 
 export function areal(mp: any): number {
   let a = 0;
@@ -115,6 +165,8 @@ export interface KlippResultat {
   forlenget: number;
   /** baner der smaa synlige knotter ved kanten er kuttet bort */
   knotter: number;
+  /** baner som ligger helt skjult under bilens egne deler: de synes ikke paa bilen og er ikke dekor */
+  helSkjult: Bane[];
   /** striper med ender under bildelene som er rettet ut til rektangel */
   rettet: number;
 }
@@ -189,6 +241,7 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
   const indeks = new Map(alle.map((b, i) => [b, i]));
   let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0, knotter = 0, rettet = 0;
   const korte = new Set<Bane>();
+  const skjulte: Bane[] = [];
   const ut = dekor.map((b) => {
     if (!b.fyll || b.strek) return b;
     const i = indeks.get(b);
@@ -208,7 +261,9 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (areal(skjult) < a0 * 1e-3) return b;                // ingenting av betydning er dekket
     let synlig: any;
     try { synlig = pc.difference(egen, skjult); } catch { return b; }
-    if (!synlig.length) return b;                            // helt skjult: la den staa, meld ikke
+    // helt skjult under bildeler (en hvit flate under doerhaandtaket paa
+    // Oesterboe): synes ikke paa bilen, er ikke dekor
+    if (!synlig.length || areal(synlig) < a0 * 1e-3) { skjulte.push(b); return b; }
     /**
      * Smaa synlige oeyer langt inne under bilen er gjennomsyn, ikke dekor:
      * paa Kia synes den sorte A-en i en glippe mellom hjulbue og dekk, sort
@@ -344,7 +399,8 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (korte.has(b)) { korte.delete(b); korte.add(nyBane); }
     return nyBane;
   });
-  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil, knotter, rettet };
+  return { baner: ut.filter((b) => !skjulte.includes(b)), fjernet, foer, kortForbi: [...korte], gjennomsyn,
+    forlenget: lagtTil, knotter, rettet, helSkjult: skjulte };
 }
 
 

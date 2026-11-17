@@ -33,8 +33,8 @@ import { hentBaner } from "../src/uttrekk";
   const GRONN = "#00B528", SORT = "#000000";
   // sidene er ulike etter kuttet ved bildelene (speil og rute paa foerersiden), saa
   // stripen og A-en er ett element per side
-  sjekk(l.elementer.length === 12, `12 elementer (fikk ${l.elementer.length})`);
-  sjekk(l.elementer.filter((e) => e.sammeSom).length === 1, "panseret meldt som samme merke");
+  sjekk(l.elementer.length === 11, `11 elementer (panseret utelatt) (fikk ${l.elementer.length})`);
+  sjekk(l.utelatt.length === 1 && !l.elementer.some((e) => e.sammeSom), "panseret meldt som samme merke");
   const fremmed = l.elementer.filter((e) => e.farger.some((f) => f.hex !== GRONN && f.hex !== SORT));
   sjekk(!fremmed.length, `bare gronn og sort, ingen bildeler (${fremmed.map((e) => e.navn + ": " + e.farger.map((f) => f.hex).join(" ")).join("; ")})`);
   const atg = l.elementer.find((e) => e.antall === 3);
@@ -158,7 +158,7 @@ import { hentBaner } from "../src/uttrekk";
     return Math.abs(a[0] - z[0]) > 0.5 && f.every((c) => Math.abs(c[0] - c[1]) < 0.02 && Math.abs(c[1] - c[2]) < 0.02);
   }), "gradientene gaar fra hvitt til sort i graatoner (prosess-sort, ikke reservefarge)");
   const elBaner = l.elementer.length;
-  sjekk(elBaner === 12 && l.elementer.every((e: any) => !e.farger.some((f: any) => !/^#(00B528|000000)$/i.test(f.hex))),
+  sjekk(elBaner === 11 && l.elementer.every((e: any) => !e.farger.some((f: any) => !/^#(00B528|000000)$/i.test(f.hex))),
     "ingen gradient havner i et element");
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
