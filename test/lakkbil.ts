@@ -56,7 +56,9 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(ø.length === 2, `Vito 304160: én stor Ø paa hver side (${ø.map((e: any) => Math.round(e.breddeMm) + "x" + Math.round(e.hoydeMm)).join(", ")})`);
   sjekk(ø.every((e: any) => e.hoydeMm < 1200), "Vito 304160: Ø-ene er kuttet ved klippet, ikke doble");
   sjekk(v.merknader.some((m: string) => /innsatte bilder/.test(m)), "Vito 304160: fotoene paa sidene er meldt");
-  sjekk(v.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#FFFFFF")).length >= 8, "Vito 304160: den hvite dekoren er funnet");
+  sjekk(v.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#FFFFFF")).length === 7, "Vito 304160: den hvite dekoren er funnet, sju elementer");
+  sjekk(!v.elementer.some((e: any) => e.farger.some((f: any) => f.hex === "#FF0000")), "Oesterboe: roed prikk i Informativ-logoen i bunnteksten er ikke dekor");
+  sjekk(!v.elementer.some((e: any) => e.breddeMm < 60 && e.hoydeMm < 60), "Oesterboe: hvite flater helt under doerhaandtakene er ikke dekor");
   // Oesterboe (Eirik 17.11.2026)
   sjekk(ø.every((e: any) => e.breddeMm > 1050), `Oesterboe: hele Oe-en, begge halvdelene (${ø.map((e: any) => Math.round(e.breddeMm)).join(", ")})`);
   sjekk(v.visninger.some((x: any) => x.navn === "topp") && v.visninger.some((x: any) => x.navn === "side ovre"), "Oesterboe: toppen er skilt fra siden under");

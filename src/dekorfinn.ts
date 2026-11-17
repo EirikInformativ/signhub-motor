@@ -197,7 +197,15 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
    * bredden og hoyden nesten like store.
    */
   const langs = dim.L ? rader.filter((v) => naer(v.breddeEkteMm / 1000, dim.L!)) : [];
-  const ender = rader.filter((v) => !langs.includes(v));
+  /**
+   * En endevisning er like bred og hoey som bilen. Det som er igjen paa
+   * arket (Informativ-logoen i bunnteksten paa Oesterboe, med en roed
+   * prikk) er ikke en visning, og dekor der skal aldri skjaeres.
+   */
+  const erEnde = (v: Visning) => !dim.B || !dim.H ||
+    (naer(v.breddeEkteMm / 1000, dim.B) && Math.abs(v.hoydeEkteMm / 1000 / dim.H - 1) <= 0.5);
+  const ender = rader.filter((v) => !langs.includes(v) && erEnde(v));
+  for (const v of rader.filter((x) => !langs.includes(x) && !ender.includes(x))) rader.splice(rader.indexOf(v), 1);
 
   if (langs.length >= 3) {
     let beste: [Visning, Visning] | null = null, minst = Infinity;

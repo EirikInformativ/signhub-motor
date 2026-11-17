@@ -320,6 +320,8 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       `${KLIPP_MIN_MM} mm inn under bilens deler (${r.kortForbi.length} ${r.kortForbi.length === 1 ? "del" : "deler"}). ` +
       "Montoeren trenger noe aa skjaere til etter. Forleng dekoren i skissen.");
     x.valgte = r.baner;
+    if (r.helSkjult.length) logg.push(`${x.o.vis} ${x.o.navn}: ${r.helSkjult.length} ${r.helSkjult.length === 1 ? "flate" : "flater"} ` +
+      "ligger helt under bilens egne deler og synes ikke paa bilen. De er ikke dekor og skjaeres ikke.");
     // striper som slutter ved en kant paa bilen kan ogsaa forlenges paa arket
     x.valgte = x.valgte.map((b) => {
       if (b.skjultEnde) return b;
@@ -328,6 +330,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     });
   }
   for (const { o, valgte } of valgtPerOmraade) {
+    if (!valgte.length) continue;
     let deler = samleDeler(valgte, (DEL_FIN_MM / malestokk) * MM, (DEL_GLIPPE_MM / malestokk) * MM);
     /**
      * En del som ikke faar plass paa rullen paa noen leddet, deles finere
@@ -534,6 +537,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       farger: per.lag.map((l) => ({ hex: l.hex, andel: l.andel })),
       ...(bakgrunn ? { bakgrunn } : {}),
     };
+    if (!nytt.farger.length || !isFinite(nytt.breddeMm)) continue;   // ingenting synlig igjen
     elementer.push(nytt);
     brukteBaner.set(nytt, brukte);
   }

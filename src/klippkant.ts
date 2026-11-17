@@ -165,6 +165,8 @@ export interface KlippResultat {
   forlenget: number;
   /** baner der smaa synlige knotter ved kanten er kuttet bort */
   knotter: number;
+  /** baner som ligger helt skjult under bilens egne deler: de synes ikke paa bilen og er ikke dekor */
+  helSkjult: Bane[];
   /** striper med ender under bildelene som er rettet ut til rektangel */
   rettet: number;
 }
@@ -239,6 +241,7 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
   const indeks = new Map(alle.map((b, i) => [b, i]));
   let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0, knotter = 0, rettet = 0;
   const korte = new Set<Bane>();
+  const skjulte: Bane[] = [];
   const ut = dekor.map((b) => {
     if (!b.fyll || b.strek) return b;
     const i = indeks.get(b);
@@ -258,7 +261,9 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (areal(skjult) < a0 * 1e-3) return b;                // ingenting av betydning er dekket
     let synlig: any;
     try { synlig = pc.difference(egen, skjult); } catch { return b; }
-    if (!synlig.length) return b;                            // helt skjult: la den staa, meld ikke
+    // helt skjult under bildeler (en hvit flate under doerhaandtaket paa
+    // Oesterboe): synes ikke paa bilen, er ikke dekor
+    if (!synlig.length || areal(synlig) < a0 * 1e-3) { skjulte.push(b); return b; }
     /**
      * Smaa synlige oeyer langt inne under bilen er gjennomsyn, ikke dekor:
      * paa Kia synes den sorte A-en i en glippe mellom hjulbue og dekk, sort
@@ -394,7 +399,8 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     if (korte.has(b)) { korte.delete(b); korte.add(nyBane); }
     return nyBane;
   });
-  return { baner: ut, fjernet, foer, kortForbi: [...korte], gjennomsyn, forlenget: lagtTil, knotter, rettet };
+  return { baner: ut.filter((b) => !skjulte.includes(b)), fjernet, foer, kortForbi: [...korte], gjennomsyn,
+    forlenget: lagtTil, knotter, rettet, helSkjult: skjulte };
 }
 
 

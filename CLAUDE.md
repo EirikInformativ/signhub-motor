@@ -722,6 +722,13 @@ og Vito 304160):**
   ovenfra: endevisning, midt paa, samme farger, like bred paa tvers som et
   merke i enden av toppvisningen, sammentrykt i hoeyden.
 
+- En endevisning er like bred og hoey som bilen (`erEnde`). Det som ellers
+  staar paa arket (Informativ-logoen i bunnteksten) er ikke en visning.
+- En flate som ligger helt under bilens egne deler (hvit flate under
+  doerhaandtaket) synes ikke paa bilen og er ikke dekor (`helSkjult` i
+  `kuttVedBildeler`). Dette er ikke et unntak fra «motoren fjerner aldri
+  noe»: det som synes, staar.
+
 **Feilsignatur:** halv logo der designeren har tegnet den i to baner,
 ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
 
