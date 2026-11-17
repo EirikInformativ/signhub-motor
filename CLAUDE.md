@@ -734,6 +734,14 @@ og Vito 304160):**
   tegnet ingen solid stubb, proeves neste. Hoeye tegn er de som naar opp til
   linja mot logoen (D, l, !), ikke en g med underlengde (Eirik: «å lage de
   mikroskopiske bitene der er ris til egen ræv»).
+- Passmerket tas fra foerste og siste tegn med stamme, saa langt fra
+  hverandre som mulig (Eirik: en skjev montering fordeler seg da over et
+  stoerre omraade). Grunnlinjen er en tilpasset rett linje (teksten kan
+  helle), prikker over i teller ikke, streken i ! teller selv om den staar
+  paa prikken, og i en blokk med flere linjer brukes linja naermest logoen.
+- Kort ord paa hoykant («Din» paa toppen av LTS) leses begge veier, og en
+  grunnlinje naer aksen vinner over kursive stammer (11°). Utskilt tekst
+  samles i klynger foer siden mot logoen avgjoeres.
 - Bare striper kuttes ved klippebanen (`kuttVedKlipp`). Et logoikon som er
   klippet langs karosseriet skjaeres helt (Oesterboe: hele Oe-en, 1138 mm).
   Er banen selv avkuttet i skissen, er Eiriks maate aa hente ikonet fra en

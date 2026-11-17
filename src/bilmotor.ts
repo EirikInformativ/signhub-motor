@@ -383,9 +383,30 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
         if (!utenfor.length || !egne.some(inni) || utenfor.length === egne.length) continue;
         if (d.some((b) => hex(b) === c && !inni(b) && !ute(b))) continue;   // noe ligger over kanten: én logo
         // tekst over og tekst under logoen er to tekster (kontaktinfo over, slagord under)
-        const side = (b: Bane) => b.boks.y0 > K.y1 ? "over" : b.boks.y1 < K.y0 ? "under" : b.boks.x1 < K.x0 ? "venstre" : "hoyre";
+        /*
+         * Teksten samles foerst i klynger (bokstaver naer hverandre), og
+         * siden avgjoeres for hele klyngen ut fra midtpunktet. «Din» paa
+         * toppen av LTS stakk forbi enden av logoen og ble skilt fra resten
+         * av slagordet da hver bane fikk sin egen side (Eirik 17.11.2026).
+         */
+        const naer = 2 * tol;
+        const avst = (a: Bane["boks"], b: Bane["boks"]) => Math.hypot(
+          Math.max(0, a.x0 - b.x1, b.x0 - a.x1), Math.max(0, a.y0 - b.y1, b.y0 - a.y1));
+        const klynge = utenfor.map((_, i) => i);
+        const rot = (i: number): number => klynge[i] === i ? i : (klynge[i] = rot(klynge[i]));
+        for (let i = 0; i < utenfor.length; i++) for (let j = i + 1; j < utenfor.length; j++)
+          if (avst(utenfor[i].boks, utenfor[j].boks) < naer) klynge[rot(i)] = rot(j);
+        const kl = new Map<number, Bane[]>();
+        utenfor.forEach((b, i) => { const r = rot(i); if (!kl.has(r)) kl.set(r, []); kl.get(r)!.push(b); });
+        const side = (bs: Bane[]) => {
+          const cx = (Math.min(...bs.map((b) => b.boks.x0)) + Math.max(...bs.map((b) => b.boks.x1))) / 2;
+          const cy = (Math.min(...bs.map((b) => b.boks.y0)) + Math.max(...bs.map((b) => b.boks.y1))) / 2;
+          const dx = cx < K.x0 ? K.x0 - cx : cx > K.x1 ? cx - K.x1 : 0;
+          const dy = cy < K.y0 ? K.y0 - cy : cy > K.y1 ? cy - K.y1 : 0;
+          return dy >= dx ? (cy > K.y1 ? "over" : "under") : (cx < K.x0 ? "venstre" : "hoyre");
+        };
         const grupper = new Map<string, Bane[]>();
-        for (const b of utenfor) { const k = side(b); if (!grupper.has(k)) grupper.set(k, []); grupper.get(k)!.push(b); }
+        for (const bs of kl.values()) { const k = side(bs); if (!grupper.has(k)) grupper.set(k, []); grupper.get(k)!.push(...bs); }
         for (const g of grupper.values()) utskiltTekst.add(g);
         return [d.filter((b) => !utenfor.includes(b)), ...grupper.values()];
       }
@@ -983,8 +1004,14 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
     // tekst paa hoykant: flere tegn, og mye hoeyere enn bred
     const bw = Math.max(...gg.map((b) => b.boks.x1)) - Math.min(...gg.map((b) => b.boks.x0));
     const bh = Math.max(...gg.map((b) => b.boks.y1)) - Math.min(...gg.map((b) => b.boks.y0));
-    const r9 = flater >= 3 && bh > 2 * bw ? rettOpp(dreid(gg), STOR_GRAD) : null;
-    const r = r9 ? r9 : r0;
+    // et kort ord paa hoykant («Din» paa toppen av LTS) er bare litt hoeyere
+    // enn bredt: les det begge veier og bruk den sterkeste grunnlinjen
+    const r9 = flater >= 3 && bh > 1.2 * bw ? rettOpp(dreid(gg), STOR_GRAD) : null;
+    // kursive stammer i tekst paa hoykant leses som skraa grunnlinjer (11°):
+    // en grunnlinje naer aksen vinner over en skraa
+    const naerAkse = (x: typeof r0) => x.funnet && Math.abs(x.linje ?? 0) <= RETT_MAKS_GRAD;
+    const r = r9 && (bh > 2 * bw || !r0.funnet || (naerAkse(r9) && !naerAkse(r0)) ||
+      (r9.funnet && naerAkse(r9) === naerAkse(r0) && (r9.styrke ?? 0) > (r0.styrke ?? 0))) ? r9 : r0;
     let v = r.funnet ? (r.linje ?? 0) + (r === r9 ? 90 : 0) : null;
     /**
      * En svak grunnlinje langt fra vannrett eller loddrett er ikke en
@@ -1206,14 +1233,59 @@ async function leggTekstPassmerker(elementer: BilElement[], baner: Map<BilElemen
     const hoyde = (k: typeof komp[number]) => vannrett ? k.b.y1 - k.b.y0 : k.b.x1 - k.b.x0;
     const maks = Math.max(...komp.map(hoyde));
     /**
-     * Hoeye tegn er de som naar opp (eller ned) til linja som vender mot
-     * logoen: D, l, k, d og !. En g med underlengde er like hoey som en D,
-     * men naar ikke opp, og stubben ble en bue (Eirik 17.11.2026).
+     * Hoeye tegn er de med stamme opp fra grunnlinjen: D, l, k, d og !. En g
+     * med underlengde er like hoey som en D, men gaar under grunnlinjen, og
+     * stubben ble en bue (Eirik 17.11.2026). Grunnlinjen er den siden flest
+     * tegn flukter mot; teksten kan staa paa hoykant begge veier.
      */
+    // flere linjer: bare linja naermest logoen (kontaktteksten bak paa LTS)
+    {
+      const venstre0 = !vannrett && rt.x1 <= rl.x0 + 1e-6;
+      const naer = (k: typeof komp[number]) => vannrett
+        ? (under ? rt.y1 - k.b.y1 : k.b.y0 - rt.y0)
+        : (venstre0 ? rt.x1 - k.b.x1 : k.b.x0 - rt.x0);
+      const linja = komp.filter((k) => naer(k) <= 0.6 * maks);
+      if (linja.length >= 2) komp.splice(0, komp.length, ...linja);
+    }
+    const lav = (k: typeof komp[number]) => vannrett ? k.b.y0 : k.b.x0;
+    const hoy = (k: typeof komp[number]) => vannrett ? k.b.y1 : k.b.x1;
+    /*
+     * Grunnlinjen er en rett linje, ikke et tall: teksten kan staa litt
+     * skraatt (toppvisningen paa LTS heller 0,7°). Den tilpasses med minste
+     * kvadrater paa den siden flest tegn flukter mot, to runder med bare
+     * tegnene som ligger paa den.
+     */
+    const langs = (k: typeof komp[number]) => vannrett ? (k.b.x0 + k.b.x1) / 2 : (k.b.y0 + k.b.y1) / 2;
+    const tol = 0.08 * maks;
+    const tilpass = (kant: (k: typeof komp[number]) => number) => {
+      let bruk = komp.slice(), a = 0, b = 0;
+      for (let runde = 0; runde < 3; runde++) {
+        const n = bruk.length, su = bruk.reduce((s2, k) => s2 + langs(k), 0) / n, sv = bruk.reduce((s2, k) => s2 + kant(k), 0) / n;
+        let num = 0, den = 0;
+        for (const k of bruk) { num += (langs(k) - su) * (kant(k) - sv); den += (langs(k) - su) ** 2; }
+        a = den > 0 ? num / den : 0; b = sv - a * su;
+        const rest = komp.map((k) => Math.abs(kant(k) - (a * langs(k) + b)));
+        const grense = Math.max(tol, rest.slice().sort((x, y) => x - y)[Math.floor(rest.length / 2)] * 1.5);
+        const ny = komp.filter((_, i) => rest[i] < grense);
+        if (ny.length < 2) break;
+        bruk = ny;
+      }
+      const paa = komp.filter((k) => Math.abs(kant(k) - (a * langs(k) + b)) < tol);
+      return { a, b, n: paa.length };
+    };
+    const fLav = tilpass(lav), fHoy = tilpass(hoy);
+    const baseLav = fLav.n >= fHoy.n;
+    const f = baseLav ? fLav : fHoy;
+    const linje = (k: typeof komp[number]) => f.a * langs(k) + f.b;
+    const paaBase = (k: typeof komp[number]) => Math.abs((baseLav ? lav(k) : hoy(k)) - linje(k)) < tol;
+    const opp = (k: typeof komp[number]) => baseLav ? hoy(k) - linje(k) : linje(k) - lav(k);
+    const toppOpp = Math.max(...komp.filter(paaBase).map(opp));
     const venstreLogo = !vannrett && rt.x1 <= rl.x0 + 1e-6;
-    const kant = (k: typeof komp[number]) => vannrett ? (under ? k.b.y1 : -k.b.y0) : (venstreLogo ? k.b.x1 : -k.b.x0);
-    const toppKant = Math.max(...komp.map(kant));
-    const hoye = komp.filter((k) => hoyde(k) >= 0.5 * maks && kant(k) >= toppKant - 0.1 * maks).sort((a, b) => vannrett ? a.b.x0 - b.b.x0 : b.b.y1 - a.b.y1);
+    // ikke under grunnlinjen (underlengde), men gjerne over den: streken i
+    // et utropstegn staar paa prikken, ikke paa linja
+    const overBase = (k: typeof komp[number]) => (baseLav ? linje(k) - lav(k) : hoy(k) - linje(k)) < tol;
+    // prikken over i-en naar ogsaa opp, men er ikke et tegn med stamme
+    const hoye = komp.filter((k) => hoyde(k) >= 0.5 * maks && overBase(k) && opp(k) >= toppOpp - 0.15 * maks).sort((a, b) => vannrett ? a.b.x0 - b.b.x0 : b.b.y1 - a.b.y1);
     /**
      * Stubben skal vaere ett solid stykke montoeren kan se og strippe
      * (Eirik 17.11.2026: «å lage de mikroskopiske bitene der er ris til egen
@@ -1238,14 +1310,11 @@ async function leggTekstPassmerker(elementer: BilElement[], baner: Map<BilElemen
       const tot = arealer.reduce((a: number, b: number) => a + b, 0);
       return { del: beholdt, god: beholdt.length === 1 && maksA >= 0.85 * tot };
     };
+    // ytterst i teksten: jo lenger fra hverandre, jo mindre gir en skjev
+    // montering utslag (Eirik 17.11.2026). Bare tegn uten solid stubb hoppes over.
     const velgFra = (liste: typeof komp) => {
-      let reserve: { del: any } | null = null;
-      for (const k of liste.slice(0, 4)) {
-        const st = lagStubb(k);
-        if (st?.god) return st;
-        if (st && !reserve) reserve = st;
-      }
-      return reserve;
+      for (const k of liste.slice(0, 4)) { const st = lagStubb(k); if (st) return st; }
+      return null;
     };
     const valgt = hoye.length > 1 ? [velgFra(hoye), velgFra(hoye.slice().reverse())] : [velgFra(hoye)];
     const stubber: Bane[] = [];
