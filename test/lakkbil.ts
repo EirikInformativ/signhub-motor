@@ -56,7 +56,16 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(ø.length === 2, `Vito 304160: én stor Ø paa hver side (${ø.map((e: any) => Math.round(e.breddeMm) + "x" + Math.round(e.hoydeMm)).join(", ")})`);
   sjekk(ø.every((e: any) => e.hoydeMm < 1200), "Vito 304160: Ø-ene er kuttet ved klippet, ikke doble");
   sjekk(v.merknader.some((m: string) => /innsatte bilder/.test(m)), "Vito 304160: fotoene paa sidene er meldt");
-  sjekk(v.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#FFFFFF")).length >= 10, "Vito 304160: den hvite dekoren er funnet");
+  sjekk(v.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#FFFFFF")).length >= 8, "Vito 304160: den hvite dekoren er funnet");
+  // Oesterboe (Eirik 17.11.2026)
+  sjekk(ø.every((e: any) => e.breddeMm > 1050), `Oesterboe: hele Oe-en, begge halvdelene (${ø.map((e: any) => Math.round(e.breddeMm)).join(", ")})`);
+  sjekk(v.visninger.some((x: any) => x.navn === "topp") && v.visninger.some((x: any) => x.navn === "side ovre"), "Oesterboe: toppen er skilt fra siden under");
+  sjekk(v.elementer.some((e: any) => Math.abs(e.breddeMm - 906) < 15 && Math.abs(e.hoydeMm - 362) < 15 && e.antall === 2),
+    "Oesterboe: smoerbroedlista paa sidene er ett element med alle tre ikonene");
+  sjekk(v.elementer.some((e: any) => e.vis.startsWith("ende") && Math.abs(e.breddeMm - 440) < 15 && Math.abs(e.hoydeMm - 176) < 15),
+    "Oesterboe: ikonene bak henger sammen med tekstene sine");
+  sjekk(v.utelatt.length === 2 && !v.elementer.some((e: any) => e.vis === "ende 1" && e.hoydeMm > 200),
+    "Oesterboe: den sammentrykte panserlogoen forfra er tatt ut av jobben");
 
   // Vito i sort (Skisse_Vito_rev_3): fasiten fra kvelden 16.11 skal staa
   const s: any = await lesBilskisse(new Uint8Array(fs.readFileSync("vito_sort.pdf")), { jobb: "s", bilder, lerret } as any);

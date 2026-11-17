@@ -676,9 +676,10 @@ produksjonsfil har XObject, `Do`, klippebane (`W`) eller usynlig bane (`n`).
 **Lakkert bil, skalerte ark og klipp (natt 16.–17.11.2026, E-Partner 306005
 og Vito 304160):**
 - `velgMalestokk`: et ark skalert til et rent forhold maales med relativ
-  grense (1200 prosent gir 1:2,48). En tegning skalert inntil
-  `SKALERT_MAKS_PROSENT = 15` for aa passe arket bruker den maalte
-  malestokken, med merknad (E-Partner: 93 prosent, 1:32,4).
+  grense (1200 prosent gir 1:2,48). Spriker maalingen inntil
+  `SKALERT_MAKS_PROSENT = 15` fra en trykt malestokk, brukes **den trykte**,
+  med merknad (Eirik 17.11.2026: sidelogoen paa E-Partner er 1739,7 mm i
+  printfila; den maalte 1:32,4 ga 1882 mm, 1:30 gir 1741 mm).
 - `finnDekor`: tegnede avstander skaleres med `30 / malestokk`. Kuloeren som
   dekker mer enn `LAKK_ANDEL = 0.3` av alt fylt er lakken; er den moerk, er
   bilen moerk. En hvit flate over `STOR_LYS_MM = 300` paa moerk bil er dekor
@@ -692,7 +693,37 @@ og Vito 304160):**
   (`kuttVedKlipp`). Korte ord (under `KORT_ORD_FLATER` flater) har ingen
   sikker retning. Tekst i én farge utenfor en flerfarget logo, i en farge
   logoen ogsaa har inni seg, skilles ut (LTS Maskin: logoen printes, teksten
-  skjaeres i 010) og faar vannrett passmerke mot logoen.
+  skjaeres i 010). Tekst over, under og ved siden av logoen er hver sin del.
+
+**E-Partner og Oesterboe (17.11.2026, morgen):**
+- Passmerke for utskilt tekst er ikke en strimmel, men 10 mm
+  (`TEKST_STUBB_MM`) av **foerste og siste hoeye tegn** (minst 90 % av det
+  hoeyeste), fra kanten mot logoen, lagt inn i logoen i tekstfargen
+  (`leggTekstPassmerker`). Montoeren legger teksten saa tegnene dekker
+  stubbene. Bare naar logoen allerede har den fargen.
+- Graa rute bak en kuloer (haken hos LTS) er dekor (`graaBak` i
+  `finnDekor`, `valgtGraa` i bilmotor).
+- To visninger paa langs: toppen er speilsymmetrisk om midtlinjen
+  (`symmetri`, over `SYMMETRI_TOPP = 0.5`), siden er ikke. Et baand mye
+  hoeyere enn bilen deles der faerrest baner krysser (`delHoyt`: speilene
+  paa toppen stakk opp i siden under paa Oesterboe).
+- Bare én side tegnet: `dupliserSide`. Tekst og logo (flere farger eller
+  minst `TEKST_FLATER` flater) faar antall + 1 uten speilvending. Stripe
+  speilvendes som eget element. Ellers speilvendes én farge med
+  `ensidig.usikker`, og det meldes. Front, bak og topp dupliseres aldri.
+- `likBoks` godtar overlapp (`LIK_BOKS_OVERLAPP = 0.95`): lesLett og
+  synligBoks klipper ulikt, og halve Oe-en falt ut.
+- `samleDeler` slaar sammen deler paa samme linje foer deler over
+  hverandre (ikonene i en smoerbroedliste), og en svak grunnlinje langt fra
+  aksene (`SVAK_GRUNNLINJE`) gir ingen retning.
+- Samme merke sett fra to vinkler tas **ut** av `elementer` og legges i
+  `utelatt` (Eirik: den skviste panserlogoen i oppsettet er
+  «problematisk»). Ogsaa naar logoen er satt annerledes sammen forfra enn
+  ovenfra: endevisning, midt paa, samme farger, like bred paa tvers som et
+  merke i enden av toppvisningen, sammentrykt i hoeyden.
+
+**Feilsignatur:** halv logo der designeren har tegnet den i to baner,
+ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
 
 **Feilsignatur:** «Malestokken i skissen er ikke til a stole pa» paa et ark
 som bare er skalert, en lakkert bil der bilens linjer kommer som dekor,

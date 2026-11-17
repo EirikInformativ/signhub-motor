@@ -95,10 +95,10 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
     "passmerket peker mot PROFF");
   sjekk(!lest.elementer.some((e) => e.passmerke && e.antall > 1), "ingen passmerke paa elementer i flere eksemplarer");
 
-  const dobbel = lest.elementer.filter((e) => e.sammeSom);
+  const dobbel = (lest as any).utelatt.filter((e: any) => e.sammeSom);
   sjekk(dobbel.length === 1 && dobbel[0].breddeMm === 978 && dobbel[0].hoydeMm === 55,
-    `panseret i frontvisningen meldt som samme merke (${dobbel.map((e) => e.navn + " = " + e.sammeSom).join(", ")})`);
-  sjekk(lest.elementer.length === 11, "ingen elementer fjernet av den grunn");
+    `panseret i frontvisningen er samme merke og tatt ut av jobben (${dobbel.map((e: any) => e.navn + " = " + e.sammeSom).join(", ")})`);
+  sjekk(lest.elementer.length === 10, "bare det sammentrykte panseret er tatt ut (Eirik 17.11.2026)");
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: ytterkanten i bunn, tekst og doble merker meldes");

@@ -25,7 +25,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   const sjekk = (ok: boolean, tekst: string) => { console.log(`${ok ? "ok  " : "FEIL"} ${tekst}`); if (!ok) feil++; };
 
   const e = await lesBilskisse(new Uint8Array(fs.readFileSync("eexpert.pdf")), { jobb: "e-expert", bilder, lerret });
-  sjekk(e.elementer.length === 11, `e-expert: 11 elementer (fikk ${e.elementer.length})`);
+  sjekk(e.elementer.length === 10, `e-expert: 10 elementer (panseret forfra er utelatt) (fikk ${e.elementer.length})`);
   const stor = e.elementer.filter((x) => Math.max(x.breddeMm, x.hoydeMm) > 1300);
   sjekk(!stor.length, `e-expert: ingen element over 1300 mm (tak, rails) ${stor.map((x) => x.navn).join(", ")}`);
   const graa = e.elementer.filter((x) => x.farger.some((f) => ["#404040", "#8C8C8C", "#D9D9D9"].includes(f.hex)));

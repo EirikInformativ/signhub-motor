@@ -131,6 +131,8 @@ export interface BilSkisseLest {
   hoydeM: number | null;
   visninger: { navn: string; breddeEkteMm: number; hoydeEkteMm: number }[];
   elementer: BilElement[];
+  /** samme merke sett fra en annen vinkel (panseret forfra): tatt ut av elementer, kan legges inn igjen */
+  utelatt: BilElement[];
   /** bilskissen ferdig tegnet, klar som forside paa kundeskissen */
   forside: { jpeg: Uint8Array; bredde: number; hoyde: number };
   /**
@@ -273,8 +275,19 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     // banen maa svare til en av flatene finnDekor valgte (samme ramme)
     const T = 0.6;
     // lesLett ser bare det som synes innenfor klippet; sammenlign med det samme
-    const likBoks = (b: Bane) => { const sb = synligBoks(b); return o.liste.some((x) => Math.abs(x.x0 - sb.x0) < T &&
-      Math.abs(x.y0 - sb.y0) < T && Math.abs(x.x1 - sb.x1) < T && Math.abs(x.y1 - sb.y1) < T); };
+    /**
+     * Banen er den finnDekor valgte. lesLett og synligBoks klipper litt
+     * ulikt (Oesterboe, Vito 304160: den ene halvdelen av den store Oe-en
+     * bommet med 8 pt paa en kant og falt ut, halve logoen manglet).
+     * Derfor overlapp, ikke hver kant for seg.
+     */
+    const likBoks = (b: Bane) => { const sb = synligBoks(b); return o.liste.some((x) => {
+      if (Math.abs(x.x0 - sb.x0) < T && Math.abs(x.y0 - sb.y0) < T && Math.abs(x.x1 - sb.x1) < T && Math.abs(x.y1 - sb.y1) < T) return true;
+      const iw = Math.min(x.x1, sb.x1) - Math.max(x.x0, sb.x0), ih = Math.min(x.y1, sb.y1) - Math.max(x.y0, sb.y0);
+      if (iw <= 0 || ih <= 0) return false;
+      const snitt = iw * ih, a = (x.x1 - x.x0) * (x.y1 - x.y0), c = (sb.x1 - sb.x0) * (sb.y1 - sb.y0);
+      return snitt / (a + c - snitt) >= LIK_BOKS_OVERLAPP && (!x.farge || !b.farge || x.farge.length !== b.farge.length || x.farge.every((v, i) => Math.abs(v - (b.farge[i] ?? 0)) < 0.02));
+    }); };
     // en graa flate finnDekor selv har valgt (graa rute bak en kuloer, LTS Maskin) er dekor
     const valgtGraa = (b: Bane) => o.liste.some((x) => !!x.farge && x.farge.length === 4 &&
       Math.max(x.farge[0], x.farge[1], x.farge[2]) < 0.01 && x.farge[3] > 0.01 && x.farge[3] < 0.99) && likBoks(b);
@@ -534,8 +547,7 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
    * andre siden er kortere fordi flaten heller bort fra oss. To like merker
    * paa to steder har begge sidene like og telles allerede som antall.
    *
-   * Motoren fjerner det ikke selv. Den peker ut det minste som trolig samme
-   * som det stoerste og sier fra, saa et menneske tar det ut.
+   * Det minste merkes som samme som det stoerste og tas ut av jobben under.
    */
   for (const a of elementer) for (const b of elementer) {
     if (a === b || a.vis === b.vis || a.sammeSom || b.sammeSom) continue;
@@ -548,9 +560,58 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     const ka = Math.min(a.breddeMm, a.hoydeMm), kb = Math.min(b.breddeMm, b.hoydeMm);
     if (!likFarge || Math.abs(la - lb) / Math.max(la, lb) > 0.02 || ka >= kb * 0.8) continue;
     a.sammeSom = b.navn;
-    merknader.push(`${a.navn} (${a.breddeMm} x ${a.hoydeMm} mm) ser ut til a vaere samme merke som ` +
-      `${b.navn} (${b.breddeMm} x ${b.hoydeMm} mm), sett fra en annen vinkel. ` +
-      "Ta det ut av jobben hvis det stemmer, ellers skjaeres det to ganger.");
+  }
+
+  /**
+   * Panseret sett forfra der designeren har satt logoen litt annerledes
+   * sammen i toppvisningen (Oesterboe, Vito 304160: Oe over teksten forfra,
+   * ved siden av teksten ovenfra). Da stemmer ikke maalene, men det er
+   * fortsatt samme merke. Kjennetegn: i en endevisning, midt paa bilen, i
+   * samme farger som et merke i toppvisningen som ligger i en ende av
+   * bilen, like bredt paa tvers (0,7 til 1,3) og sammentrykt i hoeyden.
+   * Smaa biter av samme merke (en bokstav som ble skilt ut) foelger med.
+   */
+  const rammeAv = (e: BilElement) => {
+    const bs = brukteBaner.get(e) ?? [];
+    return bs.length ? { x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
+      x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) } : null;
+  };
+  const tilMm = (pt: number) => (pt / MM) * malestokk;
+  const visAv = (navn: string) => funn.visninger.find((x) => x.navn === navn);
+  for (const t of elementer) {
+    const vt = visAv(t.vis), rt = rammeAv(t);
+    if (!t.vis.startsWith("topp") || !vt || !rt || t.sammeSom) continue;
+    const cxT = (rt.x0 + rt.x1) / 2, lengde = vt.x1 - vt.x0;
+    if (Math.min(cxT - vt.x0, vt.x1 - cxT) > 0.3 * lengde) continue;
+    const tvers = tilMm(rt.y1 - rt.y0), langs = tilMm(rt.x1 - rt.x0);
+    const hexT = new Set(t.farger.map((f) => f.hex));
+    for (const ve of funn.visninger.filter((x) => x.navn.startsWith("ende"))) {
+      const kand = elementer.filter((e) => {
+        const r = rammeAv(e);
+        if (e.vis !== ve.navn || e.sammeSom || !r || !e.farger.every((f) => hexT.has(f.hex))) return false;
+        const cx = (r.x0 + r.x1) / 2, vc = (ve.x0 + ve.x1) / 2;
+        return Math.abs(cx - vc) < 0.15 * (ve.x1 - ve.x0);
+      });
+      if (!kand.length) continue;
+      const rr = kand.map(rammeAv) as NonNullable<ReturnType<typeof rammeAv>>[];
+      const b = tilMm(Math.max(...rr.map((r) => r.x1)) - Math.min(...rr.map((r) => r.x0)));
+      const h = tilMm(Math.max(...rr.map((r) => r.y1)) - Math.min(...rr.map((r) => r.y0)));
+      if (b < 0.7 * tvers || b > 1.3 * tvers || h > 0.8 * langs) continue;
+      for (const e of kand) e.sammeSom = t.navn;
+    }
+  }
+
+  /**
+   * Det sammentrykte merket tas ut av jobben (Eirik 17.11.2026: «den
+   * skvisede versjonen av panserlogoen (sett forfra) er med i
+   * skjæreoppsettet. problematisk»). Det ligger i `utelatt`, saa appen kan
+   * legge det inn igjen, og meldes.
+   */
+  const utelatt = elementer.filter((e) => e.sammeSom);
+  for (const a of utelatt) {
+    elementer.splice(elementer.indexOf(a), 1);
+    logg.push(`${a.navn} (${a.breddeMm} x ${a.hoydeMm} mm) er samme merke som ${a.sammeSom}, ` +
+      "sett fra en annen vinkel, og tas ikke med i jobben.");
   }
 
   await leggTekstPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
@@ -568,13 +629,15 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     malestokk, malestokkTekst: s.malestokkTekst, avvikProsent: s.avvikProsent,
     lengdeM: s.lengdeM, breddeM: s.breddeM, hoydeM: s.hoydeM,
     visninger: funn.visninger.map((x) => ({ navn: x.navn, breddeEkteMm: x.breddeEkteMm, hoydeEkteMm: x.hoydeEkteMm })),
-    elementer, forside, merknader, logg, levendeTekst,
+    elementer, utelatt, forside, merknader, logg, levendeTekst,
   };
 }
 
 
 /** Saa mange flater eller flere er tekst (bokstaver), ikke en stripe. */
 const TEKST_FLATER = 4;
+/** Saa stor overlapp mellom banens synlige ramme og rammen finnDekor valgte er samme bane. */
+const LIK_BOKS_OVERLAPP = 0.95;
 /** Saa mye lengre enn bred er en stripe. */
 const STRIPE_FORHOLD_BIL = 8;
 
@@ -861,6 +924,8 @@ const TEKST_VINKEL = 5;
 /** Faerre flater enn dette: retningen er for usikker til aa skille deler paa. */
 const KORT_ORD_FLATER = 4;
 const KORT_ORD_VINKEL = 12;
+/** grunnlinje kortere enn dette ganger bredden, langt fra aksene, gir ingen retning */
+const SVAK_GRUNNLINJE = 0.2;
 /** Saa mye av foerste og siste hoeye tegn ligger med i logoen som passmerke. */
 const TEKST_STUBB_MM = 10;
 /** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */
@@ -904,6 +969,17 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
     const r9 = flater >= 3 && bh > 2 * bw ? rettOpp(dreid(gg), STOR_GRAD) : null;
     const r = r9 ? r9 : r0;
     let v = r.funnet ? (r.linje ?? 0) + (r === r9 ? 90 : 0) : null;
+    /**
+     * En svak grunnlinje langt fra vannrett eller loddrett er ikke en
+     * retning. Ikonene i smoerbroedlista bak paa Oesterboe (Vito 304160) ga
+     * 118° fra et par rette streker i haken og lynet, og ble ikke slaatt
+     * sammen med tekstene sine. Ekte skraadde logoer staar sterkt (Vito
+     * sort: over 1,3 ganger bredden).
+     */
+    if (v !== null && r.styrke < SVAK_GRUNNLINJE) {
+      const a = Math.abs(v) % 90;
+      if (Math.min(a, 90 - a) > TEKST_VINKEL) v = null;
+    }
     /**
      * Et kort ord (to, tre tegn som «56» og «39» i et telefonnummer paa
      * E-Partner 306005) har ikke nok grunnlinje til aa si noe sikkert om
@@ -994,7 +1070,20 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
       if (ok && !ok([...g[i], ...g[j]])) continue;
       if (par && !par(g[i], g[j])) continue;
       if (ulikTekst(info[i], info[j], ri, rj)) { continue; }
-      if (!best || d < best[2]) best = [i, j, d];
+      /**
+       * Paa samme linje foerst (Oesterboe, Vito 304160: smoerbroedlista med
+       * ikon foran hver linje). Med naermeste par foerst ble ikonene slaatt
+       * sammen til en soeyle, og soeylen fikk ikke bli med noen linje fordi
+       * rammen ble for luftig. Et par som ligger paa samme linje i tekstens
+       * retning, velges foer et par som staar over hverandre.
+       */
+      const hoykant = [info[i].vinkel, info[j].vinkel].some((v) => v !== null && Math.abs(Math.abs(v) - 90) < 20);
+      const o0 = hoykant ? Math.max(ri.x0, rj.x0) : Math.max(ri.y0, rj.y0);
+      const o1 = hoykant ? Math.min(ri.x1, rj.x1) : Math.min(ri.y1, rj.y1);
+      const tv = hoykant ? Math.min(ri.x1 - ri.x0, rj.x1 - rj.x0) : Math.min(ri.y1 - ri.y0, rj.y1 - rj.y0);
+      const sammeLinje = o1 - o0 >= 0.5 * tv;
+      const noekkel = sammeLinje ? d : d + glippe;
+      if (!best || noekkel < best[2]) best = [i, j, noekkel];
     }
     if (!best) break;
     const [i, j] = best;

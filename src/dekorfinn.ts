@@ -156,7 +156,27 @@ function symmetri(bokser: Boks[], v: { x0: number; y0: number; x1: number; y1: n
 
 export function finnVisninger(bokser: Boks[], malestokk: number,
                               dim: { L: number | null; B: number | null; H: number | null }): Visning[] {
+  /**
+   * To visninger som overlapper litt i hoeyden blir ett baand. Paa
+   * Oesterboe (Vito 304160) stikker speilene paa toppvisningen opp forbi
+   * hjulene paa siden under, og toppen ble en del av siden. Et baand som er
+   * mye hoeyere enn bilen kan vaere, deles der faerrest baner krysser.
+   */
+  const maksH = dim.B && dim.H ? (Math.max(dim.B, dim.H) * 1000 / malestokk) * MM : Infinity;
+  const delHoyt = (band: Boks[]): Boks[][] => {
+    const y0 = Math.min(...band.map((b) => b.y0)), y1 = Math.max(...band.map((b) => b.y1));
+    if (y1 - y0 < 1.5 * maksH) return [band];
+    let best = -1, minst = Infinity;
+    for (let y = y0 + 0.3 * maksH; y <= y1 - 0.3 * maksH; y += MM) {
+      const n = band.filter((b) => b.y0 < y && b.y1 > y).length;
+      if (n < minst) { minst = n; best = y; }
+    }
+    if (best < 0 || minst > 6) return [band];
+    const over = band.filter((b) => (b.y0 + b.y1) / 2 > best), under = band.filter((b) => (b.y0 + b.y1) / 2 <= best);
+    return over.length && under.length ? [...delHoyt(over), ...delHoyt(under)] : [band];
+  };
   const grupper = profilDel(bokser, true, 2 * MM)
+    .flatMap(delHoyt)
     .flatMap((band) => profilDel(band, false, 2 * MM))
     .map((g) => ramme(g))
     .filter((r) => (r.x1 - r.x0) / MM > 20 && (r.y1 - r.y0) / MM > 20)
