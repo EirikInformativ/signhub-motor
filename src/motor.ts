@@ -37,7 +37,13 @@ export type { Felt } from "./skisselayout.ts";
 
 /** Under denne tynneste detaljen lar motivet seg ikke luke. */
 /** To skraa kanter som avviker mindre enn dette fra parallelle, legges kant i kant. */
-const PARALLELL_MM = 0.5;
+/**
+ * Kanter som skal dele én thru-linje, maa ligge oppaa hverandre: avvik under
+ * dette (mm). Formen paa et stykke endres aldri mer enn dette for aa faa én
+ * linje (Eirik 17.11.2026, Rosen: valgte eksakt form framfor én felles linje
+ * naar kantene bare nesten er parallelle; 0,5 mm ga en kile langs pila).
+ */
+const PARALLELL_MM = 0.1;
 /** Et felt dreies naar rammen blir minst saa mye mindre. */
 const DREI_GEVINST = 0.1;
 /** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
@@ -877,7 +883,10 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
      * at minst NESTEN_ANDEL av kanten ligger innenfor NESTEN_MM.
      */
     const nesten = d.filter((x) => x - min < NESTEN_MM);
-    const kontakt = d.length > 3 && (naer.length >= 0.5 * d.length || nesten.length >= NESTEN_ANDEL * d.length);
+    // nesten parallelle kanter (NESTEN_MM) gir ikke lenger kontakt: formen
+    // maatte da flyttes inntil 0,5 mm (Eirik 17.11.2026, valg B)
+    void nesten; void NESTEN_ANDEL;
+    const kontakt = d.length > 3 && naer.length >= 0.5 * d.length;
     if (kontakt && min <= kant) return { s: Math.max(0, min), kontakt: true };
     return { s: Math.max(0, Math.min(kant, min - geo.gap - 0.5)), kontakt: false };
   };
@@ -897,6 +906,23 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
         }
         return bestX === null ? [X, Y] as [number, number] : fraArk(p, bestX, y);
       }))) }));
+      /*
+       * Et konvekst stykke holdes konvekst (Eirik 17.11.2026, Rosen: «ujevn
+       * kant»). Snappingen flytter bare punktene som ligger innenfor
+       * PARALLELL_MM av naboens linje, saa en avrundet hjoerne fikk et hakk
+       * der de flyttede punktene sluttet. Skallet rundt de flyttede punktene
+       * gaar rett fra linjen og inn paa buen.
+       */
+      for (let i = 0; i < ny.length; i++) {
+        const f0 = e.deler[i].flate;
+        if (f0.length !== 1 || f0[0].length !== 1 || !heltKonveks(f0)) continue;
+        const sk = konvekstSkall(ny[i].flate[0][0].slice(0, -1) as [number, number][]);
+        if (sk.length < 3) continue;
+        // skallet maa ikke gaa inn i det som alt er lagt (naboens avrundede hjoerne)
+        const paaArk = [...sk, sk[0]].map(([X, Y]) => tilArk(p, X, Y) as [number, number]);
+        if (lagt.length && overlapper([paaArk as any], lagt)) continue;
+        ny[i] = { ...ny[i], flate: [[[...sk, sk[0]] as any]] };
+      }
       e.deler = ny;
       e.omriss = e.deler[0].flate;
     }

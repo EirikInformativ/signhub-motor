@@ -819,10 +819,12 @@ og Vito 304160):**
   samlet»). Er de hele, konvekse stykker, heter fila `Thru`, og arket er
   akkurat innholdet, uten overmaal og uten `felt` i navnet. Hvert eksemplar
   er et eget element, saa hver bit kan dreies inntil naboen.
-- Enveis thru ogsaa paa kanter som bare nesten er parallelle: minst
-  `NESTEN_ANDEL = 0.25` av kanten innenfor `NESTEN_MM = 2` (svakt buede
-  sider). Kontakt teller som `KANT_TOLERANSE_MM` smalere felt naar vinkel og
-  snuing velges. Proace: fire trekanter kant i kant, 125 x 58 mm.
+- Enveis thru bare der kantene faktisk ligger oppaa hverandre: avvik under
+  `PARALLELL_MM = 0.1`. Formen paa et stykke flyttes aldri mer enn det for aa
+  faa én linje, og et konvekst stykke holdes konvekst etter flyttingen (Eirik
+  17.11.2026, Rosen, valg B: eksakt form foran én felles linje; 0,5 mm og
+  NESTEN_MM ga en kile og et hakk langs pila). Nesten parallelle kanter faar
+  vanlig gap. Proace: 141 x 58 mm (var 125 x 58).
 - Oppsettet med markering (omrisset av det som teipes inn) legges ogsaa kant
   i kant med enveis kiss.
 - Kant i kant med thru: kiss ogsaa mellom hver logo, eksakt i thru-sporet,
