@@ -486,6 +486,37 @@ export async function byggProduksjonsfil(
       const blokk = pc.union(...(rekt as [any])) as MultiPoly;
       for (const poly of blokk) for (const r of offsetRinger([poly[0].slice(0, -1) as [number, number][]], geo.boksKiss, true))
         ops.push(ringOps([...r, r[0]], ytop));
+      /*
+       * Kiss ogsaa mellom hver logo, eksakt i sporet til thru-cuten (Eirik
+       * 17.11.2026), saa lukeren kan ta én logo om gangen. Bare de indre
+       * kantene: der det ligger et element paa begge sider.
+       */
+      const inni = (x: number, y: number) => rekt.some((q) => { const r = q[0] as Pkt[];
+        return x > r[0][0] && x < r[1][0] && y > r[0][1] && y < r[2][1]; });
+      const indre: [Pkt, Pkt][] = [];
+      for (const x of rekt) {
+        const r = x[0] as Pkt[];
+        for (let i = 0; i < 4; i++) {
+          const a = r[i], b = r[i + 1];
+          const L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 1e-6) continue;
+          const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L, e = 0.3;
+          // del kanten i stykker og ta med det som har element paa begge sider
+          const n = Math.max(1, Math.ceil(L / 2));
+          let start: Pkt | null = null;
+          for (let k = 0; k <= n; k++) {
+            const t = k / n, px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t;
+            const tm = Math.min(1, (k + 0.5) / n), mx = a[0] + (b[0] - a[0]) * tm, my = a[1] + (b[1] - a[1]) * tm;
+            const begge = k < n && inni(mx + nx * e, my + ny * e) && inni(mx - nx * e, my - ny * e);
+            if (begge && !start) start = [px, py];
+            if ((!begge || k === n) && start) { indre.push([start, [px, py]]); start = null; }
+          }
+        }
+      }
+      for (const bane of slaaSammenKanter(indre)) {
+        let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
+        for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+        ops.push(o + "S\n");
+      }
     } else if (rekt.length) {
       const kanter: [Pkt, Pkt][] = [];
       for (const x of rekt) { const r = x[0] as Pkt[]; for (let i = 0; i < 4; i++) kanter.push([r[i], r[i + 1]]); }
