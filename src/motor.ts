@@ -1908,7 +1908,15 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     const forBreie = new Set<Elem>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
-      const f = e.deler.length === 1 ? e.deler[0].flate : [];
+      /**
+       * Flere farger deles bare naar elementet er for bredt for rullen
+       * (Saethre ID.Buzz 17.11.2026: oransje felt med graa tekst bak, 1 188
+       * mm). Alle fargene deles med de samme stykkene, saa de ligger i
+       * register i hvert stykke.
+       */
+      const fler = e.deler.length > 1 && !e.bilde && Math.min(e.breddeMm, e.hoydeMm) > maksLengde;
+      let f: MultiPoly = e.deler.length === 1 ? e.deler[0].flate : [];
+      if (fler) { try { f = pc.union(...(e.deler.map((d) => d.flate) as [any])) as MultiPoly; } catch { f = []; } }
       /**
        * Et felt som ikke faar plass paa tvers av rullen selv paa sin
        * korteste led, deles paa tvers i like brede stykker med SKJOT_MM
@@ -1933,7 +1941,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
        * legger skjoeten i bilens egen skjoet. Det velges faerrest mulig
        * skjoeter som gir stykker som faar plass paa tvers.
        */
-      if (f.length === 1 && f[0].length === 1 && e.skjoter?.length) {
+      if (!fler && f.length === 1 && f[0].length === 1 && e.skjoter?.length) {
         const ov = mmTil(SKJOT_BIL_MM);
         const steder = e.skjoter.map((x) => b0 + x * (b1 - b0));
         const ok = (kutt: number[]) => {
@@ -2018,6 +2026,8 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
           ? [[[[a, e.bbox[1] - 1], [z, e.bbox[1] - 1], [z, e.bbox[3] + 1], [a, e.bbox[3] + 1], [a, e.bbox[1] - 1]]]]
           : [[[[e.bbox[0] - 1, a], [e.bbox[2] + 1, a], [e.bbox[2] + 1, z], [e.bbox[0] - 1, z], [e.bbox[0] - 1, a]]]];
         const bit = pc.intersection(f as any, rute as any) as MultiPoly;
+        const delBiter = e.deler.map((d) => ({ ...d, flate: e.deler.length === 1 ? bit
+          : pc.intersection(d.flate as any, rute as any) as MultiPoly })).filter((d) => d.flate.length);
         const xs = bit.flatMap((p) => p[0].map((q) => q[0])), ys = bit.flatMap((p) => p[0].map((q) => q[1]));
         /**
          * Stykkene beholder hele elementets hoeyde paa tvers og faar
@@ -2031,7 +2041,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
           : [e.bbox[0], Math.min(...ys), e.bbox[2], Math.max(...ys)];
         biter.push({ ...e, navn: `${e.navn} skjoet ${i + 1} av ${n}`, bbox: bb,
           breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-          deler: [{ ...e.deler[0], flate: bit }], omriss: [],
+          deler: delBiter, omriss: e.deler.length > 1 ? bit : [],
           // bare de ytterste stykkene arver endene som kan forlenges
           forleng: new Set([...(e.forleng ?? [])].filter((sd) =>
             langsX ? (sd === "venstre" && i === 0) || (sd === "hoyre" && i === n - 1)

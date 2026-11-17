@@ -18,7 +18,8 @@
  *  - bilens tegnelinjer er strek uten fyll og er ikke hvit dekor.
  *  - den store Ø-en paa venstre side er klippet (W n); en ekstra Ø laa
  *    klippet helt bort. Klippet teller, og dekoren kuttes 50 mm forbi det.
- *  - fotoene paa sidene er innsatte bilder og meldes.
+ *  - fotoene paa sidene er innsatte bilder og blir print-elementer med ppi
+ *    i full stoerrelse (Eirik 17.11.2026).
  */
 import * as fs from "fs";
 import { lesBilskisse, kjorJobb, DISCLAIMER, VANNMERKE } from "../src/motor";
@@ -62,10 +63,21 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   const v: any = await lesBilskisse(new Uint8Array(fs.readFileSync("vito304160.pdf")), { jobb: "v", bilder, lerret } as any);
   sjekk(Math.abs(v.malestokk - 2.5) < 0.05, `Vito 304160: arket er skalert 1200 prosent, 1:2,5 (${v.malestokk.toFixed(2)})`);
   sjekk(v.elementer.every((e: any) => !e.farger.some((f: any) => f.hex === "#000000")), "Vito 304160: ingen sorte bildeler (tegnelinjer) som dekor");
-  const ø = v.elementer.filter((e: any) => e.breddeMm > 800 && e.hoydeMm > 1000);
+  const ø = v.elementer.filter((e: any) => !e.bilde && e.breddeMm > 800 && e.hoydeMm > 1000);
   sjekk(ø.length === 2, `Vito 304160: én stor Ø paa hver side (${ø.map((e: any) => Math.round(e.breddeMm) + "x" + Math.round(e.hoydeMm)).join(", ")})`);
   sjekk(ø.every((e: any) => e.hoydeMm < 1200), "Vito 304160: Ø-ene er kuttet ved klippet, ikke doble");
-  sjekk(v.merknader.some((m: string) => /innsatte bilder/.test(m)), "Vito 304160: fotoene paa sidene er meldt");
+  const foto = v.elementer.filter((e: any) => e.bilde);
+  sjekk(foto.length === 2 && foto.every((e: any) => e.bilde.ppi >= 55 && e.bilde.ppi <= 65 && e.breddeMm > 1150 && e.hoydeMm > 1500),
+    `Vito 304160: fotoene paa sidene er to print-elementer, ca. 60 ppi i full stoerrelse (${foto.map((e: any) => e.bilde.ppi + " ppi " + e.breddeMm + "x" + e.hoydeMm).join(", ")})`);
+  {
+    const r: any = await kjorJobb({ jobb: "v", bilder, lerret, linjer: foto.map((e: any) => ({ navn: e.navn, pdf: e.pdf, breddeMm: e.breddeMm, antall: 1,
+      folier: [{ kode: "3165-215", hex: "#808080", breddeMm: 1370, print: true }] })) } as any);
+    const pf = r.filer.filter((f: any) => /Print\+thru 3165-215/.test(f.navn));
+    let bilderIFila = 0;
+    for (const f of pf) bilderIFila += (Buffer.from(f.bytes).toString("latin1").match(/\/Subtype\s*\/Image/g) ?? []).length;
+    sjekk(pf.length === 1 && bilderIFila === 2, `Vito 304160: én Print+thru-fil med begge bildene (${r.filer.map((f: any) => f.navn).join(", ")}, ${bilderIFila} bilder)`);
+    sjekk(pf.every((f: any) => / BYTT BILDE /.test(f.navn)) && r.advarsler.some((a: string) => /BYTT BILDE/.test(a)), "Vito 304160: 59 ppi gir BYTT BILDE i navn og advarsel");
+  }
   sjekk(v.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#FFFFFF")).length === 7, "Vito 304160: den hvite dekoren er funnet, sju elementer");
   sjekk(!v.elementer.some((e: any) => e.farger.some((f: any) => f.hex === "#FF0000")), "Oesterboe: roed prikk i Informativ-logoen i bunnteksten er ikke dekor");
   sjekk(!v.elementer.some((e: any) => e.breddeMm < 60 && e.hoydeMm < 60), "Oesterboe: hvite flater helt under doerhaandtakene er ikke dekor");
