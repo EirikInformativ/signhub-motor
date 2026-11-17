@@ -448,7 +448,7 @@ const NEST_RES = 2.5;
 /** Formede rammer maa gi saa mye kortere ark for aa slaa kant i kant. */
 const KANT_FORTRINN = 0.1;
 /** Kant i kant vinner selv om arket blir inntil saa mye lengre. */
-const KANT_TOLERANSE_MM = 10;
+export const KANT_TOLERANSE_MM = 10;
 const MM = 72 / 25.4;
 function nestForm(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, rot: boolean):
   { ut: Plassering[]; h: number; navn: string } | null {

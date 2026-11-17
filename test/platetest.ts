@@ -139,11 +139,17 @@ const fyllgrad = async (bytes: Uint8Array) => {
   sjekk("to ark", r.ark.length === 2,
     r.ark.map((k: any) => `${k.foliekode} ${k.breddeMm} x ${k.lengdeMm.toFixed(0)}`).join(" | "));
   sjekk("folierne er 751-031 og 751-086",
-    r.ark.map((k: any) => k.foliekode).join(",") === "751-031,751-086");
+    r.ark.map((k: any) => k.foliekode).sort().join(",") === "751-031,751-086");
   // 1168 x 1272 etter at den trykte malestokken 1:30 ble tatt i bruk; 1145 uten ytre kiss-ramme (Eirik 16.11.2026).
   // Med den utledede 1:29,8904 var det 1164 x 1268, altsa 0,37 % for lite.
-  sjekk("begge arkene 1145 x 1272 mm",
-    r.ark.every((k: any) => k.breddeMm === 1145 && Math.round(k.lengdeMm) === 1272));
+  // Fra 17.11.2026 skjaeres den roede trekanten tett og teipes inn (LITEN_FARGE):
+  // foer var begge arkene 1145 x 1272 mm, naa er det roede feltet 190 x 100 mm.
+  const roed = r.ark.find((k: any) => k.foliekode === "751-031"), blaa = r.ark.find((k: any) => k.foliekode === "751-086");
+  // Trekantene thru-cuttes kant i kant og teipes paa (Thru, ikke applisert), arket er bare innholdet.
+  sjekk("roedt tett: Thru-ark under 150 x 70 mm, blaatt under 1210 x 800 mm",
+    roed?.breddeMm <= 150 && roed?.lengdeMm <= 70 && blaa?.breddeMm <= 1210 && blaa?.lengdeMm <= 800 &&
+    r.filer.some((f: any) => / Thru 751-031 100%\.pdf$/.test(f.navn)),
+    r.ark.map((k: any) => `${k.foliekode} ${k.breddeMm} x ${k.lengdeMm.toFixed(0)}`).join(" | "));
   // Én produksjonsfil per folie fra 16.11.2026 (ikke lenger summa + wild).
   sjekk("tre filer: én per folie og kundeskisse", r.filer.length === 3,
     r.filer.map((f: any) => f.navn).join(" "));

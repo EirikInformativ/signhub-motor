@@ -39,6 +39,16 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   sjekk(p.elementer.length === 4, `proace2: 4 elementer (fikk ${p.elementer.length})`);
   sjekk(p.elementer.every((x) => x.bakgrunn?.hex === "#FFFFFF"), "proace2: hvit plate tatt ut paa alle");
 
+  {
+    // Rydd Bergen (Fiat Ducato, gul lakk, 17.11.2026): bilens tonede graa,
+    // rik sort paa dekk og listverk, og baklyktene (0.21,1,0.98,0.16) er bil
+    const rb: any = await lesBilskisse(new Uint8Array(fs.readFileSync("ryddbergen.pdf")), { jobb: "rb", bilder, lerret } as any);
+    sjekk(rb.elementer.every((e: any) => e.farger.every((f: any) => /^#(FF0000|000000)$/.test(f.hex))),
+      `Rydd Bergen: bare roedt og sort i dekoren (${[...new Set(rb.elementer.flatMap((e: any) => e.farger.map((f: any) => f.hex)))].join(", ")})`);
+    sjekk(!rb.elementer.some((e: any) => Math.abs(e.breddeMm - 717) < 20 && Math.abs(e.hoydeMm - 717) < 20), "Rydd Bergen: hjulene er ikke dekor");
+    sjekk(rb.elementer.length <= 9, `Rydd Bergen: bare logoene og bilfiguren (${rb.elementer.length} elementer)`);
+    sjekk(rb.merknader.some((m: string) => /levende tekst/.test(m)), "Rydd Bergen: tekst som ikke er konvertert meldes");
+  }
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: bilen er bilen, logoen er logoen");
 })();

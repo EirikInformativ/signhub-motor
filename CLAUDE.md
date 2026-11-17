@@ -752,6 +752,31 @@ og Vito 304160):**
   `SMAL_RULL_SPAR = 0.1` av folien, brukes den og meldes. E-Partner: 2,24
   til 1,63 m², og fila kan gaa paa wild.
 
+- Smaa farger skjaeres tett og teipes inn ogsaa uten for mange filer
+  (Eirik 17.11.2026, Rosen paa Proace 309355): `samleFiler` tar logoer der
+  fargene utenom den stoerste dekker under `LITEN_FARGE = 0.25` av rammen.
+  I register maa den roede folien vaere like stor som hele oppsettet. Proace:
+  2,92 til 0,96 m². `test/tettark.ts` vokter det.
+- Bitene som teipes inn (`egetArk`) skal ikke appliseres (Eirik
+  17.11.2026: «de legges uten laminat oppå med tape. deretter appliseres alt
+  samlet»). Er de hele, konvekse stykker, heter fila `Thru`, og arket er
+  akkurat innholdet, uten overmaal og uten `felt` i navnet. Hvert eksemplar
+  er et eget element, saa hver bit kan dreies inntil naboen.
+- Enveis thru ogsaa paa kanter som bare nesten er parallelle: minst
+  `NESTEN_ANDEL = 0.25` av kanten innenfor `NESTEN_MM = 2` (svakt buede
+  sider). Kontakt teller som `KANT_TOLERANSE_MM` smalere felt naar vinkel og
+  snuing velges. Proace: fire trekanter kant i kant, 125 x 58 mm.
+- Oppsettet med markering (omrisset av det som teipes inn) legges ogsaa kant
+  i kant med enveis kiss.
+- Kant i kant med thru: kiss ogsaa mellom hver logo, eksakt i thru-sporet,
+  og der den naar ytterkanten av blokken kobles den til den ytre kiss-rammen
+  med en rett strek til naermeste punkt paa rammen; i et innvendig hjoerne
+  blir det 45° (Eirik 17.11.2026, med tegning).
+- `skyvSammen` dreier bare et element med én plassering (dreies formen,
+  dreies alle kopiene), og setter et felt tilbake hvis det havner oppaa noe.
+- Rydd Bergen (gul Fiat): tonet graa (CMY nesten like) er bilens graa, og
+  Fiat-lyktene og CCVision-sorte deler staar i `BILFARGER`.
+
 **Feilsignatur:** halv logo der designeren har tegnet den i to baner,
 ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
 

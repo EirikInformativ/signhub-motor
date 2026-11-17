@@ -39,6 +39,9 @@ const svart = (b: Boks) => !!b.farge && b.farge.length === 4 && (
  * test/bilfarger.ts vokter det.
  *
  *   0.00,1.00,1.00,0.15   lykter og refleks (CMYK)
+ *   0.21,1.00,0.98,0.16   baklykter paa Fiat Ducato (Rydd Bergen, 17.11.2026)
+ *   0.91,0.79,0.62,0.97   dekk, listverk og bakdoerenes sorte deler (samme skisse)
+ *   0.66,0.56,0.53,0.57   underkant og speil (samme skisse)
  */
 /** over denne andelen bilgraatt er klyngen en del av bilen */
 const BILGRAA_ANDEL = 0.25;
@@ -50,7 +53,7 @@ const STOR_LYS_MM = 300;
 /** Kuloeren som dekker mer enn denne andelen av det fylte, er bilens lakk. */
 const LAKK_ANDEL = 0.3;
 
-export const BILFARGER = new Set<string>(["0.00,1.00,1.00,0.15"]);
+export const BILFARGER = new Set<string>(["0.00,1.00,1.00,0.15", "0.21,1.00,0.98,0.16", "0.91,0.79,0.62,0.97", "0.66,0.56,0.53,0.57"]);
 
 export interface DekorOmraade {
   x0: number; y0: number; x1: number; y1: number;
@@ -299,7 +302,10 @@ export function finnDekor(lest0: LettLest, malestokk: number,
    * bokstavene i et ord fortsatt er én klynge.
    */
   const T = MM * Math.max(1, 30 / malestokk);
-  const kulorte = lest.bokser.filter((b) => kulor(b) && !erLakk(b) && !(lakkMoerk && svart(b)));
+  // en tonet graa (CMY nesten like) er bilens graa, ikke kuloer (Rydd Bergen)
+  const tonetGraa = (b: Boks) => !!b.farge && b.farge.length === 4 && !svart(b) &&
+    Math.max(b.farge[0], b.farge[1], b.farge[2]) - Math.min(b.farge[0], b.farge[1], b.farge[2]) < 0.15;
+  const kulorte = lest.bokser.filter((b) => kulor(b) && !tonetGraa(b) && !erLakk(b) && !(lakkMoerk && svart(b)));
 
   /**
    * Moerk bil (Eirik 16.11.2026, Mercedes Vito, sort): da er sort bilens
@@ -326,10 +332,18 @@ export function finnDekor(lest0: LettLest, malestokk: number,
    * flater uten bilgraa eller lyktefarge, som inneholder minst en ekte
    * kulort flate. Sort og hvitt teller som dekor bare i en slik bolk.
    */
-  const bilTone = (b: Boks) => !!b.farge && b.farge.length === 4 &&
-    Math.max(b.farge[0], b.farge[1], b.farge[2]) < 0.01 && b.farge[3] > 0.01 && b.farge[3] < 0.99;
-  /** ekte kuloer, ikke rik sort: CMY ulike */
-  const ekte = (b: Boks) => !!b.farge &&
+  /*
+   * Bilens graatoner er ogsaa tonet graa (Fiat Ducato, Rydd Bergen:
+   * 0.13,0.09,0.11,0 og 0.56,0.46,0.45,0.34), ikke bare rene K-toner. En
+   * noeytral farge (CMY nesten like) som verken er hvit eller designerens
+   * sort, er bil.
+   */
+  const bilTone = (b: Boks) => !!b.farge && b.farge.length === 4 && (
+    (Math.max(b.farge[0], b.farge[1], b.farge[2]) < 0.01 && b.farge[3] > 0.01 && b.farge[3] < 0.99) ||
+    (Math.max(b.farge[0], b.farge[1], b.farge[2]) - Math.min(b.farge[0], b.farge[1], b.farge[2]) < 0.15 &&
+      Math.max(...b.farge) >= 0.05 && !svart(b)));
+  /** ekte kuloer: CMY ulike, og ikke rik sort (0.91,0.79,0.62,0.97 er sort) */
+  const ekte = (b: Boks) => !!b.farge && !svart(b) &&
     Math.max(b.farge[0], b.farge[1], b.farge[2]) - Math.min(b.farge[0], b.farge[1], b.farge[2]) > 0.2;
   /**
    * En graa flate rett bak en kuloert dekorflate er dekor, ikke bil (Eirik
