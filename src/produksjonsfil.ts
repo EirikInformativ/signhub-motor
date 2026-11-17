@@ -484,8 +484,11 @@ export async function byggProduksjonsfil(
       .map((p) => [[[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h], [p.x, p.y]]]);
     if (valg.thruCut && rekt.length) {
       const blokk = pc.union(...(rekt as [any])) as MultiPoly;
-      for (const poly of blokk) for (const r of offsetRinger([poly[0].slice(0, -1) as [number, number][]], geo.boksKiss, true))
+      const ytreRinger: Pkt[][] = [];
+      for (const poly of blokk) for (const r of offsetRinger([poly[0].slice(0, -1) as [number, number][]], geo.boksKiss, true)) {
+        ytreRinger.push([...r, r[0]] as Pkt[]);
         ops.push(ringOps([...r, r[0]], ytop));
+      }
       /*
        * Kiss ogsaa mellom hver logo, eksakt i sporet til thru-cuten (Eirik
        * 17.11.2026), saa lukeren kan ta én logo om gangen. Bare de indre
@@ -512,9 +515,29 @@ export async function byggProduksjonsfil(
           }
         }
       }
+      /*
+       * Der en indre kiss naar ytterkanten av blokken, kobles den til den
+       * ytre kiss-rammen med en rett strek til naermeste punkt paa rammen
+       * (Eirik 17.11.2026, med tegning): i et innvendig hjoerne er det 45°
+       * til rammens hjoerne, saa lukeren kan dra hele kanten i ett.
+       */
+      const blokkRinger = blokk.map((poly) => poly[0] as Pkt[]);
+      const naermest = (ringer: Pkt[][], p: Pkt): { q: Pkt; d: number } => {
+        let best = { q: p, d: Infinity };
+        for (const r of ringer) for (let i = 0; i < r.length - 1; i++) {
+          const a = r[i], b = r[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+          const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)) : 0;
+          const q: Pkt = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+          if (d < best.d) best = { q, d };
+        }
+        return best;
+      };
       for (const bane of slaaSammenKanter(indre)) {
-        let o = `${f4(bane[0][0] * MM)} ${f4(ytop(bane[0][1]))} m\n`;
-        for (const q of bane.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
+        const ende = (p: Pkt) => naermest(blokkRinger, p).d < 0.05 ? naermest(ytreRinger, p).q : null;
+        const foer = ende(bane[0]), etter = ende(bane[bane.length - 1]);
+        const linje = [...(foer ? [foer] : []), ...bane, ...(etter ? [etter] : [])];
+        let o = `${f4(linje[0][0] * MM)} ${f4(ytop(linje[0][1]))} m\n`;
+        for (const q of linje.slice(1)) o += `${f4(q[0] * MM)} ${f4(ytop(q[1]))} l\n`;
         ops.push(o + "S\n");
       }
     } else if (rekt.length) {

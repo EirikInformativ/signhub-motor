@@ -768,6 +768,10 @@ og Vito 304160):**
   snuing velges. Proace: fire trekanter kant i kant, 125 x 58 mm.
 - Oppsettet med markering (omrisset av det som teipes inn) legges ogsaa kant
   i kant med enveis kiss.
+- Kant i kant med thru: kiss ogsaa mellom hver logo, eksakt i thru-sporet,
+  og der den naar ytterkanten av blokken kobles den til den ytre kiss-rammen
+  med en rett strek til naermeste punkt paa rammen; i et innvendig hjoerne
+  blir det 45° (Eirik 17.11.2026, med tegning).
 - `skyvSammen` dreier bare et element med én plassering (dreies formen,
   dreies alle kopiene), og setter et felt tilbake hvis det havner oppaa noe.
 - Rydd Bergen (gul Fiat): tonet graa (CMY nesten like) er bilens graa, og
