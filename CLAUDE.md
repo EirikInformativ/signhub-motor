@@ -82,6 +82,8 @@ Kilden ligger i `src/`, testene i `test/`. Stiene under er relative til `src/`.
 | forhandsvis.ts | canvas-forhåndsvisning i valgte foliefarger |
 | skisse.ts, skisse_kunde.ts, skisselayout.ts | kundeskisse i A4 |
 | assets.ts | disclaimer og vannmerke som base64 |
+| tekstkurver.ts | levende tekst i bilskissen skrives om til baner i innholdsstroemmen |
+| fontglyf.ts, fontdata.ts | glyfomriss fra innebygd CFF og TrueType, og navnetabellene (data fra pdf.js) |
 
 `prompt-claude-code-martine.md` er fasiten for hvordan separeringen og den
 lagvise oppbyggingen skal virke, med begrunnelser. Les den før du endrer
@@ -126,6 +128,7 @@ Testene leser testfilene med relative stier og må kjøres fra `test/`:
     npx tsx klipptest.ts  # kutt og forlengelse under bildelene
     npx tsx tettark.ts    # dyr folie ut av oppsettet naar det loenner seg
     npx tsx lakkbil.ts    # lakkert bil i kuloer, skalert ark, klipp, bilder, tekst under logo
+    npx tsx tekstkurver.ts # levende tekst blir kurver fra innebygd font, ellers meldes den
 
 Fasit på `mf.pdf` (Martine Finsås, det vanskeligste tilfellet vi har):
 
@@ -332,10 +335,54 @@ og tekst ved et element gir merknaden «er IKKE med i skjaerefilene».
 Rutinen er at designerne konverterer tekst til kurver før korrekturen
 lagres.
 
+**Levende tekst gjøres om til kurver når fonten er innebygd** (17.11.2026,
+309916 e-expert). `src/tekstkurver.ts` leser innholdsstrømmen med
+tekstmatrisen (Tm, Td, TD, T*, TL, Tc, Tw, Tz, Ts, Tf, TJ-justeringer),
+CTM og Form XObjects, slår opp glyfen (WinAnsi/MacRoman/Standard og
+Differences, fontens egen CFF-koding, cmap for TrueType, Identity-H med
+CIDToGIDMap for Type0) og tegner omrisset fra fonten med `src/fontglyf.ts`
+(CFF/Type1C, CFF i OpenType og TrueType, uten fontbibliotek). Hver
+tekstvisning byttes ut med `ET <én bane per glyf> f BT <linjematrisen> Tm
+[<fremdrift>] TJ` på samme sted i strømmen, så fyllfarge, spotfarge,
+klippebane og CTM følger med av seg selv, og resten av teksten i samme
+tekstobjekt står der den sto. Én bane per glyf er det Illustrator gjør
+ved «Create Outlines»: da får teksten samme antall baner som en kurveutgave,
+og pinnen med «XL-BYGG Osterøy» på side øvre blir samme element som den
+designeren konverterte på side nedre (antall 2, 512 x 122 mm, hver bokstav
+innenfor 0,06 mm i ekte mål).
+
+`lesBilskisse` velger samme tekst som `finnLevendeTekst` melder: synlig,
+inne i en visning (med 2 mm luft), ikke i skissens egne farger. Arkets
+egen tekst (overskrift, «1:30 L: ...») står igjen som tekst, så `tolk`
+finner målestokken som før. Skissen leses så på nytt med `lesLett`,
+`tolk` og `finnDekor`, og `hentBaner` leser den nye fila. Endrer
+målestokken seg, forkastes omskrivingen. Det som er gjort om står i
+`logg` («N tekstlinjer ... gjort om til kurver»), ikke i `merknader`.
+
+Usynlig tekst (Tr 3, 7) og tekst som klipper (Tr 4 til 7) gjøres ikke om.
+Mangler fonten, er den Type 1 (FontFile), Type 3, en Type0 med annen
+koding enn Identity-H, eller finnes ikke glyfen, eller har et synlig tegn
+ikke noe omriss, står visningen igjen som levende tekst og meldes som før.
+Alle feil fanges; ingen biblioteks- eller parserfeil når brukeren.
+`test/tekstkurver.ts` vokter dette, også med ødelagte fontfiler og Tr 3.
+
+Rydd Bergen: overskriften «R Y D D I N G  O G ...» er sperret, og
+`samleDeler` deler den i enkeltbokstaver (glippen er over
+`DEL_GLIPPE_MM`). Det er samme resultat som om designeren hadde
+konvertert teksten.
+
+**Feilsignatur:** tekst som synes på skissen men mangler i elementene
+uten merknad, bokstaver på feil plass eller i feil glyf (æ, ø, å), en
+merknad om levende tekst på en skisse med innebygd font, eller at
+målestokken ikke lenger leses fordi arkets tekst er blitt kurver.
+
 **Samme merke sett fra to visninger meldes, det fjernes ikke.** Panseret
 står både i front (978 x 55, sammentrykt) og topp (227 x 978). Like
 farger i likt forhold, lik lengste side og kortere andre side gir
 `sammeSom` på elementet og en merknad. Appen bør la brukeren ta det ut.
+Regelen gjelder bare mellom visninger av ulik type (ende, side, topp): to
+sidevisninger ser bilen fra samme vinkel. Uten det ble sperrede bokstaver
+på Rydd Bergen (en smal I mot en O) tatt ut som «samme merke».
 
 **Fargen som danner ytterkanten legges i bunn som ett helt stykke**
 (Eirik 16.11.2026). XL-logoen: gullramme, svart rute, gull XL. Med svart

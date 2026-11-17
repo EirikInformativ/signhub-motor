@@ -13,6 +13,7 @@ import { lesLett, tolk } from "./bilskisse.ts";
 import type { TekstBoks } from "./bilskisse.ts";
 import { finnDekor, BILFARGER } from "./dekorfinn.ts";
 import { hentBaner, skrivPdf } from "./uttrekk.ts";
+import { finnTekst, tekstTilKurver } from "./tekstkurver.ts";
 import type { Bane } from "./uttrekk.ts";
 import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
@@ -185,9 +186,10 @@ function horerTilPlaten(b: Bane, platehex: string): boolean {
   return b.fyll ? fyllTreff : strekTreff;
 }
 
-export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSkisseLest> {
-  const lett = await lesLett(kilde);
-  const s = tolk(lett);
+export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkisseLest> {
+  let kilde = inn;
+  let lett = await lesLett(kilde);
+  let s = tolk(lett);
   /**
    * Staar det en malestokk paa arket, er den fasit. Maalingen er vakthund.
    * Reglene staar i velgMalestokk i bilskisse.ts.
@@ -201,9 +203,56 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
           "Kontroller arket."
         : "Fant ingen malestokk i skissen. Uten den kan ikke ekte mal regnes ut.");
   }
-  const funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
+  let funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
+  /**
+   * Levende tekst i visningene gjoeres om til kurver naar fonten er
+   * innebygd (tekstkurver.ts). Utvalget er det samme som finnLevendeTekst
+   * melder: synlig tekst inne i en visning, ikke i skissens egne farger.
+   * Arkets egen tekst (overskrift, malestokk) staar igjen som tekst, saa
+   * tolk finner malestokken som foer. Skissen leses saa paa nytt, og
+   * teksten gaar gjennom finnDekor og resten som vanlige baner.
+   */
+  const levendeFoer = finnLevendeTekst(lett.levende, funn, malestokk);
+  let tekstLogg: string | null = null;
+  if (levendeFoer.length) {
+    try {
+      const vis = await finnTekst(kilde);
+      // litt luft rundt visningen: lesLett anslaar tekstens ramme grovt, og et tegn
+      // ved kanten skal ikke bli staaende som levende tekst fordi rammene spriker
+      const velg = new Set(vis.filter((t) => t.kan && tekstIVisning(t, funn, 2 * MM)).map((t) => t.id));
+      const r = velg.size ? await tekstTilKurver(kilde, velg) : null;
+      if (r && r.gjort.length) {
+        const lett2 = await lesLett(r.pdf);
+        const s2 = tolk(lett2);
+        if (s2.malestokk === malestokk) {
+          kilde = r.pdf; lett = lett2; s = s2;
+          funn = finnDekor(lett, malestokk, { L: s.lengdeM, B: s.breddeM, H: s.hoydeM });
+          const igjen = finnLevendeTekst(lett.levende, funn, malestokk);
+          const nokkel = (x: { tekst: string; vis: string }) => `${x.vis}|${x.tekst}`;
+          const rest = new Map<string, number>();
+          for (const x of igjen) rest.set(nokkel(x), (rest.get(nokkel(x)) ?? 0) + 1);
+          const gjort = levendeFoer.filter((x) => {
+            const n = rest.get(nokkel(x)) ?? 0;
+            if (n > 0) { rest.set(nokkel(x), n - 1); return false; }
+            return true;
+          });
+          if (gjort.length) tekstLogg = `${gjort.length} ${gjort.length === 1 ? "tekstlinje" : "tekstlinjer"} i visningene ` +
+            `var levende tekst og er gjort om til kurver fra fonten som er innebygd i skissen: ` +
+            gjort.slice(0, 8).map((x) => `«${x.tekst.slice(0, 30)}» (${x.vis})`).join(", ") +
+            (gjort.length > 8 ? ` og ${gjort.length - 8} til` : "") + ".";
+        } else {
+          console.warn(`SignHub-motor: malestokken endret seg etter at teksten ble gjort om til kurver ` +
+            `(1:${malestokk} mot 1:${s2.malestokk}). Teksten staar som levende tekst.`);
+        }
+      }
+    } catch (e) {
+      // en feil her skal aldri ut til brukeren: teksten staar som levende tekst og meldes
+      console.warn("SignHub-motor: tekst til kurver feilet:", e);
+    }
+  }
   const merknader = [...s.merknader, ...funn.merknader];
   const logg: string[] = [];
+  if (tekstLogg) logg.push(tekstLogg);
   const levendeTekst = finnLevendeTekst(lett.levende, funn, malestokk);
   for (const t of levendeTekst.filter((x) => x.element)) merknader.push(
     `${t.element}: teksten «${t.tekst}» er levende tekst og er IKKE med i skjaerefilene. ` +
@@ -583,9 +632,17 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
    * paa to steder har begge sidene like og telles allerede som antall.
    *
    * Det minste merkes som samme som det stoerste og tas ut av jobben under.
+   *
+   * Bare mellom visninger av ulik type (ende, side, topp). To sidevisninger
+   * ser bilen fra samme vinkel, saa ingenting er sammentrykt mellom dem.
+   * Rydd Bergen: «R Y D D I N G  O G ...» er sperret saa hver bokstav blir
+   * et eget element. Bokstavene har samme hoeyde og farge, og en smal I
+   * paa den ene siden ble tatt for en sammentrykt O paa den andre. Fire
+   * bokstaver forsvant ut av jobben (17.11.2026, da teksten ble kurver).
    */
+  const visType = (v: string) => v.split(" ")[0];
   for (const a of elementer) for (const b of elementer) {
-    if (a === b || a.vis === b.vis || a.sammeSom || b.sammeSom) continue;
+    if (a === b || visType(a.vis) === visType(b.vis) || a.sammeSom || b.sammeSom) continue;
     if (a.farger.length !== b.farger.length) continue;
     const likFarge = a.farger.every((f) => {
       const g = b.farger.find((x) => x.hex === f.hex);
@@ -1433,15 +1490,25 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
  * utenfor visningene er arkinformasjon, og usynlig tekst (Tr 3) er ikke
  * tegnet. Tekst i skissens egne farger er maalpiler og merker.
  */
-function finnLevendeTekst(levende: TekstBoks[], funn: ReturnType<typeof finnDekor>, malestokk: number) {
-  const NAER = 3 * MM;
-  const inni = (b: TekstBoks, o: { x0: number; y0: number; x1: number; y1: number }, pad = 0) =>
-    (b.x0 + b.x1) / 2 >= o.x0 - pad && (b.x0 + b.x1) / 2 <= o.x1 + pad &&
-    (b.y0 + b.y1) / 2 >= o.y0 - pad && (b.y0 + b.y1) / 2 <= o.y1 + pad;
+type BoksT = { x0: number; y0: number; x1: number; y1: number };
+const inniBoks = (b: BoksT, o: BoksT, pad = 0) =>
+  (b.x0 + b.x1) / 2 >= o.x0 - pad && (b.x0 + b.x1) / 2 <= o.x1 + pad &&
+  (b.y0 + b.y1) / 2 >= o.y0 - pad && (b.y0 + b.y1) / 2 <= o.y1 + pad;
+/**
+ * Tekst som hoerer til visningene: synlig, inne i en visning, og ikke i
+ * skissens egne farger (maalpiler og merker). Det er den som meldes som
+ * levende tekst, og den som gjoeres om til kurver.
+ */
+function tekstIVisning(t: BoksT & { usynlig: boolean; farge?: number[] }, funn: ReturnType<typeof finnDekor>, pad = 0): boolean {
   const egne = new Set(BILFARGER);
   const fn = (f?: number[]) => (f ?? []).map((x) => x.toFixed(2)).join(",");
-  const aktuelle = levende.filter((t) => !t.usynlig && !egne.has(fn(t.farge)) &&
-    funn.visninger.some((v) => inni(t, v)));
+  return !t.usynlig && !egne.has(fn(t.farge)) && funn.visninger.some((v) => inniBoks(t, v, pad));
+}
+
+function finnLevendeTekst(levende: TekstBoks[], funn: ReturnType<typeof finnDekor>, malestokk: number) {
+  const NAER = 3 * MM;
+  const inni = inniBoks;
+  const aktuelle = levende.filter((t) => tekstIVisning(t, funn));
   // samle bokstaver til linjer: samme grunnlinje og tett paa hverandre
   const linjer: TekstBoks[][] = [];
   for (const t of [...aktuelle].sort((a, b) => b.y0 - a.y0 || a.x0 - b.x0)) {
