@@ -841,6 +841,25 @@ og Vito 304160):**
 - Rydd Bergen (gul Fiat): tonet graa (CMY nesten like) er bilens graa, og
   Fiat-lyktene og CCVision-sorte deler staar i `BILFARGER`.
 
+**Innsatte bilder printes** (Eirik 17.11.2026: «print er jo med»,
+Saethre 305007 og Oesterboe 304160). `hentBaner` leser Image XObjects
+(`bilde` paa banen), og `lesBilskisse` lager et element per bilde i en
+visning: formen er bildets klippebane, og element-PDF-en har bildet som det
+ligger i skissen (samme JPEG, kanaler og Decode, saa CMYK ikke inverteres)
+og noekkelordet `signhub-bilde:<ppi>`. `kjorJobb` leser det med `lesBilde`,
+og elementet blir Print+thru: bildet klippes til formen utvidet med
+`PRINT_BLEED_MM`, og thru gaar langs formen. Dekker ikke bildet utfallet,
+skaleres det likt om midten (`dekkendeMatrise`). Bilder faar gap, ikke kant
+i kant, og dreies, skjoetes og strekkes aldri. Printet er et rektangel;
+montoeren skjaerer til paa bilen (Eirik 17.11.2026).
+ppi maales i full stoerrelse, aldri i skissens maalestokk. Under
+`MIN_PPI = 60` meldes «BYTT BILDE», og det staar i filnavnet. `linje.bilde`
+(JPEG) erstatter skissebildet i samme ramme, og ppi regnes paa nytt.
+
+**Feilsignatur:** et printark med graa flater i stedet for bilder, et bilde
+som er speilvendt eller invertert (CMYK uten Decode), eller ppi som er
+regnet i 1:30.
+
 **Feilsignatur:** halv logo der designeren har tegnet den i to baner,
 ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
 

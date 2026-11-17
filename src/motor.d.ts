@@ -38,6 +38,8 @@ export interface Linje {
    * behandles likt saa lenge appen ennaa kan sende det.
    */
   folier?: (Folie | "negativt" | "hull" | null)[];
+  /** originalbildet (JPEG) til et bilde-element; legges i samme ramme, ppi regnes paa nytt */
+  bilde?: Uint8Array;
 }
 
 export interface Folie {
@@ -206,6 +208,8 @@ export const DISCLAIMER: string;
 export const VANNMERKE: string;
 export const STD_GEO: Geo;
 export const MIN_DETALJ: number;
+/** grensen for print paa bil, ppi i full stoerrelse */
+export const MIN_PPI: number;
 export const ADVAR_DETALJ: number;
 
 /* ---------- bilskisse ---------- */
@@ -256,6 +260,8 @@ export interface BilElement {
   sammeSom?: string;
   /** passmerke mot naboen: strimmel, eller stubber av foerste og siste hoeye tegn i en utskilt tekst */
   passmerke?: { mot: string; hex: string; lengdeMm: number };
+  /** innsatt bilde som printes (Print+thru). ppi i full stoerrelse; under 60 maa originalen lastes opp */
+  bilde?: { ppi: number; px: [number, number]; kilde: "skisse" };
   /** minst halvparten ligger paa en vindusrute (bare skisser som tegner rutene som gradienter) */
   paaGlass?: boolean;
   /**

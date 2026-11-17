@@ -91,6 +91,32 @@ export interface Motiv {
    * skjaerelinjen (kiss), og den tegnes bare som strek.
    */
   trykk?: { flate: MultiPoly; fyllOp: string; spot?: { navn: string; tint: number; cmyk: number[]; lab?: { wp: number[]; c1: number[] } } }[];
+  /**
+   * Innsatt bilde (bilskisse): printes innenfor flate, utfallende. mat
+   * plasserer enhetskvadratet i elementets enheter, som i element-PDF-en.
+   */
+  bilde?: { jpeg: Uint8Array; px: [number, number]; n: number; decode?: number[]; mat: number[] };
+}
+
+/**
+ * Matrisen som faar bildet til aa dekke hele utfallet. Ligger utfallet
+ * utenfor bildet (designeren har klippet i bildekanten), skaleres bildet
+ * likt om midten til det dekker. Det er noen millimeter paa en meter.
+ */
+export function dekkendeMatrise(mat: number[], flate: MultiPoly): { mat: number[]; k: number } {
+  const [a, b, c, d, e, f] = mat;
+  const det = a * d - b * c;
+  if (Math.abs(det) < 1e-12) return { mat, k: 1 };
+  let k = 1;
+  for (const poly of flate) for (const r of poly) for (const [x, y] of r) {
+    const u = (d * (x - e) - c * (y - f)) / det, v = (-b * (x - e) + a * (y - f)) / det;
+    k = Math.max(k, Math.abs(u - 0.5) / 0.5, Math.abs(v - 0.5) / 0.5);
+  }
+  if (k <= 1 + 1e-9) return { mat, k: 1 };
+  // skaler om bildets midtpunkt
+  const mx = a * 0.5 + c * 0.5 + e, my = b * 0.5 + d * 0.5 + f;
+  const A = a * k, B = b * k, C = c * k, D = d * k;
+  return { mat: [A, B, C, D, mx - (A * 0.5 + C * 0.5), my - (B * 0.5 + D * 0.5)], k };
 }
 
 export interface Plassering {
@@ -306,6 +332,7 @@ export async function byggProduksjonsfil(
    * XObject har en BBox som Composer tolker som klippebane og skjaerer som
    * en ekstra rute pa logoens storrelse (funnet 16.11.2026, test/skjultkutt.ts).
    */
+  const bilder: [string, PDFRef][] = [];
   const harForm: boolean[] = [];
   const formOps: string[] = [];
   motiver.forEach((m, i) => {
@@ -330,6 +357,27 @@ export async function byggProduksjonsfil(
         o += fyllOps(fl, t.spot ? `/${csFor(t.spot)} cs\n${f4(t.spot.tint)} scn` : t.fyllOp);
       }
       formOps[i] = o + strekOpsFlate(m.flate, m.skala, "CS1");
+      return;
+    }
+    if (m.bilde && valg.kunThru) {
+      /**
+       * Bildet printes klippet til formen utvidet med PRINT_BLEED_MM. Thru
+       * gaar langs formen. Montoeren skjaerer til paa bilen (Eirik
+       * 17.11.2026: «riktig aa produsere printet som et rektangel,
+       * skjaeringen ligger paa montoer»).
+       */
+      const ut = utfallende(m.flate, (PRINT_BLEED_MM * MM) / m.skala);
+      const sti = fyllOps(ut, "").replace(/f\*\n/g, "").replace(/^\n/, "");
+      const { mat } = dekkendeMatrise(m.bilde.mat, ut);
+      const bd = m.bilde;
+      const ref = doc.context.register(doc.context.stream(bd.jpeg, {
+        Type: "XObject", Subtype: "Image", Width: bd.px[0], Height: bd.px[1],
+        ColorSpace: bd.n === 4 ? "DeviceCMYK" : bd.n === 1 ? "DeviceGray" : "DeviceRGB",
+        BitsPerComponent: 8, Filter: "DCTDecode", ...(bd.decode ? { Decode: bd.decode } : {}),
+      } as any));
+      const nm = `Im${bilder.length}`;
+      bilder.push([nm, ref]);
+      formOps[i] = `q\n${sti}W n\n${mat.map((v) => v.toFixed(5)).join(" ")} cm\n/${nm} Do\nQ\n`;
       return;
     }
     formOps[i] = valg.kunThru
@@ -589,6 +637,11 @@ export async function byggProduksjonsfil(
   if (csSpot) cs.set(PDFName.of("CS2"), csSpot);
   ekstraCs.forEach(([, ref], i) => cs.set(PDFName.of(`CS${3 + i}`), ref));
   res.set(PDFName.of("ColorSpace"), cs);
+  if (bilder.length) {
+    const xo = doc.context.obj({});
+    for (const [n, ref] of bilder) xo.set(PDFName.of(n), ref);
+    res.set(PDFName.of("XObject"), xo);
+  }
   const props = doc.context.obj({});
   props.set(PDFName.of("L0"), oc[0]);
   props.set(PDFName.of("L1"), oc[1]);

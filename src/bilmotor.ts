@@ -800,6 +800,8 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
         elementer.push({ id: `bilde-${n}`, vis: vis.navn, navn, pdf, breddeMm: Math.round(bMm), hoydeMm: Math.round(hMm),
           antall: 1, farger: [{ hex: "#808080", andel: 1 }], bilde: { ppi: Math.round(ppi), px: b.bilde.px, kilde: "skisse" } });
         logg.push(`${navn}: ${Math.round(bMm)} x ${Math.round(hMm)} mm, ${Math.round(ppi)} ppi i full stoerrelse.`);
+        if (ppi < 60) merknader.push(`${navn}: bildet i skissen er ${Math.round(ppi)} ppi i full stoerrelse (${Math.round(bMm)} x ` +
+          `${Math.round(hMm)} mm). Last opp originalbildet, minst 60 ppi i full stoerrelse.`);
       } catch (e: any) {
         merknader.push(`${navn}: bildet kunne ikke legges i en printfil (${String(e?.message ?? e)}).`);
       }

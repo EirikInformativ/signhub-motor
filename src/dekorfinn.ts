@@ -450,9 +450,8 @@ export function finnDekor(lest0: LettLest, malestokk: number,
   };
   const fotoer = bilder.filter((b) => iVisning(b) &&
     Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= MINSTE_EKTE_MM);
-  if (fotoer.length) merknader.push(`Skissen har ${fotoer.length} innsatt${fotoer.length > 1 ? "e" : ""} bilde${fotoer.length > 1 ? "r" : ""} paa bilen ` +
-    `(${fotoer.map((b) => `${Math.round((b.x1 - b.x0) / MM * malestokk)} x ${Math.round((b.y1 - b.y0) / MM * malestokk)} mm`).join(", ")}). ` +
-    "Bilder er IKKE med i skjaerefilene. De maa printes fra originalfila.");
+  // innsatte bilder blir egne print-elementer i bilmotor (Eirik 17.11.2026); her bare logget
+  void fotoer;
   const kandidater = kulorte.filter((b) => {
     if (malfarge.has(fargenavn(b))) return false;
     if (!iVisning(b)) return false;

@@ -12,7 +12,7 @@ import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
 import type { MultiPoly, Geometri, GeometriPerFarge } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt, KANT_TOLERANSE_MM } from "./pakk.ts";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFArray, decodePDFRawStream } from "pdf-lib";
 import { konvekstSkall, offsetRinger } from "./ramme.ts";
 import { cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
@@ -181,6 +181,13 @@ export interface Linje {
    * behandles likt saa lenge appen ennaa kan sende det.
    */
   folier?: (Folie | "negativt" | "hull" | null)[];
+  /**
+   * Originalbildet (JPEG) til et bilde-element fra bilskissen (Eirik
+   * 17.11.2026: designeren kan legge inn et hoeyopploest bilde i tillegg til
+   * skissen). Det legges i samme ramme som bildet i skissen, og ppi regnes
+   * paa nytt i full stoerrelse.
+   */
+  bilde?: Uint8Array;
 }
 
 export interface Folie {
@@ -416,7 +423,7 @@ function heltKonveks(f: MultiPoly): boolean {
 function dreiFelt(elementer: Elem[], advarsler: string[]): Elem[] {
   return elementer.map((e) => {
     if (e.deler.length !== 1 || e.trykk?.length || e.thruForm || e.markering?.length || e.forleng?.size ||
-        e.skjoter?.length || e.lagvis) return e;
+        e.skjoter?.length || e.lagvis || e.bilde) return e;
     const f = e.deler[0].flate;
     if (f.length !== 1 || f[0].length !== 1 || !heltKonveks(f)) return e;
     if (Math.max(e.breddeMm, e.hoydeMm) >= STRIPE_FORHOLD * Math.min(e.breddeMm, e.hoydeMm)) return e;
@@ -771,6 +778,99 @@ async function lesSkjoter(pdf: Uint8Array): Promise<number[]> {
   } catch { return []; }
 }
 
+/**
+ * Et innsatt bilde i en element-PDF fra bilskissen: JPEG-strommen som den
+ * ligger, og matrisen som plasserer den (i elementets enheter).
+ */
+export interface BildeData {
+  jpeg: Uint8Array;
+  px: [number, number];
+  /** antall kanaler: 1, 3 eller 4 */
+  n: number;
+  decode?: number[];
+  mat: number[];
+  /** ppi i full stoerrelse */
+  ppi: number;
+  /** bildet er skalert litt opp saa det dekker utfallet */
+  kilde: "skisse" | "original";
+}
+
+/** Grensen for print paa bil, maalt i full stoerrelse (Eirik 17.11.2026). */
+export const MIN_PPI = 60;
+
+/** Bredde, hoeyde og kanaler fra SOF-markoeren i en JPEG. */
+function jpegInfo(b: Uint8Array): { w: number; h: number; n: number; adobe: boolean } | null {
+  if (b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let i = 2, adobe = false;
+  while (i + 9 < b.length) {
+    if (b[i] !== 0xff) { i++; continue; }
+    const m = b[i + 1];
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+    const len = (b[i + 2] << 8) | b[i + 3];
+    if (m === 0xee) adobe = true;
+    if ((m >= 0xc0 && m <= 0xcf) && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      return { h: (b[i + 5] << 8) | b[i + 6], w: (b[i + 7] << 8) | b[i + 8], n: b[i + 9], adobe };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+/**
+ * Leser bildet i en element-PDF (noekkelord signhub-bilde). Med et
+ * originalbilde byttes JPEG-en ut, og bildet legges i samme ramme.
+ */
+async function lesBilde(pdf: Uint8Array, original: Uint8Array | undefined, skala: number):
+    Promise<{ bilde?: BildeData; feil?: string }> {
+  try {
+    const d = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
+    if (!/signhub-bilde:/.test(d.getKeywords() ?? "")) return {};
+    const page: any = d.getPage(0);
+    const xo = page.node.Resources()?.lookup(PDFName.of("XObject"));
+    if (!xo) return {};
+    let navn = "", strom: any = null;
+    for (const [k, v] of xo.entries()) {
+      const s = d.context.lookup(v) as any;
+      if (s?.dict?.get(PDFName.of("Subtype"))?.toString() === "/Image") { navn = k.toString(); strom = s; break; }
+    }
+    if (!strom) return {};
+    const c = page.node.Contents();
+    const raa = c instanceof PDFArray ? c.asArray().map((r: any) => d.context.lookup(r)) : [c];
+    let innhold = "";
+    for (const s of raa) innhold += new TextDecoder("latin1").decode(decodePDFRawStream(s as any).decode()) + "\n";
+    const esc = navn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`((?:-?[\\d.]+\\s+){6})cm\\s*${esc}\\s+Do`).exec(innhold);
+    if (!m) return {};
+    const mat = m[1].trim().split(/\s+/).map(Number);
+    const tall = (k: string) => Number(d.context.lookup(strom.dict.get(PDFName.of(k)))?.toString() ?? 0);
+    const csNavn = strom.dict.get(PDFName.of("ColorSpace"))?.toString() ?? "/DeviceRGB";
+    const dec = strom.dict.get(PDFName.of("Decode"));
+    let bilde: BildeData = {
+      jpeg: strom.getContents(), px: [tall("Width"), tall("Height")],
+      n: csNavn === "/DeviceCMYK" ? 4 : csNavn === "/DeviceGray" ? 1 : 3,
+      ...(dec ? { decode: dec.asArray().map((x: any) => Number(x.toString())) } : {}),
+      mat, ppi: 0, kilde: "skisse",
+    };
+    if (original) {
+      const inf = jpegInfo(original);
+      if (!inf) return { bilde: { ...bilde, ppi: ppiAv(bilde, skala) }, feil: "originalbildet er ikke en JPEG og er ikke brukt" };
+      bilde = { jpeg: original, px: [inf.w, inf.h], n: inf.n,
+        // Adobe-CMYK lagres invertert; Acrobat og Caldera leser den med Decode
+        ...(inf.n === 4 && inf.adobe ? { decode: [1, 0, 1, 0, 1, 0, 1, 0] } : {}),
+        mat, ppi: 0, kilde: "original" };
+    }
+    return { bilde: { ...bilde, ppi: ppiAv(bilde, skala) } };
+  } catch (e: any) {
+    return { feil: `bildet kunne ikke leses (${String(e?.message ?? e)})` };
+  }
+}
+
+/** Piksler per tomme i full stoerrelse: bredden paa arket, ikke i skissen. */
+function ppiAv(b: BildeData, skala: number): number {
+  const bMm = (Math.hypot(b.mat[0], b.mat[1]) * skala) / MM;
+  return b.px[0] / (bMm / 25.4);
+}
+
 /** Endene en bilskisse har merket som skjult under bilen (PDF-noekkelord). */
 async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
   try {
@@ -979,7 +1079,7 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
     // ogsaa de som alt er lagt (to roede trekanter oppaa hverandre, Proace)
     if (e0 && ps.filter((q) => q.id === u[0].id).length === 1 &&
         e0.deler.length === 1 && e0.deler[0].flate.length === 1 && heltKonveks(e0.deler[0].flate) &&
-        !e0.skjoter?.length && !e0.forleng?.size) {
+        !e0.skjoter?.length && !e0.forleng?.size && !e0.bilde) {
       const p = u[0];
       const foer = { flate: e0.deler[0].flate, bbox: e0.bbox, b: e0.breddeMm, h: e0.hoydeMm, x: p.x, y: p.y, w: p.w, hh: p.h, rot: p.rotated, snu: !!p.snu };
       const pad = p.w - (p.rotated ? e0.hoydeMm : e0.breddeMm);
@@ -1266,6 +1366,8 @@ interface Elem {
   trykk?: { flate: MultiPoly; hex: string; spot?: Spot }[];
   /** bitene som teipes inn i et oppsett: eget ark, aldri sammen med striper */
   egetArk?: boolean;
+  /** innsatt bilde som printes innenfor formen (bilskisse) */
+  bilde?: BildeData;
 }
 
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
@@ -1368,6 +1470,13 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     // slik at fargene havner pa noyaktig samme plass pa hvert ark.
     const g = await medNavn(l.navn, () => hentGeometri(l.pdf, skala));
 
+    // innsatt bilde fra bilskissen: printes innenfor formen, ppi i full stoerrelse
+    const lest = await lesBilde(l.pdf, l.bilde, skala);
+    const bilde = lest.bilde;
+    if (lest.feil) advarsler.push(`${l.navn}: ${lest.feil}.`);
+    if (bilde && bilde.ppi < MIN_PPI) advarsler.push(`${l.navn}: BYTT BILDE. Bildet er ${Math.round(bilde.ppi)} ppi i full ` +
+      `stoerrelse, under grensen paa ${MIN_PPI} ppi. ${bilde.kilde === "skisse" ? "Bildet i skissen er en plassholder: last opp originalbildet." : "Originalbildet er for lite."}`);
+
     // fargene
     const deler: Del[] = [];
     let boks = g.bbox;
@@ -1424,7 +1533,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
        * printmediet. Et enkelt, helt konvekst stykke er Print+thru og
        * haandteres som foer; alt annet printes med kiss langs formen.
        */
-      if (printKode && deler.every((d) => d.folie.kode === printKode) &&
+      if (!bilde && printKode && deler.every((d) => d.folie.kode === printKode) &&
           (deler.length > 1 || !heltKonveks(deler[0].flate))) {
         trykk = deler.filter((d) => d.folie.kode === printKode && printes(d)).reverse()
           .map((d) => ({ flate: d.flate, hex: d.hex, ...(d.spot ? { spot: d.spot } : {}) }));
@@ -1736,7 +1845,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
                      bbox: boks, skala,
                      breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
                      ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}),
-                     ...(trykk?.length ? { trykk } : {}) });
+                     ...(trykk?.length ? { trykk } : {}), ...(bilde ? { bilde } : {}) });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -1807,6 +1916,9 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
        * smaleste). Uten dette stoppet hele jobben med en feil.
        */
       const forBred = !!f.length && kort > maksLengde;
+      // et bilde deles ikke her: printet skjoetes i Caldera (flislegging), ikke i formen
+      if (e.bilde) { if (kort > maksLengde) advarsler.push(`${e.navn}: bildet er ${Math.round(kort)} mm paa det smaleste, ` +
+        `bredere enn printmediet. Det maa flislegges i RIP-en.`); continue; }
       if (!(f.length && lang > maksLengde && (lang >= STRIPE_FORHOLD * kort || forBred))) continue;
       const langsX = forBred ? e.breddeMm < e.hoydeMm : e.breddeMm >= e.hoydeMm;
       const [b0, b1] = langsX ? [e.bbox[0], e.bbox[2]] : [e.bbox[1], e.bbox[3]];
@@ -2098,13 +2210,13 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      */
     const teip = gruppe.every((e) => e.egetArk && !e.thruForm);
     const kunThru = helfol || (folier.length === 1 &&
-      gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || heltKonveks(e.deler[0].flate))));
+      gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || e.bilde || heltKonveks(e.deler[0].flate))));
     /**
      * Printet folie: samme tette ark, men med regmarks og utfallende print.
      * Materialet sier om det KAN printes; innholdet avgjoer (Eirik
      * 16.11.2026): hvitt skjaeres, farge printes.
      */
-    const printThru = kunThru && gruppe.some((e) => printes(e.deler[0]));
+    const printThru = kunThru && gruppe.some((e) => e.bilde || printes(e.deler[0]));
     // tette grupper (tettArk) har kiss rundt bitene: to oppgaver, saa regmarks
     const medKiss = kunThru && gruppe.some((e) => e.thruForm);
     const regThru = printThru || medKiss;
@@ -2146,7 +2258,8 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
       ...(e.thruForm ? { thruForm: e.thruForm } : {}),
-      ...(kunThru ? { sider: e.thruForm ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
+      // bilder printes utfallende og faar gap: kant i kant viser naboens bilde i kanten
+      ...(kunThru ? { sider: e.thruForm || e.bilde ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
         : retteSider(e.deler[0].flate, e.bbox, e.skala) }
         /**
          * Kiss+thru med rektangulaere rammer legges kant i kant, som
@@ -2218,6 +2331,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
         bbox: e.bbox, skala: e.skala, breddeMm: e.breddeMm,
         hoydeMm: e.hoydeMm, antall: e.antall,
         ...(e.thruForm ? { thruForm: e.thruForm } : {}),
+        ...(e.bilde ? { bilde: e.bilde } : {}),
         ...(e.trykk?.length ? { trykk: e.trykk.map((t) => ({ flate: t.flate, fyllOp: rgbOp(t.hex), ...(t.spot ? { spot: t.spot } : {}) })) } : {}),
         // markeringen av det som er lagt tett, bare paa primaerarket
         ...(rolleNr === 0 && e.markering?.length
@@ -2232,7 +2346,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
         .filter((d) => printes(d!)).map((d) => d!.spot);
       const spot = printThru && spotter.length && spotter.every((x) => x && x.navn === spotter[0]!.navn)
         ? spotter[0]! : undefined;
-      if (printThru && !spot) advarsler.push(`${folie.kode}: skissen har ingen spotfarge for det som printes; ` +
+      if (printThru && !spot && !gruppe.every((e) => e.bilde)) advarsler.push(`${folie.kode}: skissen har ingen spotfarge for det som printes; ` +
         `printfila bruker skjermfargen ${folie.hex ?? ""}. Sjekk fargen foer print.`);
 
       /**
@@ -2266,7 +2380,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
         const felt = v.valg.kunThru && !regThru && !helfol && !teip ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
-          navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,
+          navn: `${grunnNavn} ${prosess} ${folie.kode}${felt}${gruppe.some((e) => e.bilde && e.bilde.ppi < MIN_PPI) ? " BYTT BILDE" : ""} 100%.pdf`,
           bytes: undefined as any,
           _bygg: () => byggProduksjonsfil(motiver, ark, geo, fyllOp, v.navn,
                                           v.valg, b.jobb, folie.kode),
