@@ -358,7 +358,15 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       .map((b) => {
         const w = b.boks.x1 - b.boks.x0, h = b.boks.y1 - b.boks.y0;
         const stripe = Math.max(w, h) >= STRIPE_FORHOLD_BIL * Math.max(1e-9, Math.min(w, h));
-        return stripe ? kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM) : b;
+        /**
+         * Et felt mye lengre enn rullen er bred kuttes ogsaa ved klippet
+         * (Saethre ID.Buzz 17.11.2026: de oransje feltene er tegnet langt ut
+         * forbi bilen og klippet langs karosseriet; uten kuttet ble det 12 m²
+         * folie der 5,4 m² synes). Et logoikon (Oe-en paa Oesterboe, 1,1 m)
+         * er kortere og skjaeres fortsatt helt.
+         */
+        const felt = (Math.max(w, h) / MM) * malestokk > FELT_KLIPP_MM;
+        return stripe || felt ? kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM) : b;
       });
     if (valgte.length) valgtPerOmraade.push({ o, valgte });
   }
@@ -544,9 +552,17 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     }
     // bilens naturlige skjoeter langs en stripe: der skal den skjoetes (Vito)
     const fylte = raa.filter((b) => b.fyll);
-    const skjot = fylte.length >= 1 && fylte.length <= 2 ? skjoterLangs(fylte.slice().sort((a, b) =>
-      (b.boks.x1 - b.boks.x0) * (b.boks.y1 - b.boks.y0) - (a.boks.x1 - a.boks.x0) * (a.boks.y1 - a.boks.y0))[0],
-      baner, (x) => alleDekor.has(x), (SKJOT_TOL_MM / malestokk) * MM, (SKJOT_KANT_MM / malestokk) * MM) : [];
+    /**
+     * Et felt i én farge som er lengre enn rullen er bred, deles ogsaa i
+     * bilens skjoeter (Eirik 17.11.2026, Saethre ID.Buzz: det oransje feltet
+     * over begge doerene ble skaaret i stykker per doer og lagt tett).
+     */
+    const storste = fylte.slice().sort((a, b) =>
+      (b.boks.x1 - b.boks.x0) * (b.boks.y1 - b.boks.y0) - (a.boks.x1 - a.boks.x0) * (a.boks.y1 - a.boks.y0))[0];
+    const enFarge = new Set(fylte.map((b) => baneHex(b.farge))).size === 1;
+    const erFeltEl = enFarge && !!storste && (Math.max(storste.boks.x1 - storste.boks.x0, storste.boks.y1 - storste.boks.y0) / MM) * malestokk > MAKS_DEL_MM;
+    const skjot = fylte.length >= 1 && (fylte.length <= 2 || erFeltEl) ? skjoterLangs(storste,
+      baner, (x) => alleDekor.has(x), (SKJOT_TOL_MM / malestokk) * MM, (SKJOT_KANT_MM / malestokk) * MM, erFeltEl) : [];
     let pdf = await skrivPdf(valgte, undefined, forleng, skjot);
     let brukte = valgte;
     let per = await lesTrygt(pdf);
@@ -920,7 +936,7 @@ function delbaner(b: Bane): { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] {
  * samme bane i samme del blir samme bane igjen, saa hull i bokstaver (som
  * fylles etter partallsregelen) blir staaende som hull.
  */
-export function delIDeler(baner: Bane[], glippe: number, mmPerEnhet?: number): Bane[][] {
+export function delIDeler(baner: Bane[], glippe: number, mmPerEnhet?: number, paaFormen = false): Bane[][] {
   const d = baner.flatMap(delbaner);
   const p = d.map((_, i) => i);
   const f = (i: number): number => (p[i] === i ? i : (p[i] = f(p[i])));
@@ -948,9 +964,9 @@ export function delIDeler(baner: Bane[], glippe: number, mmPerEnhet?: number): B
    */
   const felt = (b: Bane["boks"]) => mmPerEnhet !== undefined && storFlate(b) &&
     Math.max(b.x1 - b.x0, b.y1 - b.y0) * mmPerEnhet > MAKS_DEL_MM;
-  const inniStor = (a: Bane["boks"], b: Bane["boks"]) => {
+  const inniStor = (a: Bane["boks"], b: Bane["boks"], ulikFarge = true) => {
     const [st, sm] = storFlate(a) ? [a, b] : [b, a];
-    if (felt(st)) return false;
+    if (felt(st) && ulikFarge) return false;
     const ox = Math.max(0, Math.min(st.x1, sm.x1) - Math.max(st.x0, sm.x0));
     const oy = Math.max(0, Math.min(st.y1, sm.y1) - Math.max(st.y0, sm.y0));
     return ox * oy >= 0.5 * (sm.x1 - sm.x0) * (sm.y1 - sm.y0);
@@ -963,15 +979,16 @@ export function delIDeler(baner: Bane[], glippe: number, mmPerEnhet?: number): B
   const form = new Map<number, any>();
   const formAv = (i: number) => { if (!form.has(i)) { try { form.set(i, flateKlipp(ringerAv(d[i].segs as any[]))); } catch { form.set(i, null); } } return form.get(i); };
   const inntil = (i: number, j: number) => {
-    if (!(felt(d[i].boks) || felt(d[j].boks)) || !storFlate(d[i].boks) || !storFlate(d[j].boks)) return true;
+    if (!paaFormen || !(felt(d[i].boks) || felt(d[j].boks)) || !storFlate(d[i].boks) || !storFlate(d[j].boks)) return true;
     const a = formAv(i), b = formAv(j);
     if (!a?.length || !b?.length) return true;
-    try { return (pc.intersection(utvidKlipp(a, glippe), b) as any[]).length > 0; } catch { return true; }
+    try { return (pc.intersection(utvidKlipp(a, FELT_GLIPPE_MM / mmPerEnhet!), b) as any[]).length > 0; } catch { return true; }
   };
   for (let i = 0; i < d.length; i++)
     for (let j = i + 1; j < d.length; j++)
       if (av(d[i].boks, d[j].boks) <= glippe && stripe(d[i].boks) === stripe(d[j].boks) &&
-          (storFlate(d[i].boks) === storFlate(d[j].boks) || inniStor(d[i].boks, d[j].boks)) && inntil(i, j)) p[f(i)] = f(j);
+          (storFlate(d[i].boks) === storFlate(d[j].boks) ||
+           inniStor(d[i].boks, d[j].boks, baneHex(d[i].kilde.farge) !== baneHex(d[j].kilde.farge))) && inntil(i, j)) p[f(i)] = f(j);
   const grupper = new Map<number, typeof d>();
   d.forEach((x, i) => { const r = f(i); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
   return [...grupper.values()].map((g) => {
@@ -1126,6 +1143,14 @@ function rettOpp(baner: Bane[], maksGrad = RETT_MAKS_GRAD, fastGrad?: number): {
 const DEL_GLIPPE_MM = 50;
 /** under denne avstanden er det samme del (bokstav og hull, ring og A) */
 const DEL_FIN_MM = 10;
+/**
+ * Felt naermere hverandre enn dette er ett stykke (bilfiguren paa Rydd
+ * Bergen er tegnet i biter med smale glipper). Lenger fra hverandre er de
+ * skilt av lakken og skjaeres hver for seg (Saethre: 30 til 50 mm).
+ */
+const FELT_GLIPPE_MM = 20;
+/** et felt lengre enn dette kuttes ved klippebanen som en stripe */
+const FELT_KLIPP_MM = 1.5 * 1150;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
 /** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
@@ -1156,7 +1181,13 @@ const STRIPE_SPENN = 0.9;
 
 function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[]) => boolean,
                     par?: (a: Bane[], b: Bane[]) => boolean): Bane[][] {
-  let g = delIDeler(baner, fin, DEL_GLIPPE_MM / glippe);
+  /**
+   * Formen maales bare naar delen er for stor og deles paa nytt (ok er
+   * satt): da er det en side med felt (Saethre), ikke en figur som er
+   * tegnet i flere biter med smale glipper (bilfiguren paa Rydd Bergen).
+   */
+  const paaFormen = !!ok;
+  let g = delIDeler(baner, fin, DEL_GLIPPE_MM / glippe, paaFormen);
   /**
    * Hva hoerer sammen? (Eirik 16.11.2026, Vito: «24 timers service:» og
    * «41770011» er én gruppe, logoen en annen, «men hvorfor? det er jo det
@@ -1280,10 +1311,10 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
   };
   // to felt hoerer sammen bare naar de faktisk henger sammen (innenfor fin), ikke over en stripe i lakken
   const feltInntil = (a: Bane[], b: Bane[]) => {
-    if (!erFelt(a) && !erFelt(b)) return true;
+    if (!paaFormen || (!erFelt(a) && !erFelt(b))) return true;
     const fa = formAv(a), fb = formAv(b);
     if (!fa?.length || !fb?.length) return true;
-    try { return (pc.intersection(utvidKlipp(fa, fin), fb) as any[]).length > 0; } catch { return true; }
+    try { return (pc.intersection(utvidKlipp(fa, (FELT_GLIPPE_MM / DEL_GLIPPE_MM) * glippe), fb) as any[]).length > 0; } catch { return true; }
   };
   const storFelt = (a: Bane[], b: Bane[]) => {
     const fa = hexer(a);

@@ -236,6 +236,9 @@ export function stripeKanter(mp: any, st: { ux: number; uy: number }):
  * aldri annen dekor her: lagene i en logo bygges i kjorJobb). `luft` og
  * `min` er i tegnede enheter.
  */
+/** skallet rundt alle oeyene er saa mye stoerre enn oeyenes egne: da faar hver oey sitt */
+const OEY_SKALL = 1.5;
+
 export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) => boolean,
                                 luft: number, min: number): KlippResultat {
   const indeks = new Map(alle.map((b, i) => [b, i]));
@@ -310,9 +313,21 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     } catch { grunnlag = synlig; }
     let tillatt: any;
     try {
-      const pkt = utvid(grunnlag, luft).flatMap((poly: any) => poly[0].slice(0, -1) as Pt[]);
-      const skall = konvekstSkall(pkt);
-      tillatt = skall.length > 2 ? [[[...skall, skall[0]]]] : utenHull(utvid(grunnlag, luft));
+      /**
+       * Skallet tas per synlige oey, ikke rundt alt (Saethre ID.Buzz
+       * 17.11.2026: oransje felt skilt av skraa striper i lakken, tegnet oppaa
+       * ett stort oransje felt. Ett skall rundt alle feltene fylte stripene og
+       * vinduene igjen, og det ble 50 % mer folie enn i produksjonen).
+       */
+      const oeyer = utvid(grunnlag, luft);
+      const hele = konvekstSkall(oeyer.flatMap((poly: any) => poly[0].slice(0, -1) as Pt[]));
+      const skall = oeyer.map((poly: any) => konvekstSkall(poly[0].slice(0, -1) as Pt[])).filter((sk: Pt[]) => sk.length > 2);
+      const arSk = (sk: Pt[]) => Math.abs(areal([[[...sk, sk[0]]]] as any));
+      // bare naar oeyene ligger langt fra hverandre (felt skilt av lakk); én logo (Oe-en) beholder ett skall
+      const hver = skall.length > 1 && skall.length === oeyer.length &&
+        arSk(hele) > OEY_SKALL * skall.reduce((t: number, sk: Pt[]) => t + arSk(sk), 0);
+      tillatt = hver ? pc.union(...(skall.map((sk: Pt[]) => [[...sk, sk[0]]]) as [any]))
+        : hele.length > 2 ? [[[...hele, hele[0]]]] : utenHull(oeyer);
     } catch { tillatt = utenHull(utvid(synlig, luft)); }
     let ny: any;
     try { ny = pc.intersection(egen, tillatt); } catch { return b; }
@@ -450,14 +465,16 @@ export function enderVedKant(b: Bane, alle: Bane[], erDekor: (x: Bane) => boolea
  * naer endene (under kant) teller ikke. Gir stedene som andel av lengden,
  * maalt fra enden med lavest x (liggende stripe) eller lavest y (staaende).
  */
-export function skjoterLangs(b: Bane, alle: Bane[], erDekor: (x: Bane) => boolean, tol: number, kant: number): number[] {
+export function skjoterLangs(b: Bane, alle: Bane[], erDekor: (x: Bane) => boolean, tol: number, kant: number, felt = false): number[] {
   if (!b.fyll) return [];
   const egen = flate(ringerAv(b.segs as any[]));
   if (!egen) return [];
   // stripen kan ha knekk i endene (Vito: smaa haker opp ved hjulbuene); da
   // gjelder rammens lange akse
   const bw = b.boks.x1 - b.boks.x0, bh = b.boks.y1 - b.boks.y0;
-  const st = stripeRetning(egen) ?? (Math.max(bw, bh) >= 8 * Math.min(bw, bh) ? (bw >= bh ? { ux: 1, uy: 0 } : { ux: 0, uy: 1 }) : null);
+  // et felt (Saethre: 4,2 m oransje over begge doerene) deles langs sin lange akse
+  const st = felt ? (bw >= bh ? { ux: 1, uy: 0 } : { ux: 0, uy: 1 })
+    : stripeRetning(egen) ?? (Math.max(bw, bh) >= 8 * Math.min(bw, bh) ? (bw >= bh ? { ux: 1, uy: 0 } : { ux: 0, uy: 1 }) : null);
   if (!st) return [];
   const pk = (egen.flat(2) as Pt[]);
   const u = pk.map((q) => q[0] * st.ux + q[1] * st.uy), v = pk.map((q) => -q[0] * st.uy + q[1] * st.ux);

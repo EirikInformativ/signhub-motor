@@ -856,6 +856,36 @@ ppi maales i full stoerrelse, aldri i skissens maalestokk. Under
 `MIN_PPI = 60` meldes «BYTT BILDE», og det staar i filnavnet. `linje.bilde`
 (JPEG) erstatter skissebildet i samme ramme, og ppi regnes paa nytt.
 
+**Felt paa siden (Saethre ID.Buzz 305007, 17.11.2026).** Designeren tegner
+store oransje felt langt ut forbi bilen og klipper dem langs karosseriet,
+med skraa striper i lakken mellom feltene og tekst i graatt oppaa.
+- Et felt lengre enn `FELT_KLIPP_MM` (1,5 x 1150) kuttes ved klippebanen
+  som en stripe. Logoikoner er kortere og skjaeres fortsatt hele (Oe-en paa
+  Oesterboe, 1,1 m). Uten dette: 12 m² folie der 5,4 m² synes.
+- Kuttet ved bildelene tar det konvekse skallet per synlige oey naar oeyene
+  ligger langt fra hverandre (`OEY_SKALL`), ellers ett skall som foer.
+- Bokstaver i en annen farge oppaa et felt lengre enn rullen er bred
+  limes ikke fast i feltet (`delIDeler`, `storFelt` i `samleDeler`).
+  Teksten blir eget element og legges oppaa, som i produksjonen.
+- To felt hoerer sammen bare naar formene ligger innenfor
+  `FELT_GLIPPE_MM = 20` av hverandre, og det maales bare naar delen er for
+  stor og deles paa nytt. Bilfiguren paa Rydd Bergen (smale glipper,
+  samme farge) staar hel.
+- Et felt i én farge lengre enn rullen faar bilens skjoeter
+  (`skjoterLangs(..., felt=true)`) og deles i alle (stykker minst
+  `FELT_MIN_STYKKE_MM`), med `SKJOT_BIL_MM` overlapp og egen ramme per
+  stykke. Ikke-konvekse stykker faar thru rundt det konvekse skallet
+  (`tilTettStykke`), og hele siden nestes paa formen, snudd 180°, saa
+  trekantene legges parvis.
+- Et flerfarget element bredere enn rullen deles i register (alle
+  fargene med de samme stykkene).
+Resultat paa 1524-rull: oransje 8,2 m ark mot 8,5 m i fasiten
+(Thru 2,3 m + Kiss 6,2 m). Bitene alene 8,1 m², fasiten 7,7 m².
+
+**Feilsignatur:** et felt som er mange ganger stoerre enn det som synes,
+tekst og felt som ett element paa flere meter, eller en logofigur i én
+farge som er delt i biter.
+
 **Feilsignatur:** et printark med graa flater i stedet for bilder, et bilde
 som er speilvendt eller invertert (CMYK uten Decode), eller ppi som er
 regnet i 1:30.

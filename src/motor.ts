@@ -90,6 +90,8 @@ const SKJOT_MM = 10;
 const SKJOT_BIL_MM = 30;
 /** en stripe er minst saa mange ganger lengre enn hoy */
 const STRIPE_FORHOLD = 8;
+/** et felt deles ikke i stykker kortere enn dette i bilens skjoeter */
+const FELT_MIN_STYKKE_MM = 300;
 /** tekst skjoetes i mellomrom mellom bokstaver paa minst saa mye */
 const TEKST_GLIPPE_MM = 3;
 /** saa mye av neste bokstav stykket foer skjoeten tar med som passmerke */
@@ -1370,6 +1372,22 @@ interface Elem {
   bilde?: BildeData;
 }
 
+/** Et stykke i én farge som ikke er konvekst: kiss langs formen, thru rundt det konvekse skallet. */
+function tilTettStykke(e: Elem): Elem {
+  if (e.thruForm || e.bilde || e.deler.length !== 1 || e.lagvis || e.trykk?.length) return e;
+  const f = e.deler[0].flate;
+  if (!f.length || heltKonveks(f)) return e;
+  try {
+    const sk = konvekstSkall(f.flatMap((poly) => poly[0].slice(0, -1)) as [number, number][]);
+    const ut = offsetRinger([sk], (TETT_THRU_MM * MM) / e.skala).map((r) => [[...r, r[0]]]) as MultiPoly;
+    const form = pc.union(...(ut as [any])) as MultiPoly;
+    const fx = form.flatMap((poly) => poly[0].map((q) => q[0])), fy = form.flatMap((poly) => poly[0].map((q) => q[1]));
+    const fb: [number, number, number, number] = [Math.min(...fx), Math.min(...fy), Math.max(...fx), Math.max(...fy)];
+    return { ...e, bbox: fb, breddeMm: ((fb[2] - fb[0]) * e.skala) / MM, hoydeMm: ((fb[3] - fb[1]) * e.skala) / MM,
+      omriss: form, thruForm: form, forleng: new Set(), skjoter: [] };
+  } catch { return e; }
+}
+
 /** Slik en farge navngis i en feilmelding: fargen, og folien den skulle skjaeres i. */
 const fargenavn = (d: Del) => `${d.hex} (folie ${d.folie.kode})`;
 
@@ -1906,6 +1924,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     const erTekst = new Set<Elem>();
     const bilskjot = new Set<Elem>();
     const forBreie = new Set<Elem>();
+    const feltDelt = new Set<Elem>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
       /**
@@ -1927,7 +1946,9 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       // et bilde deles ikke her: printet skjoetes i Caldera (flislegging), ikke i formen
       if (e.bilde) { if (kort > maksLengde) advarsler.push(`${e.navn}: bildet er ${Math.round(kort)} mm paa det smaleste, ` +
         `bredere enn printmediet. Det maa flislegges i RIP-en.`); continue; }
-      if (!(f.length && lang > maksLengde && (lang >= STRIPE_FORHOLD * kort || forBred))) continue;
+      // et felt med bilens skjoeter (Saethre) deles i skjoetene, ogsaa naar det ikke er en stripe
+      const feltSkjot = !fler && !!e.skjoter?.length && lang > maksLengde && lang < STRIPE_FORHOLD * kort;
+      if (!(f.length && lang > maksLengde && (lang >= STRIPE_FORHOLD * kort || forBred || feltSkjot))) continue;
       const langsX = forBred ? e.breddeMm < e.hoydeMm : e.breddeMm >= e.hoydeMm;
       const [b0, b1] = langsX ? [e.bbox[0], e.bbox[2]] : [e.bbox[1], e.bbox[3]];
       const mmTil = (mm: number) => (mm * MM) / e.skala;
@@ -1969,7 +1990,18 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
          */
         const midt = (b0 + b1) / 2;
         const naermest = steder.slice().sort((x, y) => Math.abs(x - midt) - Math.abs(y - midt))[0];
-        if (naermest !== undefined && (!beste || beste.length > 1)) beste = [naermest];
+        /**
+         * Et felt deles i alle skjoetene (Saethre: ett stykke per doer).
+         * Montoeren skjaerer der uansett, og mindre stykker legges tettere.
+         * Skjoeter naermere hverandre enn FELT_MIN_STYKKE_MM slaas sammen.
+         */
+        if (feltSkjot) {
+          const ut: number[] = [];
+          for (const x of steder.slice().sort((p, q) => p - q))
+            if (lengdeMm(ut.length ? ut[ut.length - 1] : b0, x) >= FELT_MIN_STYKKE_MM && lengdeMm(x, b1) >= FELT_MIN_STYKKE_MM) ut.push(x);
+          beste = ut.length ? ut : null;
+          if (beste) feltDelt.add(e);
+        } else if (naermest !== undefined && (!beste || beste.length > 1)) beste = [naermest];
         if (beste) {
           const g = [b0, ...beste, b1];
           stykker = g.slice(1).map((z, i) => [Math.max(b0, g[i] - (i ? ov : 0)), Math.min(b1, z + (i < g.length - 2 ? ov : 0))] as [number, number]);
@@ -2036,12 +2068,22 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
          * thru-cut-kantene paa begge sider av skjoeten paa samme linje, og
          * montoeren kan legge stykkene etter kanten.
          */
-        const bb: [number, number, number, number] = langsX
+        // et felt deles i stykker med egen form og egen ramme, saa de kan legges tett
+        const bb: [number, number, number, number] = feltDelt.has(e)
+          ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+          : langsX
           ? [Math.min(...xs), e.bbox[1], Math.max(...xs), e.bbox[3]]
           : [e.bbox[0], Math.min(...ys), e.bbox[2], Math.max(...ys)];
+        /**
+         * Et felt delt i bilens skjoeter: et stykke som ikke er konvekst
+         * kiss-cuttes langs formen og thru-cuttes TETT_THRU_MM utenfor det
+         * konvekse skallet (thru er aldri konkav), og stykkene nestes paa
+         * formen (Saethre: fasiten la bitene dreid inn i hverandre). Konvekse
+         * stykker er Appliser+thru som foer.
+         */
         biter.push({ ...e, navn: `${e.navn} skjoet ${i + 1} av ${n}`, bbox: bb,
           breddeMm: ((bb[2] - bb[0]) * e.skala) / MM, hoydeMm: ((bb[3] - bb[1]) * e.skala) / MM,
-          deler: delBiter, omriss: e.deler.length > 1 ? bit : [],
+          deler: delBiter, omriss: e.deler.length > 1 || feltDelt.has(e) ? bit : [],
           // bare de ytterste stykkene arver endene som kan forlenges
           forleng: new Set([...(e.forleng ?? [])].filter((sd) =>
             langsX ? (sd === "venstre" && i === 0) || (sd === "hoyre" && i === n - 1)
@@ -2069,11 +2111,19 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
           : forBreie.has(e)
             ? `${e.navn}: ${Math.min(e.breddeMm, e.hoydeMm).toFixed(0)} mm bredt felt faar ikke plass paa tvers av rullen og er delt paa langs i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`
           : bilskjot.has(e)
-            ? `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker i bilens egen skjoet. ` +
+            ? `${e.navn}: ${lang.toFixed(0)} mm ${feltDelt.has(e) ? "langt felt" : "lang stripe"} er skjoetet i ${biter.length} stykker i bilens egen skjoet. ` +
               `Hvert stykke gaar ${SKJOT_BIL_MM} mm inn paa den andre siden av skjoeten.`
             : `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`);
     }
-    grupper.set(nokkel, sett());
+    /**
+     * En side med felt delt i bilens skjoeter (Saethre): hvert stykke som
+     * ikke er konvekst, kiss-cuttes langs formen og thru-cuttes
+     * TETT_THRU_MM utenfor det konvekse skallet (thru er aldri konkav), og
+     * stykkene nestes paa formen (fasiten la bitene dreid inn i hverandre).
+     * Konvekse stykker thru-cuttes langs kanten som foer.
+     */
+    const ny = sett();
+    grupper.set(nokkel, [...feltDelt].some((e) => g.includes(e) && !hel.has(e)) ? ny.map(tilTettStykke) : ny);
   }
 
   /**

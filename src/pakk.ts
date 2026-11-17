@@ -176,7 +176,13 @@ export function pakkFritt(motiver: Motiv[], geo: Geo, tillatRotasjon = true): Ar
    * roteres»): nestes paa selve formen, i alle fire retninger, saa de
    * griper inn i hverandre.
    */
-  const nest = motiver.length && motiver.every((m) => m.thruForm?.length)
+  /*
+   * Ogsaa en side med felt delt i bilens skjoeter (Saethre): de konvekse
+   * stykkene nestes paa sin egen form sammen med de tette, saa trekantene
+   * legges parvis, snudd 180°.
+   */
+  const nest = motiver.length && (motiver.every((m) => m.thruForm?.length) ||
+      (motiver.some((m) => m.thruForm?.length) && motiver.every((m) => (m.thruForm ?? m.omriss)?.length)))
     ? nestForm(motiver, items, brukbar, geo, tillatRotasjon) : null;
   for (const st of STRATEGIER) {
     for (const rot of tillatRotasjon ? [true, false] : [false]) {
@@ -474,7 +480,7 @@ function nestForm(motiver: Motiv[], items: Item[], brukbar: number, geo: Geo, ro
         if (snu) { u = w - u; v = h - v; }
         return [u, v];
       };
-      const ringer = m.thruForm!.map((poly) => poly[0].map(til));
+      const ringer = (m.thruForm ?? m.omriss)!.map((poly) => poly[0].map(til));
       // utvidet med halve gapet, forskjoevet saa ruten starter i -halv
       const utv = offsetRinger(ringer, halv).map((rg) => rg.map(([x, y]) => [x + halv, y + halv] as [number, number]));
       const hoyde = h + 2 * halv;
