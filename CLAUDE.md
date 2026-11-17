@@ -808,6 +808,12 @@ og Vito 304160):**
   vanlige elementer, ikke paa et eget ark (Eirik 17.11.2026, XL-BYGG: gull-
   pinsene fikk egen fil selv om gull hadde sitt eget oppsett). Eget ark bare
   naar fargen ikke finnes andre steder i jobben (Proace: roedt).
+- Kjoeres det uansett en logo i register i de samme foliene, legges alt i
+  de foliene inn i det oppsettet i stedet for aa teipes (Eirik 17.11.2026,
+  XL-BYGG: «istedenfor aa kjoere litt med ramme og litt med dobbeltsidig
+  tape»). Ingen nye filer. XL-BYGG: tekstene med pins i register, PROFF
+  alene, registeret 1132 til 1337 mm. Rosen: ingen roed/blaa logo i
+  register, saa der teipes det fortsatt.
 - Bitene som teipes inn (`egetArk`) skal ikke appliseres (Eirik
   17.11.2026: «de legges uten laminat oppå med tape. deretter appliseres alt
   samlet»). Er de hele, konvekse stykker, heter fila `Thru`, og arket er
