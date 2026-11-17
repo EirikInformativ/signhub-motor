@@ -92,6 +92,19 @@ const sjekk = (ok: boolean, t: string) => { console.log(`${ok ? "ok  " : "FEIL"}
     sjekk(new RegExp(` ${venter.replace("+", "\\+")} 3M-refleks`).test(navn), `${hex} paa printmedium gir ${venter} (${navn})`);
   }
 
+  {
+    // Proace 309355 (Rosen, Eirik 17.11.2026): den roede trekanten i O-en
+    // skjaeres tett og teipes inn, ikke i register paa et like stort ark
+    const bilder = { disclaimer: await loadImage(DISCLAIMER), vannmerke: await loadImage(VANNMERKE) };
+    const lerret = (b: number, h: number) => createCanvas(Math.round(b), Math.round(h));
+    const p: any = await lesBilskisse(new Uint8Array(fs.readFileSync("proace2.pdf")), { jobb: "proace", bilder, lerret } as any);
+    const F = (hex: string) => hex === "#E6000D" ? { kode: "751-031", hex, breddeMm: 1260 } : { kode: "751-086", hex: "#0033FF", breddeMm: 1260 };
+    const r: any = await kjorJobb({ jobb: "proace", egenSkisse: false, linjer: p.elementer.map((e: any) => ({ navn: e.navn, pdf: e.pdf,
+      breddeMm: e.breddeMm, antall: e.antall, folier: e.farger.map((f: any) => F(f.hex)) })) } as any);
+    const m2 = (k: string) => r.ark.filter((a: any) => a.foliekode === k).reduce((t: number, a: any) => t + a.kvadratmeter, 0);
+    sjekk(m2("751-031") < 0.1, `Proace: roedt tett, ikke i register (${m2("751-031").toFixed(2)} m²)`);
+    sjekk(m2("751-031") + m2("751-086") < 1.5, `Proace: under halvparten av folien mot register (${(m2("751-031") + m2("751-086")).toFixed(2)} m², var 2,92)`);
+  }
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: tett ark velges naar det loenner seg");
 })();

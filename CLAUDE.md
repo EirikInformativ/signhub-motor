@@ -752,6 +752,16 @@ og Vito 304160):**
   `SMAL_RULL_SPAR = 0.1` av folien, brukes den og meldes. E-Partner: 2,24
   til 1,63 m², og fila kan gaa paa wild.
 
+- Smaa farger skjaeres tett og teipes inn ogsaa uten for mange filer
+  (Eirik 17.11.2026, Rosen paa Proace 309355): `samleFiler` tar logoer der
+  fargene utenom den stoerste dekker under `LITEN_FARGE = 0.25` av rammen.
+  I register maa den roede folien vaere like stor som hele oppsettet. Proace:
+  2,92 til 0,96 m². `test/tettark.ts` vokter det.
+- `skyvSammen` dreier bare et element med én plassering (dreies formen,
+  dreies alle kopiene), og setter et felt tilbake hvis det havner oppaa noe.
+- Rydd Bergen (gul Fiat): tonet graa (CMY nesten like) er bilens graa, og
+  Fiat-lyktene og CCVision-sorte deler staar i `BILFARGER`.
+
 **Feilsignatur:** halv logo der designeren har tegnet den i to baner,
 ikoner skilt fra tekstene sine, eller panserlogoen forfra i oppsettet.
 

@@ -43,6 +43,8 @@ const DREI_GEVINST = 0.1;
 /** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
 const MAKS_FILER = 6;
 const SAMLE_M2 = 5;
+/** de andre fargene i en logo dekker under denne andelen av rammen: skjaeres tett og teipes inn */
+const LITEN_FARGE = 0.25;
 /** En farge som stikker minst saa langt ut rundt fargen over, kan monteres for haand. */
 const HAAND_MARGIN_MM = 3;
 /** Deler av samme farge lenger fra hverandre enn dette blir egne elementer naar en logo tas ut av registeret. */
@@ -442,11 +444,30 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
   const m2 = elementer.reduce((t, e) => t + e.deler.reduce((u, d) =>
     u + areal(d.flate) * Math.pow(e.skala / MM, 2), 0) * e.antall, 0) / 1e6;
   const foer = filer(elementer);
-  if (foer <= MAKS_FILER || m2 > SAMLE_M2) return elementer;
+  const forMange = foer > MAKS_FILER && m2 <= SAMLE_M2;
+  /**
+   * Ogsaa naar de andre fargene er smaa i forhold til logoen (Eirik
+   * 17.11.2026, Rosen paa Proace 309355: den roede prikken i O-en): i
+   * register maa den roede folien vaere like stor som hele oppsettet. Tett og
+   * teipet inn bruker den bare prikkens egen flate. Gjelder logoer der
+   * fargene utenom den stoerste til sammen dekker under LITEN_FARGE av
+   * logoens ramme.
+   */
+  const smaaAndre = (e: Elem) => {
+    if (e.deler.length < 2) return false;
+    const rammeA = (e.bbox[2] - e.bbox[0]) * (e.bbox[3] - e.bbox[1]);
+    const a = e.deler.map((d) => { const pk = d.flate.flat(2); if (!pk.length) return 0;
+      return (Math.max(...pk.map((q) => q[0])) - Math.min(...pk.map((q) => q[0]))) * (Math.max(...pk.map((q) => q[1])) - Math.min(...pk.map((q) => q[1]))); });
+    const stoerst = Math.max(...e.deler.map((d) => areal(d.flate)));
+    const andre = e.deler.reduce((t, d, i) => t + (areal(d.flate) === stoerst ? 0 : a[i]), 0);
+    return rammeA > 0 && andre < LITEN_FARGE * rammeA;
+  };
+  if (!forMange && !elementer.some(smaaAndre)) return elementer;
   const ut: Elem[] = [];
   const tatt: string[] = [];
   for (const e of elementer) {
     if (e.deler.length < 2 || e.trykk?.length || e.thruForm || e.deler.some((d) => d.folie.prisM2 || d.folie.print)) { ut.push(e); continue; }
+    if (!forMange && !smaaAndre(e)) { ut.push(e); continue; }
     try {
       const mm = (x: number) => (x * MM) / e.skala;
       const fylt = e.deler.map((d) => pc.union(...(d.flate.map((poly) => [poly[0]]) as [any])) as MultiPoly);
@@ -553,8 +574,9 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
       tatt.push(e.navn);
     } catch { ut.push(e); }
   }
-  if (tatt.length) advarsler.push(`Faerre filer: ${foer} filer for ${m2.toFixed(1).replace(".", ",")} m² folie er for mange, ` +
-    `saa ${tatt.length} logo${tatt.length > 1 ? "er" : ""} legges paa det ordinaere oppsettet farge for farge og monteres ` +
+  if (tatt.length) advarsler.push((forMange ? `Faerre filer: ${foer} filer for ${m2.toFixed(1).replace(".", ",")} m² folie er for mange, ` :
+    "Smaa farger skjaeres tett i stedet for i register, saa folien ikke maa vaere like stor som hele oppsettet: ") +
+    `${tatt.length} logo${tatt.length > 1 ? "er" : ""} legges paa det ordinaere oppsettet farge for farge og monteres ` +
     `paa hverandre for haand (${tatt.join(", ")}). Naa ${filer(ut)} filer.`);
   return ut;
 }
@@ -832,10 +854,31 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
       Math.max(...pk.map((q) => q[0])), Math.max(...pk.map((q) => q[1]))];
     return { fl, bb, w: ((bb[2] - bb[0]) * e.skala) / MM, h: ((bb[3] - bb[1]) * e.skala) / MM };
   };
+  /** to former overlapper (mer enn en hundredel mm²): da er flyttingen feil */
+  const overlapper = (a: R[], b: R[]) => {
+    try {
+      const A = pc.union(...(a.map((r) => [r]) as [any])), B = pc.union(...(b.map((r) => [r]) as [any]));
+      return areal(pc.intersection(A, B)) > 0.01;
+    } catch { return false; }
+  };
   for (const u of enheter) {
     const ringerAv = () => u.flatMap((p) => form(p));
     if (!lagt.length) { lagt.push(...ringerAv()); continue; }
     const xFoer = Math.min(...u.map((p) => p.x));
+    /*
+     * Feltet er ett om gangen, og blir det liggende oppaa noe som allerede er
+     * lagt, settes det tilbake der det var (Proace 309355: to roede trekanter
+     * ble dreid og skjovet inn i hverandre). Et felt som overlapper er det
+     * verste som kan skje paa et Appliser+thru-ark.
+     */
+    const foerU = u.map((p) => ({ p, x: p.x, y: p.y, w: p.w, h: p.h, rot: p.rotated, snu: p.snu,
+      e: gruppe[p.id], deler: gruppe[p.id].deler, bbox: gruppe[p.id].bbox, b: gruppe[p.id].breddeMm,
+      hh: gruppe[p.id].hoydeMm, omriss: gruppe[p.id].omriss }));
+    const meldFoer = meld.length;
+    const settTilbake = () => { for (const f of foerU) {
+      Object.assign(f.p, { x: f.x, y: f.y, w: f.w, h: f.h, rotated: f.rot, snu: f.snu });
+      Object.assign(f.e, { deler: f.deler, bbox: f.bbox, breddeMm: f.b, hoydeMm: f.hh, omriss: f.omriss }); }
+      meld.length = meldFoer; };
     const proev = () => { const r = plassering(ringerAv()); return { ...r, hoyre: Math.max(...u.map((p) => p.x + p.w)) - r.s }; };
     let a0 = proev();
     snuEnhet(u);
@@ -848,7 +891,10 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
      * enveis-thru»). Vinkelen som gir minst ark vinner.
      */
     const e0 = u.length === 1 ? gruppe[u[0].id] : null;
-    if (e0 && e0.deler.length === 1 && e0.deler[0].flate.length === 1 && heltKonveks(e0.deler[0].flate) &&
+    // bare et element med én plassering: dreies formen, dreies alle kopiene,
+    // ogsaa de som alt er lagt (to roede trekanter oppaa hverandre, Proace)
+    if (e0 && ps.filter((q) => q.id === u[0].id).length === 1 &&
+        e0.deler.length === 1 && e0.deler[0].flate.length === 1 && heltKonveks(e0.deler[0].flate) &&
         !e0.skjoter?.length && !e0.forleng?.size) {
       const p = u[0];
       const foer = { flate: e0.deler[0].flate, bbox: e0.bbox, b: e0.breddeMm, h: e0.hoydeMm, x: p.x, y: p.y, w: p.w, hh: p.h, rot: p.rotated, snu: !!p.snu };
@@ -899,6 +945,7 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
     if (a0.s > 0) for (const p of u) p.x -= a0.s;
     if (Math.min(...u.map((p) => p.x)) > xFoer) for (const p of u) p.x -= Math.min(...u.map((q) => q.x)) - xFoer;
     if (a0.kontakt) snapp(u);
+    if (overlapper(ringerAv(), lagt)) settTilbake();
     lagt.push(...ringerAv());
   }
   const bredde1 = Math.max(...ps.map((p) => p.x + p.w)) - Math.min(...ps.map((p) => p.x));
