@@ -473,8 +473,14 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
    * egen fil?»). Gull-pinsen paa siden hoerer hjemme paa gulloppsettet, der
    * pinsen bak allerede ligger.
    */
-  const fargenFinnes = (kode: string, utenom: Elem) =>
-    elementer.some((e) => e !== utenom && e.deler.some((d) => d.folie.kode === kode));
+  // et oppsett i folien finnes naar et annet element har den som sin stoerste
+  // farge (eller eneste), ikke bare som en liten farge som selv skal teipes
+  // inn (Proace: alle de roede trekantene er smaa, saa roedt faar eget ark)
+  const fargenFinnes = (kode: string, utenom: Elem) => elementer.some((e) => {
+    if (e === utenom) return false;
+    const st = e.deler.slice().sort((a, b) => areal(b.flate) - areal(a.flate))[0];
+    return !!st && st.folie.kode === kode;
+  });
   const ut: Elem[] = [];
   const tatt: string[] = [];
   for (const e of elementer) {
