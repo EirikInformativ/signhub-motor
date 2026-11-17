@@ -466,6 +466,15 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
     return rammeA > 0 && andre < LITEN_FARGE * rammeA;
   };
   if (!forMange && !elementer.some(smaaAndre)) return elementer;
+  /**
+   * Har folien allerede et eget oppsett i jobben (et annet element bruker
+   * den), legges bitene der som vanlige elementer i stedet for paa et eget
+   * ark (Eirik 17.11.2026, XL-BYGG: «hvorfor legges disse 2 pinsene inn i
+   * egen fil?»). Gull-pinsen paa siden hoerer hjemme paa gulloppsettet, der
+   * pinsen bak allerede ligger.
+   */
+  const fargenFinnes = (kode: string, utenom: Elem) =>
+    elementer.some((e) => e !== utenom && e.deler.some((d) => d.folie.kode === kode));
   const ut: Elem[] = [];
   const tatt: string[] = [];
   for (const e of elementer) {
@@ -578,7 +587,7 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
               ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}${e.antall > 1 ? ` (${n + 1}/${e.antall})` : ""}`,
                 lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2, antall: 1,
                 deler: [{ ...x.d, flate: f.map((poly) => poly.map((r) => r.map((q) => [q[0], q[1]] as [number, number]))) }],
-                omriss: f, egetArk: true });
+                omriss: f, ...(fargenFinnes(x.d.folie.kode, e) ? {} : { egetArk: true }) });
             }
           });
         }

@@ -757,6 +757,10 @@ og Vito 304160):**
   fargene utenom den stoerste dekker under `LITEN_FARGE = 0.25` av rammen.
   I register maa den roede folien vaere like stor som hele oppsettet. Proace:
   2,92 til 0,96 m². `test/tettark.ts` vokter det.
+- Har folien allerede et oppsett i jobben, legges de smaa bitene der som
+  vanlige elementer, ikke paa et eget ark (Eirik 17.11.2026, XL-BYGG: gull-
+  pinsene fikk egen fil selv om gull hadde sitt eget oppsett). Eget ark bare
+  naar fargen ikke finnes andre steder i jobben (Proace: roedt).
 - Bitene som teipes inn (`egetArk`) skal ikke appliseres (Eirik
   17.11.2026: «de legges uten laminat oppå med tape. deretter appliseres alt
   samlet»). Er de hele, konvekse stykker, heter fila `Thru`, og arket er
