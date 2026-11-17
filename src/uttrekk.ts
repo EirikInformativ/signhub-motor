@@ -55,6 +55,12 @@ export interface Bane {
   spot?: { navn: string; cmyk: number[]; tint: number; lab?: { wp: number[]; c1: number[] } };
   gradient?: { type: 2 | 3; p0: [number, number]; p1: [number, number]; r0: number; r1: number;
                farger: [number, number, number][] };
+  /**
+   * Satt naar banen er et innsatt bilde (foto): enhetsruta i `mat` er
+   * bildet, segs er ruta i sidekoordinater, og `klipp` er klippebanene som
+   * gjaldt. Aldri dekor; blir eget print-element (Eirik 17.11.2026).
+   */
+  bilde?: { mat: number[]; px: [number, number]; jpeg?: Uint8Array; filter: string; n: number; decode?: number[] };
 }
 
 function mul(a: Mat, b: Mat): Mat {
@@ -206,6 +212,29 @@ function gaa(data: string, res: PDFDict | undefined, ctm: Mat, dybde: number, ut
         const mArr: any = dict.lookup(PDFName.of("Matrix"));
         const fm: Mat = mArr?.asArray ? (mArr.asArray().map((v: any) => v.asNumber()) as Mat) : ID;
         gaa(streamText(form), dict.lookup(PDFName.of("Resources"), PDFDict) ?? res, mul(fm, cur), dybde + 1, ut, klipp);
+      } else if (dict && String(dict.lookup(PDFName.of("Subtype"))) === "/Image") {
+        try {
+          const w = Number(String(dict.lookup(PDFName.of("Width")))), h = Number(String(dict.lookup(PDFName.of("Height"))));
+          const fl: any = dict.lookup(PDFName.of("Filter"));
+          const filter = String(fl?.asArray ? fl.asArray()[0] : fl ?? "");
+          const jpeg = filter === "/DCTDecode" && form instanceof PDFRawStream ? form.getContents() : undefined;
+          // antall fargekanaler: DeviceGray/RGB/CMYK, eller N i ICCBased
+          const csObj: any = dict.lookup(PDFName.of("ColorSpace"));
+          let nKan = 3;
+          const csNavn = String(csObj?.asArray ? csObj.asArray()[0] : csObj ?? "");
+          if (csNavn === "/DeviceCMYK") nKan = 4; else if (csNavn === "/DeviceGray") nKan = 1;
+          else if (csNavn === "/ICCBased") { const icc: any = csObj.lookup(1); const N = icc?.dict?.lookup(PDFName.of("N")); if (N) nKan = Number(String(N)); }
+          const decArr: any = dict.lookup(PDFName.of("Decode"));
+          const decode = decArr?.asArray ? decArr.asArray().map((v: any) => v.asNumber()) : undefined;
+          const hj = (x: number, y: number): [number, number] => [cur[0] * x + cur[2] * y + cur[4], cur[1] * x + cur[3] * y + cur[5]];
+          const q = [hj(0, 0), hj(1, 0), hj(1, 1), hj(0, 1)];
+          const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
+          ut.push({ segs: [{ t: "m", p: q[0] }, { t: "l", p: q[1] }, { t: "l", p: q[2] }, { t: "l", p: q[3] }, { t: "h" }] as any,
+            farge: [0, 0, 0, 0], strekFarge: [0, 0, 0, 0], fyll: false, strek: false, bredde: 0,
+            boks: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) },
+            ...(klipp.length ? { klipp: klipp.slice() } : {}),
+            bilde: { mat: cur.slice(), px: [w, h], jpeg, filter, n: nKan, ...(decode ? { decode } : {}) } });
+        } catch { /* bildet kan ikke leses: meldes som foer av finnDekor */ }
       }
     }
     if (op !== "cs" && op !== "CS") tall = [];

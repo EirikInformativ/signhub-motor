@@ -411,6 +411,38 @@ export function finnDekor(lest0: LettLest, malestokk: number,
   }
 
   const iVisning = (b: Boks) => visninger.some((v) => andelInni(b, v) >= 0.5);
+  /**
+   * Tekst i bilens graatoner (Eirik 17.11.2026, Saethre Sten paa ID.Buzz
+   * 305007: graa bil, «SAETHRE STEN», web og telefon i K 90, produsert i
+   * 751-070M). K 90 er ogsaa bilens farge (felger, lykter), saa fargen
+   * avgjoer ingenting. Tegnerekkefoelgen gjoer: CCVision tegner bilen
+   * visning for visning, og bilens deler ligger aldri i mer enn én
+   * visning. Designeren legger teksten paa alle sidene i én rekke rene
+   * fyll i samme farge. En slik rekke (minst TVERR_MIN flater, uten strek)
+   * som har minst to flater i hver av minst to visninger, er dekor.
+   */
+  const TVERR_MIN = 6;
+  const tverr = new Set<Boks>();
+  {
+    const bx = lest.bokser;
+    let i = 0;
+    while (i < bx.length) {
+      let j = i;
+      const lik = (b: Boks) => !b.bareStrek && fargenavn(b) === fargenavn(bx[i]);
+      if (!lik(bx[i])) { i++; continue; }
+      while (j + 1 < bx.length && lik(bx[j + 1])) j++;
+      const rekke = bx.slice(i, j + 1);
+      if (rekke.length >= TVERR_MIN && !erLakk(bx[i]) && !BILFARGER.has(fargenavn(bx[i])) && !malfarge.has(fargenavn(bx[i]))) {
+        const perVis = new Map<Visning, number>();
+        for (const b of rekke) {
+          const v = visninger.find((vv) => andelInni(b, vv) >= 0.5);
+          if (v) perVis.set(v, (perVis.get(v) ?? 0) + 1);
+        }
+        if ([...perVis.values()].filter((n) => n >= 2).length >= 2) for (const b of rekke) if (iVisning(b)) tverr.add(b);
+      }
+      i = j + 1;
+    }
+  }
   /** et nummerskilt: 470-600 x 90-140 mm */
   const skiltMaal = (b: Boks) => {
     const w = (b.x1 - b.x0) / MM * malestokk, h = (b.y1 - b.y0) / MM * malestokk;
@@ -432,6 +464,7 @@ export function finnDekor(lest0: LettLest, malestokk: number,
      * designerens og er en kandidat i seg selv.
      */
     [...graaBak].filter(iVisning),
+    [...tverr].filter((b) => !kulorte.includes(b)),
     lest.bokser.filter((b) => !kulor(b) && noytral(b) && iVisning(b) && (iDekorbolk.has(b) ||
       /**
        * Paa moerk bil er en stor hvit flate dekor selv om den staar alene i
@@ -528,7 +561,7 @@ export function finnDekor(lest0: LettLest, malestokk: number,
     const ekteKulor = g.some(ekte);
     // en stor hvit flate paa moerk bil er dekor selv om den ligger over hjul og lister
     const storLys = moerkBil && g.some((b) => lys(b) && Math.max(b.x1 - b.x0, b.y1 - b.y0) / MM * malestokk >= STOR_LYS_MM);
-    if (!ekteKulor && !storLys && graaAndel > BILGRAA_ANDEL) {
+    if (!ekteKulor && !storLys && !g.some((b) => tverr.has(b)) && graaAndel > BILGRAA_ANDEL) {
       forkastet.push({ hva: `${med.length} flater ved x${(r.x0 / MM).toFixed(0)} y${(r.y0 / MM).toFixed(0)}`,
         grunn: `${(graaAndel * 100).toFixed(0)} % er bilens graatoner` });
       continue;

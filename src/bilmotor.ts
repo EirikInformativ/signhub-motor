@@ -9,6 +9,7 @@
  *
  * Ingenting her peker ut dekoren for hand. Reglene staar i dekorfinn.ts.
  */
+import { PDFDocument, PDFName } from "pdf-lib";
 import { lesLett, tolk } from "./bilskisse.ts";
 import type { TekstBoks } from "./bilskisse.ts";
 import { finnDekor, BILFARGER } from "./dekorfinn.ts";
@@ -19,7 +20,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -118,6 +119,13 @@ export interface BilElement {
    * la brukeren snu valget.
    */
   ensidig?: { speilet: boolean; usikker: boolean; kilde?: string; grunn: string };
+  /**
+   * Satt naar elementet er et innsatt bilde som skal printes (Eirik
+   * 17.11.2026). ppi er i full stoerrelse paa bilen, ikke i skissens
+   * malestokk. Bildet fra skissa er ofte bare en forhaandsvisning; appen
+   * kan sende originalen i kjorJobb (linje.bilde), og da regnes ppi paa nytt.
+   */
+  bilde?: { ppi: number; px: [number, number]; kilde: "skisse" };
 }
 
 export interface BilSkisseLest {
@@ -340,7 +348,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     // en graa flate finnDekor selv har valgt (graa rute bak en kuloer, LTS Maskin) er dekor
     const valgtGraa = (b: Bane) => o.liste.some((x) => !!x.farge && x.farge.length === 4 &&
       Math.max(x.farge[0], x.farge[1], x.farge[2]) < 0.01 && x.farge[3] > 0.01 && x.farge[3] < 0.99) && likBoks(b);
-    const valgte = baner.filter((b) => !b.gradient && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && (!erBil(b) || valgtGraa(b)) && likBoks(b))
+    const valgte = baner.filter((b) => !b.gradient && !b.bilde && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && (!erBil(b) || valgtGraa(b)) && likBoks(b))
       /**
        * Bare striper kuttes ved klippet. Et logoikon som designeren har
        * klippet langs karosseriet skjaeres helt (Eirik 17.11.2026, Oesterboe:
@@ -731,6 +739,72 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
   await leggTekstPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
   await leggPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
   await dupliserSide(funn.visninger.map((x) => x.navn), elementer, brukteBaner, merknader, logg);
+
+  /**
+   * Innsatte bilder (foto) blir egne print-elementer (Eirik 17.11.2026:
+   * «print er jo med», Saethre Sten 305007 og Oesterboe). Formen er
+   * klippebanen designeren har lagt paa bildet (vindusform,
+   * gravsteinskanten); den blir thru-cut. Bildet ligger i element-PDF-en i
+   * riktig mal og utsnitt, og kjorJobb printer det utfallende.
+   */
+  {
+    let n = 0;
+    for (const b of baner) {
+      if (!b.bilde) continue;
+      const vis = funn.visninger.find((x) => {
+        const sb = synligBoks(b);
+        const iw = Math.min(sb.x1, x.x1) - Math.max(sb.x0, x.x0), ih = Math.min(sb.y1, x.y1) - Math.max(sb.y0, x.y0);
+        return iw > 0 && ih > 0 && iw * ih >= 0.5 * (sb.x1 - sb.x0) * (sb.y1 - sb.y0);
+      });
+      if (!vis) continue;
+      const rute = flateKlipp(ringerAv(b.segs as any[]));
+      let form: any = rute;
+      try { const k = klippFlateBane(b); if (k) form = pc.intersection(rute, k); } catch { /* hele ruta */ }
+      if (!form?.length) continue;
+      const pk = (form as any).flat(2) as [number, number][];
+      const r = { x0: Math.min(...pk.map((p) => p[0])), y0: Math.min(...pk.map((p) => p[1])),
+        x1: Math.max(...pk.map((p) => p[0])), y1: Math.max(...pk.map((p) => p[1])) };
+      const bMm = ((r.x1 - r.x0) / MM) * malestokk, hMm = ((r.y1 - r.y0) / MM) * malestokk;
+      if (Math.max(bMm, hMm) < 100) continue;
+      n++;
+      const m = b.bilde.mat;
+      // ppi i full stoerrelse: piksler over bildets bredde paa bilen (ikke i 1:30)
+      const bildeBMm = (Math.hypot(m[0], m[1]) / MM) * malestokk;
+      const ppi = b.bilde.px[0] / (bildeBMm / 25.4);
+      const navn = `${vis.navn} bilde ${n}`;
+      if (!b.bilde.jpeg) {
+        merknader.push(`${navn}: bildet er ikke JPEG i skissen og kan ikke legges i printfila. Last opp originalbildet.`);
+      }
+      try {
+        const doc = await PDFDocument.create();
+        const marg = 6;
+        const page = doc.addPage([r.x1 - r.x0 + 2 * marg, r.y1 - r.y0 + 2 * marg]);
+        const dx = marg - r.x0, dy = marg - r.y0;
+        const sti = (form as any).map((poly: any) => poly.map((ring: any) =>
+          ring.map((p: [number, number], i: number) => `${(p[0] + dx).toFixed(3)} ${(p[1] + dy).toFixed(3)} ${i ? "l" : "m"}`).join("\n") + "\nh").join("\n")).join("\n");
+        let ops = `0.5 0.5 0.5 rg\n${sti}\nf\n`;
+        if (b.bilde.jpeg) {
+          // bildet kopieres som det er (samme JPEG, kanaler og Decode), saa CMYK ikke blir invertert
+          const bd = b.bilde;
+          const imgDict: any = { Type: "XObject", Subtype: "Image", Width: bd.px[0], Height: bd.px[1],
+            ColorSpace: bd.n === 4 ? "DeviceCMYK" : bd.n === 1 ? "DeviceGray" : "DeviceRGB", BitsPerComponent: 8, Filter: "DCTDecode" };
+          if (bd.decode) imgDict.Decode = bd.decode;
+          const imgRef = doc.context.register(doc.context.stream(bd.jpeg!, imgDict));
+          const nm = String((page.node as any).newXObject("Im0", imgRef));
+          ops += `q\n${sti}\nW n\n${m.map((v, i) => (i === 4 ? v + dx : i === 5 ? v + dy : v).toFixed(5)).join(" ")} cm\n${nm} Do\nQ\n`;
+        }
+        const strom = doc.context.flateStream(ops);
+        page.node.set(PDFName.of("Contents"), doc.context.register(strom));
+        doc.setKeywords([`signhub-bilde:${Math.round(ppi)}`]);
+        const pdf = await doc.save();
+        elementer.push({ id: `bilde-${n}`, vis: vis.navn, navn, pdf, breddeMm: Math.round(bMm), hoydeMm: Math.round(hMm),
+          antall: 1, farger: [{ hex: "#808080", andel: 1 }], bilde: { ppi: Math.round(ppi), px: b.bilde.px, kilde: "skisse" } });
+        logg.push(`${navn}: ${Math.round(bMm)} x ${Math.round(hMm)} mm, ${Math.round(ppi)} ppi i full stoerrelse.`);
+      } catch (e: any) {
+        merknader.push(`${navn}: bildet kunne ikke legges i en printfil (${String(e?.message ?? e)}).`);
+      }
+    }
+  }
 
   const forside = tegnBilSkisse(baner, {
     jobb: v.jobb, malestokk,
