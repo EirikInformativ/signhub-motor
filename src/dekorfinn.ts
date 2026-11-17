@@ -238,7 +238,6 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
        * E-Partner 306005 har én side og toppen.
        */
       const sym = langs.map((v) => symmetri(bokser, v));
-      if (process.env.SIGNHUB_DEBUG) console.log("symmetri", sym.map((x) => x.toFixed(2)).join(" "));
       if (sym.every((x) => x < SYMMETRI_TOPP)) { langs.forEach((v) => (v.navn = "side")); }
       else if (sym[0] >= SYMMETRI_TOPP !== sym[1] >= SYMMETRI_TOPP) {
         langs.forEach((v, i) => (v.navn = sym[i] >= SYMMETRI_TOPP ? "topp" : "side"));
