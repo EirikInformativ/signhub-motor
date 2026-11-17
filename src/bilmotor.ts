@@ -920,7 +920,7 @@ function delbaner(b: Bane): { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] {
  * samme bane i samme del blir samme bane igjen, saa hull i bokstaver (som
  * fylles etter partallsregelen) blir staaende som hull.
  */
-export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
+export function delIDeler(baner: Bane[], glippe: number, mmPerEnhet?: number): Bane[][] {
   const d = baner.flatMap(delbaner);
   const p = d.map((_, i) => i);
   const f = (i: number): number => (p[i] === i ? i : (p[i] = f(p[i])));
@@ -940,16 +940,38 @@ export function delIDeler(baner: Bane[], glippe: number): Bane[][] {
   // en stor flate (den roede bak paa Vito) limes ikke fast i bokstavene inntil den
   const storFlate = (b: Bane["boks"]) => Math.min(b.x1 - b.x0, b.y1 - b.y0) > 40 * glippe;
   // ... men det som ligger oppaa flaten (bokstaver paa en plate, XL i ruta) hoerer til
+  /**
+   * ... saa lenge flaten er en plate og ikke et felt. Et felt lengre enn
+   * det som faar plass paa tvers av rullen (Saethre ID.Buzz 17.11.2026: det
+   * oransje feltet paa 4,2 m med «KVALITET I OVER 100 ÅR» oppaa) skjaeres
+   * for seg, og teksten legges oppaa, som i produksjonen.
+   */
+  const felt = (b: Bane["boks"]) => mmPerEnhet !== undefined && storFlate(b) &&
+    Math.max(b.x1 - b.x0, b.y1 - b.y0) * mmPerEnhet > MAKS_DEL_MM;
   const inniStor = (a: Bane["boks"], b: Bane["boks"]) => {
     const [st, sm] = storFlate(a) ? [a, b] : [b, a];
+    if (felt(st)) return false;
     const ox = Math.max(0, Math.min(st.x1, sm.x1) - Math.max(st.x0, sm.x0));
     const oy = Math.max(0, Math.min(st.y1, sm.y1) - Math.max(st.y0, sm.y0));
     return ox * oy >= 0.5 * (sm.x1 - sm.x0) * (sm.y1 - sm.y0);
   };
+  /**
+   * To felt kan ha overlappende rammer uten aa ligge inntil hverandre (de
+   * oransje feltene paa Saethre, skilt av skraa striper i lakken). For felt
+   * maales avstanden paa formen, ikke paa rammen.
+   */
+  const form = new Map<number, any>();
+  const formAv = (i: number) => { if (!form.has(i)) { try { form.set(i, flateKlipp(ringerAv(d[i].segs as any[]))); } catch { form.set(i, null); } } return form.get(i); };
+  const inntil = (i: number, j: number) => {
+    if (!(felt(d[i].boks) || felt(d[j].boks)) || !storFlate(d[i].boks) || !storFlate(d[j].boks)) return true;
+    const a = formAv(i), b = formAv(j);
+    if (!a?.length || !b?.length) return true;
+    try { return (pc.intersection(utvidKlipp(a, glippe), b) as any[]).length > 0; } catch { return true; }
+  };
   for (let i = 0; i < d.length; i++)
     for (let j = i + 1; j < d.length; j++)
       if (av(d[i].boks, d[j].boks) <= glippe && stripe(d[i].boks) === stripe(d[j].boks) &&
-          (storFlate(d[i].boks) === storFlate(d[j].boks) || inniStor(d[i].boks, d[j].boks))) p[f(i)] = f(j);
+          (storFlate(d[i].boks) === storFlate(d[j].boks) || inniStor(d[i].boks, d[j].boks)) && inntil(i, j)) p[f(i)] = f(j);
   const grupper = new Map<number, typeof d>();
   d.forEach((x, i) => { const r = f(i); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
   return [...grupper.values()].map((g) => {
@@ -1134,7 +1156,7 @@ const STRIPE_SPENN = 0.9;
 
 function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[]) => boolean,
                     par?: (a: Bane[], b: Bane[]) => boolean): Bane[][] {
-  let g = delIDeler(baner, fin);
+  let g = delIDeler(baner, fin, DEL_GLIPPE_MM / glippe);
   /**
    * Hva hoerer sammen? (Eirik 16.11.2026, Vito: «24 timers service:» og
    * «41770011» er én gruppe, logoen en annen, «men hvorfor? det er jo det
@@ -1239,6 +1261,37 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
   /** linjeavstanden i en tekst kan vaere stoerre enn glippen naar bokstavene er store */
   const glippeFor = (a: Info, b: Info) => tekst(a) && tekst(b)
     ? Math.max(glippe, TEKST_LINJE * Math.min(median(a.hoyder), median(b.hoyder))) : glippe;
+  // glippe er DEL_GLIPPE_MM i tegnede enheter: derfra maalestokken
+  const ekteMm = (v: number) => (v / glippe) * DEL_GLIPPE_MM;
+  const hexer = (gg: Bane[]) => new Set(gg.filter((b) => b.fyll).map((b) => baneHex(b.farge)));
+  /** felt (lengre enn rullen er bred) maales paa formen: rammene kan overlappe uten at feltene moetes */
+  const erFelt = (gg: Bane[]) => gg.some((q) => q.fyll &&
+    ekteMm(Math.max(q.boks.x1 - q.boks.x0, q.boks.y1 - q.boks.y0)) > MAKS_DEL_MM &&
+    ekteMm(Math.min(q.boks.x1 - q.boks.x0, q.boks.y1 - q.boks.y0)) > STOR_FLATE_MM);
+  const formCache = new Map<Bane[], any>();
+  const formAv = (gg: Bane[]) => {
+    if (!formCache.has(gg)) {
+      try {
+        const fl = gg.filter((q) => q.fyll).map((q) => flateKlipp(ringerAv(q.segs as any[]))).filter((x: any) => x?.length);
+        formCache.set(gg, fl.length ? pc.union(...fl) : null);
+      } catch { formCache.set(gg, null); }
+    }
+    return formCache.get(gg);
+  };
+  // to felt hoerer sammen bare naar de faktisk henger sammen (innenfor fin), ikke over en stripe i lakken
+  const feltInntil = (a: Bane[], b: Bane[]) => {
+    if (!erFelt(a) && !erFelt(b)) return true;
+    const fa = formAv(a), fb = formAv(b);
+    if (!fa?.length || !fb?.length) return true;
+    try { return (pc.intersection(utvidKlipp(fa, fin), fb) as any[]).length > 0; } catch { return true; }
+  };
+  const storFelt = (a: Bane[], b: Bane[]) => {
+    const fa = hexer(a);
+    if (fa.size !== 1 || ![...hexer(b)].some((h) => !fa.has(h))) return false;
+    const r = ramme(a), rb = ramme(b);
+    return a.some((q) => q.fyll && ekteMm(Math.min(q.boks.x1 - q.boks.x0, q.boks.y1 - q.boks.y0)) > STOR_FLATE_MM) &&
+      ar(rb) < 0.25 * ar(r);
+  };
   const ramme = (bs: Bane[]) => ({
     x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
     x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
@@ -1269,6 +1322,16 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
       if (ok && !ok([...g[i], ...g[j]])) continue;
       if (par && !par(g[i], g[j])) continue;
       if (ulikTekst(info[i], info[j], ri, rj)) { continue; }
+      /**
+       * Et stort felt (tykkere enn STOR_FLATE_MM) tar ikke med seg bokstaver
+       * i en annen farge som staar oppaa det (Saethre ID.Buzz 17.11.2026:
+       * «KVALITET I OVER 100 ÅR» i graatt over det oransje feltet). Bokstav
+       * for bokstav saa ingen av dem ut som tekst, og hele feltet og teksten
+       * ble ett element paa 6,5 m. Feltet skjaeres for seg, teksten for seg
+       * og legges oppaa, som i produksjonen.
+       */
+      if (storFelt(g[i], g[j]) || storFelt(g[j], g[i])) continue;
+      if (!feltInntil(g[i], g[j])) continue;
       /**
        * Paa samme linje foerst (Oesterboe, Vito 304160: smoerbroedlista med
        * ikon foran hver linje). Med naermeste par foerst ble ikonene slaatt
