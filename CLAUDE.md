@@ -833,6 +833,11 @@ og Vito 304160):**
   blir det 45° (Eirik 17.11.2026, med tegning).
 - `skyvSammen` dreier bare et element med én plassering (dreies formen,
   dreies alle kopiene), og setter et felt tilbake hvis det havner oppaa noe.
+- Et element bredere enn rullen dreies til smaleste ramme i alle vinkler
+  (ikke bare `STOR_GRAD`), og faar det fortsatt ikke plass, deles det paa
+  langs i like brede stykker med `SKJOT_MM` overlapp (Saethre ID.Buzz
+  17.11.2026: feltet bak ga en ramme paa 2 033 mm, og hele jobben stoppet
+  med feil).
 - Rydd Bergen (gul Fiat): tonet graa (CMY nesten like) er bilens graa, og
   Fiat-lyktene og CCVision-sorte deler staar i `BILFARGER`.
 

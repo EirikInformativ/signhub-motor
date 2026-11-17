@@ -1796,11 +1796,19 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     const biterAv = new Map<Elem, Elem[]>();
     const erTekst = new Set<Elem>();
     const bilskjot = new Set<Elem>();
+    const forBreie = new Set<Elem>();
     for (const e of g) {
       const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.min(e.breddeMm, e.hoydeMm);
       const f = e.deler.length === 1 ? e.deler[0].flate : [];
-      if (!(f.length && lang > maksLengde && lang >= STRIPE_FORHOLD * kort)) continue;
-      const langsX = e.breddeMm >= e.hoydeMm;
+      /**
+       * Et felt som ikke faar plass paa tvers av rullen selv paa sin
+       * korteste led, deles paa tvers i like brede stykker med SKJOT_MM
+       * overlapp (Saethre ID.Buzz 17.11.2026: feltet bak er 1 178 mm paa det
+       * smaleste). Uten dette stoppet hele jobben med en feil.
+       */
+      const forBred = !!f.length && kort > maksLengde;
+      if (!(f.length && lang > maksLengde && (lang >= STRIPE_FORHOLD * kort || forBred))) continue;
+      const langsX = forBred ? e.breddeMm < e.hoydeMm : e.breddeMm >= e.hoydeMm;
       const [b0, b1] = langsX ? [e.bbox[0], e.bbox[2]] : [e.bbox[1], e.bbox[3]];
       const mmTil = (mm: number) => (mm * MM) / e.skala;
       const lengdeMm = (a: number, z: number) => ((z - a) * e.skala) / MM;
@@ -1848,9 +1856,9 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
           bilskjot.add(e);
         }
       }
-      if (!stykker && f.length === 1 && f[0].length === 1) {
-        // en stripe: like lange stykker med SKJOT_MM overlapp
-        const n = Math.ceil(lang / maksLengde);
+      if (!stykker && (forBred || (f.length === 1 && f[0].length === 1))) {
+        // en stripe: like lange stykker med SKJOT_MM overlapp (for bredt felt: paa tvers)
+        const n = Math.ceil((forBred ? kort : lang) / maksLengde);
         const steg = (b1 - b0) / n, ov = mmTil(SKJOT_MM / 2);
         stykker = [];
         for (let i = 0; i < n; i++) stykker.push([Math.max(b0, b0 + i * steg - ov), Math.min(b1, b0 + (i + 1) * steg + ov)]);
@@ -1889,6 +1897,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
         }
       }
       if (!stykker || stykker.length < 2) continue;
+      if (forBred) forBreie.add(e);
       const n = stykker.length;
       const biter: Elem[] = [];
       for (let i = 0; i < n; i++) {
@@ -1922,7 +1931,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     const hel = new Set<Elem>();
     const sett = () => g.flatMap((e) => biterAv.has(e) && !hel.has(e) ? biterAv.get(e)! : [e]);
     for (const e of biterAv.keys()) {
-      if (bilskjot.has(e)) continue;   // skjoetes alltid i bilens skjoet (Eirik 16.11.2026)
+      if (bilskjot.has(e) || forBreie.has(e)) continue;   // skjoetes alltid i bilens skjoet (Eirik 16.11.2026); for bredt felt faar ikke plass helt
       const delt = lengde(sett());
       hel.add(e);
       const helL = lengde(sett());
@@ -1935,6 +1944,8 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
         : erTekst.has(e)
           ? `${e.navn}: ${lang.toFixed(0)} mm lang tekst er skjoetet i ${biter.length} stykker i mellomrommet mellom bokstavene. ` +
             `Hvert stykke tar med ${TEKST_PASS_MM} mm av neste bokstav som passmerke: legg neste stykke slik at bokstaven dekker stubben.`
+          : forBreie.has(e)
+            ? `${e.navn}: ${Math.min(e.breddeMm, e.hoydeMm).toFixed(0)} mm bredt felt faar ikke plass paa tvers av rullen og er delt paa langs i ${biter.length} stykker med ${SKJOT_MM} mm overlapp.`
           : bilskjot.has(e)
             ? `${e.navn}: ${lang.toFixed(0)} mm lang stripe er skjoetet i ${biter.length} stykker i bilens egen skjoet. ` +
               `Hvert stykke gaar ${SKJOT_BIL_MM} mm inn paa den andre siden av skjoeten.`

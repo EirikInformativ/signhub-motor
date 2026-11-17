@@ -488,6 +488,28 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       // stor helning bare naar elementet ellers ikke faar plass, eller rammen blir mye mindre
       if (stor.vinkel && (minside(rett.baner) > MAKS_DEL_MM ? minside(stor.baner) < minside(rett.baner)
         : areal(stor.baner) < STOR_GEVINST * areal(rett.baner))) rett = stor;
+      /**
+       * Faar elementet fortsatt ikke plass paa tvers av rullen, proeves
+       * enhver helning (Saethre ID.Buzz 17.11.2026: feltet bak staar paa
+       * skraa, ca. 45°, og ga en ramme paa 2 033 mm; langs sin egen kant
+       * er det ca. 600 mm). Ellers stoppet hele jobben med en feil.
+       */
+      if (minside(rett.baner) > MAKS_DEL_MM) {
+        // vinkelen som gir smalest ramme (grunnlinjen finnes ikke alltid)
+        const pk: [number, number][] = [];
+        for (const b of raa) for (const sg of b.segs as any[]) { if (sg.p) pk.push(sg.p); if (sg.c) pk.push(sg.a, sg.b, sg.c); }
+        let bestG = 0, bestB = Infinity;
+        for (let g = -89; g <= 90; g += 0.5) {
+          const r = (g * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
+          let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+          for (const [x, y] of pk) { const X = c * x - sn * y, Y = sn * x + c * y;
+            if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; }
+          const m = Math.min(x1 - x0, y1 - y0);
+          if (m < bestB - 1e-9) { bestB = m; bestG = g; }
+        }
+        const alle = rettOpp(raa, 89, bestG);
+        if (alle.vinkel && minside(alle.baner) < minside(rett.baner)) rett = alle;
+      }
     }
     const valgte = rett.baner;
     if (rett.vinkel) logg.push(`${o.vis} ${o.navn}: rettet opp ${Math.abs(rett.vinkel).toFixed(1).replace(".", ",")}° i ` +
@@ -907,7 +929,7 @@ const RETT_MAKS_GRAD = 6;
  * RETT_MIN_GRAD og rammen krymper minst RETT_MIN_GEVINST; en logo som
  * staar rett, eller nesten rett, roeres ikke.
  */
-function rettOpp(baner: Bane[], maksGrad = RETT_MAKS_GRAD): { baner: Bane[]; vinkel: number; spartProsent: number; funnet?: boolean; linje?: number; styrke?: number } {
+function rettOpp(baner: Bane[], maksGrad = RETT_MAKS_GRAD, fastGrad?: number): { baner: Bane[]; vinkel: number; spartProsent: number; funnet?: boolean; linje?: number; styrke?: number } {
   const pts: [number, number][] = [];
   for (const b of baner) for (const s of b.segs as any[]) { if (s.p) pts.push(s.p); if (s.a) pts.push(s.a, s.b, s.c); }
   if (pts.length < 3) return { baner, vinkel: 0, spartProsent: 0 };
@@ -981,7 +1003,7 @@ function rettOpp(baner: Bane[], maksGrad = RETT_MAKS_GRAD): { baner: Bane[]; vin
   let sv = 0, sw = 0;
   for (let d = -2; d <= 2; d++) { sv += vinkelSum.get(mode + d) ?? 0; sw += stemmer.get(mode + d) ?? 0; }
   // grunnlinjen maa vaere en reell del av bredden for aa telle
-  const best = sw > 0 && modeV >= 0.05 * bredde ? -sv / sw : 0;
+  const best = fastGrad ?? (sw > 0 && modeV >= 0.05 * bredde ? -sv / sw : 0);
   const bestA = flate(best);
   const gevinst = 1 - bestA / Math.max(null0, 1e-9);
   // grunnlinjen avgjoer; gevinsten i ramme meldes bare
