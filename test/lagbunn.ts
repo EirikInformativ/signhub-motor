@@ -12,8 +12,8 @@
  *  - XL-boksen: svart er primaer (oeverst), gull ligger i bunn som ett
  *    stykke uten hull, ogsaa paa panser og bakluke der PROFF staar ved siden
  *    av. Tegnefeilen (glippe 0,01 mm) fylles og meldes.
- *  - «XL-BYGG Osteroy» paa bakluken og paa den ene siden er levende tekst
- *    og meldes ved elementet sitt.
+ *  - «XL-BYGG Osteroy» paa bakluken og paa den ene siden er levende tekst.
+ *    Den gjoeres om til kurver (fonten er innebygd) og meldes ikke lenger.
  *  - passmerke fra XL-boksen 5 mm inn under P i PROFF paa begge sider.
  *  - XL PROFF paa panseret i frontvisningen meldes som samme merke som
  *    det i toppvisningen.
@@ -82,9 +82,18 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
   sjekk(sortAlene.length === 2 && gullArk.lengdeMm < 1600,
     `PROFF paa eget sort ark, gullet ikke forlenget (gull ${gullArk.lengdeMm.toFixed(0)} mm, sorte ark ${sortAlene.length})`);
 
-  const tekst = lest.levendeTekst.filter((t) => t.element && /Osterøy/.test(t.tekst));
-  sjekk(tekst.length === 2, `levende tekst «XL-BYGG Osterøy» meldt ved 2 elementer (fikk ${tekst.length})`);
-  sjekk(lest.merknader.some((m) => /IKKE med i skjaerefilene/.test(m)), "levende tekst gir tydelig merknad");
+  /**
+   * «XL-BYGG Osteroy» er levende tekst paa bakluken og paa side ovre. Fra
+   * 17.11.2026 gjoeres den om til kurver fra fonten som er innebygd i
+   * skissen (tekstkurver.ts), saa den kommer med i stedet for aa meldes.
+   * Foer ble den meldt ved to elementer med «IKKE med i skjaerefilene».
+   * At teksten fortsatt meldes naar fonten ikke kan leses, vokter
+   * test/tekstkurver.ts.
+   */
+  const tekst = lest.levendeTekst.filter((t) => /Osterøy/.test(t.tekst));
+  sjekk(tekst.length === 0, `«XL-BYGG Osterøy» er ikke lenger levende tekst (fikk ${tekst.length})`);
+  sjekk(!lest.merknader.some((m) => /IKKE med i skjaerefilene/.test(m)), "ingen merknad om tekst som mangler");
+  sjekk(lest.logg.some((l) => /gjort om til kurver.*XL-BYGG Osterøy/.test(l)), "logg sier at teksten er gjort om til kurver");
 
   // passmerke: XL-boksen og PROFF er delt for aa spare folie. Strimmelen
   // henger med XL-boksen og gaar inn under P, paa begge sider av bilen.
@@ -98,7 +107,10 @@ const SORT = { kode: "751-070", hex: "#000000", breddeMm: 1260 };
   const dobbel = (lest as any).utelatt.filter((e: any) => e.sammeSom);
   sjekk(dobbel.length === 1 && dobbel[0].breddeMm === 978 && dobbel[0].hoydeMm === 55,
     `panseret i frontvisningen er samme merke og tatt ut av jobben (${dobbel.map((e: any) => e.navn + " = " + e.sammeSom).join(", ")})`);
-  sjekk(lest.elementer.length === 10, "bare det sammentrykte panseret er tatt ut (Eirik 17.11.2026)");
+  // 9, ikke 10: med teksten som kurver er side ovre dekor 3 det samme
+  // elementet som side nedre dekor 3 (der designeren konverterte teksten),
+  // og de to telles som ett element i to eksemplarer (17.11.2026)
+  sjekk(lest.elementer.length === 9, `bare det sammentrykte panseret er tatt ut (Eirik 17.11.2026) (${lest.elementer.length} elementer)`);
 
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: ytterkanten i bunn, tekst og doble merker meldes");

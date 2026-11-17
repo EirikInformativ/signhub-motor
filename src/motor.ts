@@ -466,9 +466,26 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
     return rammeA > 0 && andre < LITEN_FARGE * rammeA;
   };
   if (!forMange && !elementer.some(smaaAndre)) return elementer;
+  /**
+   * Har folien allerede et eget oppsett i jobben (et annet element bruker
+   * den), legges bitene der som vanlige elementer i stedet for paa et eget
+   * ark (Eirik 17.11.2026, XL-BYGG: «hvorfor legges disse 2 pinsene inn i
+   * egen fil?»). Gull-pinsen paa siden hoerer hjemme paa gulloppsettet, der
+   * pinsen bak allerede ligger.
+   */
+  // et oppsett i folien finnes naar et annet element har den som sin stoerste
+  // farge (eller eneste), ikke bare som en liten farge som selv skal teipes
+  // inn (Proace: alle de roede trekantene er smaa, saa roedt faar eget ark)
+  const fargenFinnes = (kode: string, utenom: Elem) => elementer.some((e) => {
+    if (e === utenom) return false;
+    const st = e.deler.slice().sort((a, b) => areal(b.flate) - areal(a.flate))[0];
+    return !!st && st.folie.kode === kode;
+  });
   const ut: Elem[] = [];
   const tatt: string[] = [];
+  const biter = new Map<Elem, [number, number]>();
   for (const e of elementer) {
+    const fra = ut.length;
     if (e.deler.length < 2 || e.trykk?.length || e.thruForm || e.deler.some((d) => d.folie.prisM2 || d.folie.print)) { ut.push(e); continue; }
     if (!forMange && !smaaAndre(e)) { ut.push(e); continue; }
     try {
@@ -578,13 +595,34 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
               ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}${e.antall > 1 ? ` (${n + 1}/${e.antall})` : ""}`,
                 lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2, antall: 1,
                 deler: [{ ...x.d, flate: f.map((poly) => poly.map((r) => r.map((q) => [q[0], q[1]] as [number, number]))) }],
-                omriss: f, egetArk: true });
+                omriss: f, ...(fargenFinnes(x.d.folie.kode, e) ? {} : { egetArk: true }) });
             }
           });
         }
       }
       tatt.push(e.navn);
+      biter.set(e, [fra, ut.length]);
     } catch { ut.push(e); }
+  }
+  /**
+   * Kjoeres det uansett et oppsett i register i de samme foliene, legges
+   * alt i de foliene inn i det (Eirik 17.11.2026, XL-BYGG: «naar man foerst
+   * skal kjoere 1 ramme er det veldig greit aa faa alt som skal produseres i
+   * de samme 2 fargene inn i det, istedenfor aa kjoere litt med ramme og
+   * litt med dobbeltsidig tape»). Det gir ingen nye filer, bare faerre biter
+   * aa teipe. Rosen: ingen logo i roedt og blaatt staar i register, saa der
+   * teipes det fortsatt.
+   */
+  const fnk = (e: Elem) => [...new Set(e.deler.map((d) => d.folie.kode))].sort().join("|");
+  const iRegister = new Set(ut.filter((e) => elementer.includes(e) && e.deler.length > 1).map(fnk));
+  const tilbake = [...biter.keys()].filter((e) => iRegister.has(fnk(e)));
+  if (tilbake.length) {
+    const fjern = new Set<number>();
+    for (const e of tilbake) { const [a, z] = biter.get(e)!; for (let i = a; i < z; i++) fjern.add(i); }
+    const rest = ut.filter((_, i) => !fjern.has(i));
+    ut.length = 0; ut.push(...rest, ...tilbake);
+    for (const e of tilbake) tatt.splice(tatt.indexOf(e.navn), 1);
+    advarsler.push(`I register sammen med logoene som uansett kjoeres i de samme foliene, i stedet for aa teipes inn: ${tilbake.map((e) => e.navn).join(", ")}.`);
   }
   if (tatt.length) advarsler.push((forMange ? `Faerre filer: ${foer} filer for ${m2.toFixed(1).replace(".", ",")} m² folie er for mange, ` :
     "Smaa farger skjaeres tett i stedet for i register, saa folien ikke maa vaere like stor som hele oppsettet: ") +

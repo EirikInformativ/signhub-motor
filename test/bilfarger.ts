@@ -25,7 +25,10 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   const sjekk = (ok: boolean, tekst: string) => { console.log(`${ok ? "ok  " : "FEIL"} ${tekst}`); if (!ok) feil++; };
 
   const e = await lesBilskisse(new Uint8Array(fs.readFileSync("eexpert.pdf")), { jobb: "e-expert", bilder, lerret });
-  sjekk(e.elementer.length === 10, `e-expert: 10 elementer (panseret forfra er utelatt) (fikk ${e.elementer.length})`);
+  // 9, ikke 10 (17.11.2026): levende tekst gjoeres om til kurver, og
+  // pinnen med «XL-BYGG Osteroy» paa side ovre er da samme element som den
+  // paa side nedre, ett element i to eksemplarer
+  sjekk(e.elementer.length === 9, `e-expert: 9 elementer (panseret forfra er utelatt) (fikk ${e.elementer.length})`);
   const stor = e.elementer.filter((x) => Math.max(x.breddeMm, x.hoydeMm) > 1300);
   sjekk(!stor.length, `e-expert: ingen element over 1300 mm (tak, rails) ${stor.map((x) => x.navn).join(", ")}`);
   const graa = e.elementer.filter((x) => x.farger.some((f) => ["#404040", "#8C8C8C", "#D9D9D9"].includes(f.hex)));
@@ -46,8 +49,25 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
     sjekk(rb.elementer.every((e: any) => e.farger.every((f: any) => /^#(FF0000|000000)$/.test(f.hex))),
       `Rydd Bergen: bare roedt og sort i dekoren (${[...new Set(rb.elementer.flatMap((e: any) => e.farger.map((f: any) => f.hex)))].join(", ")})`);
     sjekk(!rb.elementer.some((e: any) => Math.abs(e.breddeMm - 717) < 20 && Math.abs(e.hoydeMm - 717) < 20), "Rydd Bergen: hjulene er ikke dekor");
-    sjekk(rb.elementer.length <= 9, `Rydd Bergen: bare logoene og bilfiguren (${rb.elementer.length} elementer)`);
-    sjekk(rb.merknader.some((m: string) => /levende tekst/.test(m)), "Rydd Bergen: tekst som ikke er konvertert meldes");
+    /**
+     * Teksten paa Rydd Bergen («RYDDING OG BOSSKJOERING», punktlista,
+     * telefon og nettadresse) er levende tekst. Foer 17.11.2026 ble den
+     * meldt og ikke tatt med, og bare logoene og bilfiguren var elementer
+     * (8). Naa gjoeres den om til kurver og kommer med som sort tekst. Den
+     * sperrede overskriften deles i enkeltbokstaver av samleDeler (glippen
+     * er over DEL_GLIPPE_MM), saa antallet elementer er ikke lenger en god
+     * vakt. Vakten er at det kulørte (logoene og bilfiguren) fortsatt er
+     * hoeyst 9, og at alt det sorte uten roedt er tekst, ikke bildeler.
+     */
+    const roede = rb.elementer.filter((e: any) => e.farger.some((f: any) => f.hex === "#FF0000"));
+    sjekk(roede.length <= 9, `Rydd Bergen: bare logoene og bilfiguren i roedt (${roede.length} elementer)`);
+    const sorte = rb.elementer.filter((e: any) => e.farger.every((f: any) => f.hex === "#000000"));
+    sjekk(sorte.every((e: any) => Math.min(e.breddeMm, e.hoydeMm) <= 400),
+      `Rydd Bergen: sorte elementer er tekst (${sorte.map((e: any) => `${e.breddeMm}x${e.hoydeMm}`).join(", ")})`);
+    sjekk(!rb.merknader.some((m: string) => /levende tekst/.test(m)), "Rydd Bergen: ingen levende tekst igjen (fonten er innebygd)");
+    sjekk(rb.logg.some((l: string) => /^25 tekstlinjer .*gjort om til kurver/.test(l)), "Rydd Bergen: 25 tekstlinjer gjort om til kurver");
+    sjekk(!rb.utelatt.some((e: any) => /^side/.test(e.navn)),
+      `Rydd Bergen: ingen bokstav tatt ut som «samme merke» mellom to sidevisninger (${rb.utelatt.map((e: any) => e.navn).join(", ")})`);
   }
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: bilen er bilen, logoen er logoen");
