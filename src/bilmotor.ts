@@ -108,6 +108,15 @@ export interface BilElement {
    * 961-bunn 010). Appen bruker dette i folieforslaget.
    */
   paaGlass?: boolean;
+  /**
+   * satt naar skissen bare viser én side og elementet er lagt til for den
+   * andre siden (Eirik 17.11.2026, E-Partner 306005). Tekst og logo skal
+   * staa riktig vei og telles i `antall`. Striper og dekor speilvendes og
+   * blir et eget element med `speilet: true` (kilden i `kilde`). Er motoren
+   * usikker, er `usikker` satt: appen boer markere elementet (gul ramme) og
+   * la brukeren snu valget.
+   */
+  ensidig?: { speilet: boolean; usikker: boolean; kilde?: string; grunn: string };
 }
 
 export interface BilSkisseLest {
@@ -266,7 +275,10 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
     // lesLett ser bare det som synes innenfor klippet; sammenlign med det samme
     const likBoks = (b: Bane) => { const sb = synligBoks(b); return o.liste.some((x) => Math.abs(x.x0 - sb.x0) < T &&
       Math.abs(x.y0 - sb.y0) < T && Math.abs(x.x1 - sb.x1) < T && Math.abs(x.y1 - sb.y1) < T); };
-    const valgte = baner.filter((b) => !b.gradient && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && !erBil(b) && likBoks(b))
+    // en graa flate finnDekor selv har valgt (graa rute bak en kuloer, LTS Maskin) er dekor
+    const valgtGraa = (b: Bane) => o.liste.some((x) => !!x.farge && x.farge.length === 4 &&
+      Math.max(x.farge[0], x.farge[1], x.farge[2]) < 0.01 && x.farge[3] > 0.01 && x.farge[3] < 0.99) && likBoks(b);
+    const valgte = baner.filter((b) => !b.gradient && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && (!erBil(b) || valgtGraa(b)) && likBoks(b))
       .map((b) => kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM));
     if (valgte.length) valgtPerOmraade.push({ o, valgte });
   }
@@ -344,8 +356,12 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
         const utenfor = egne.filter(ute);
         if (!utenfor.length || !egne.some(inni) || utenfor.length === egne.length) continue;
         if (d.some((b) => hex(b) === c && !inni(b) && !ute(b))) continue;   // noe ligger over kanten: én logo
-        utskiltTekst.add(utenfor);
-        return [d.filter((b) => !utenfor.includes(b)), utenfor];
+        // tekst over og tekst under logoen er to tekster (kontaktinfo over, slagord under)
+        const side = (b: Bane) => b.boks.y0 > K.y1 ? "over" : b.boks.y1 < K.y0 ? "under" : b.boks.x1 < K.x0 ? "venstre" : "hoyre";
+        const grupper = new Map<string, Bane[]>();
+        for (const b of utenfor) { const k = side(b); if (!grupper.has(k)) grupper.set(k, []); grupper.get(k)!.push(b); }
+        for (const g of grupper.values()) utskiltTekst.add(g);
+        return [d.filter((b) => !utenfor.includes(b)), ...grupper.values()];
       }
       return [d];
     });
@@ -537,7 +553,9 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
       "Ta det ut av jobben hvis det stemmer, ellers skjaeres det to ganger.");
   }
 
+  await leggTekstPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
   await leggPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
+  await dupliserSide(funn.visninger.map((x) => x.navn), elementer, brukteBaner, merknader, logg);
 
   const forside = tegnBilSkisse(baner, {
     jobb: v.jobb, malestokk,
@@ -554,6 +572,76 @@ export async function lesBilskisse(kilde: Uint8Array, v: BilValg): Promise<BilSk
   };
 }
 
+
+/** Saa mange flater eller flere er tekst (bokstaver), ikke en stripe. */
+const TEKST_FLATER = 4;
+/** Saa mye lengre enn bred er en stripe. */
+const STRIPE_FORHOLD_BIL = 8;
+
+/**
+ * Bare én side tegnet (Eirik 17.11.2026, E-Partner 306005: «designeren av
+ * skissen har vaert lat og kun tegnet en side. men det skal motoren likevel
+ * loese»). Elementene paa siden legges til for den andre siden. Tekst og
+ * logo speilvendes aldri, de telles i `antall`. Striper og dekor i ordets
+ * rette forstand speilvendes og blir egne elementer. Front og bak
+ * dupliseres aldri. Motorens beste gjetning staar; usikre valg merkes paa
+ * elementet og meldes, saa brukeren kan snu dem i appen.
+ *
+ *   flerfarget, eller minst TEKST_FLATER flater  -> tekst/logo, ikke speilet
+ *   én farge, én eller to flater, stripe (8:1)   -> stripe, speilet
+ *   ellers                                        -> én farge speiles, usikker
+ */
+async function dupliserSide(visninger: string[], elementer: BilElement[],
+                            baner: Map<BilElement, Bane[]>, merknader: string[], logg: string[]) {
+  const sider = visninger.filter((v) => v.startsWith("side"));
+  if (sider.length !== 1) return;
+  const side = sider[0];
+  const nye: BilElement[] = [];
+  const usikre: string[] = [];
+  let riktig = 0, speilet = 0;
+  for (const e of elementer.slice()) {
+    if (e.vis !== side || e.sammeSom) continue;
+    const bs = baner.get(e) ?? [];
+    let flater = 0;
+    for (const b of bs) flater += b.segs.filter((x: any) => x.t === "m").length;
+    const lang = Math.max(e.breddeMm, e.hoydeMm), kort = Math.max(1, Math.min(e.breddeMm, e.hoydeMm));
+    let speil: boolean, usikker = false, grunn: string;
+    if (e.farger.length >= 2) { speil = false; grunn = "logo (flere farger)"; }
+    else if (flater >= TEKST_FLATER) { speil = false; grunn = `tekst (${flater} flater)`; }
+    else if (lang / kort >= STRIPE_FORHOLD_BIL) { speil = true; grunn = "stripe"; }
+    else { speil = true; usikker = true; grunn = `${flater} flate${flater === 1 ? "" : "r"} i én farge, kan vaere et merke`; }
+    if (!speil) {
+      e.antall++;
+      e.ensidig = { speilet: false, usikker, grunn };
+      riktig++;
+    } else {
+      const xs = bs.flatMap((b) => [b.boks.x0, b.boks.x1]);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const sp = (q: [number, number]): [number, number] => [2 * cx - q[0], q[1]];
+      const kopi: Bane[] = bs.map((b) => ({
+        ...b, klipp: undefined,
+        segs: b.segs.map((x: any) => x.t === "c" ? { t: "c", a: sp(x.a), b: sp(x.b), c: sp(x.c) }
+          : x.p ? { t: x.t, p: sp(x.p) } : { ...x }) as any,
+        boks: { x0: 2 * cx - b.boks.x1, y0: b.boks.y0, x1: 2 * cx - b.boks.x0, y1: b.boks.y1 },
+      }));
+      const ny: BilElement = {
+        ...e, id: e.id + "-speilet", navn: e.navn + " (andre siden, speilet)",
+        pdf: await skrivPdf(kopi), antall: e.antall, passmerke: undefined,
+        ensidig: { speilet: true, usikker, kilde: e.navn, grunn },
+      };
+      e.ensidig = { speilet: false, usikker, grunn: "kilde for speilet kopi" };
+      baner.set(ny, kopi);
+      nye.push(ny);
+      speilet++;
+    }
+    if (usikker) usikre.push(`${e.navn} (${grunn}, motoren har ${speil ? "speilvendt" : "ikke speilvendt"})`);
+  }
+  if (!riktig && !speilet) return;
+  elementer.push(...nye);
+  logg.push(`Skissen viser bare én side. Elementene paa siden er lagt til for den andre siden: ` +
+    `${riktig} tekst eller logo uten speilvending (antall oeket), ${speilet} speilvendt.`);
+  if (usikre.length) merknader.push(`Usikker paa speilvending, kontroller: ${usikre.join("; ")}.`);
+}
 
 /** En bane delt i delbaner, en per «m», med egen ramme. */
 function delbaner(b: Bane): { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] {
@@ -773,6 +861,8 @@ const TEKST_VINKEL = 5;
 /** Faerre flater enn dette: retningen er for usikker til aa skille deler paa. */
 const KORT_ORD_FLATER = 4;
 const KORT_ORD_VINKEL = 12;
+/** Saa mye av foerste og siste hoeye tegn ligger med i logoen som passmerke. */
+const TEKST_STUBB_MM = 10;
 /** tekst med bokstaver mer enn dette ganger hoeyere, er ikke samme tekst */
 const TEKST_HOYDE = 1.8;
 /** linjer i samme tekst kan staa opptil dette ganger bokstavhoeyden fra hverandre */
@@ -958,6 +1048,89 @@ const PASS_OVERLAPP_MM = 5;
  * hoeyeste elementet, som monteres foerst. Elementer som telles i flere
  * eksemplarer faar ikke passmerke, siden naboen bare staar ved ett av dem.
  */
+/**
+ * Passmerke for tekst som er skilt ut fra en printet logo (Eirik 17.11.2026,
+ * LTS Maskin: «den beine streken gir ikke god nok referanse til den hvite
+ * teksten. dette er ikke idiotsikkert»). Logoen faar med TEKST_STUBB_MM av
+ * foerste og siste hoeye tegn i teksten (D og ! i «Din innovative ...!»),
+ * fra kanten som vender mot logoen. Montoeren legger teksten saa de to
+ * tegnene dekker stubbene. Hoeye tegn er de som er minst 90 prosent av det
+ * hoeyeste; i en tekst med smaa bokstaver blir det de med stamme (d, l, i).
+ */
+async function leggTekstPassmerker(elementer: BilElement[], baner: Map<BilElement, Bane[]>,
+                                   malestokk: number, logg: string[], utskilt: Set<string>) {
+  const boks = (bs: Bane[]) => ({
+    x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
+    x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
+  const stubb = (TEKST_STUBB_MM / malestokk) * MM;
+  const nyeBaner = new Map<BilElement, Bane[]>();
+  for (const t of elementer) {
+    if (![...utskilt].some((n) => t.navn.includes(n)) || t.farger.length !== 1) continue;
+    const bt = baner.get(t);
+    if (!bt?.length) continue;
+    const rt = boks(bt);
+    // logoen i samme visning, flerfarget og naermest
+    let logo: BilElement | null = null, best = Infinity;
+    for (const l of elementer) {
+      if (l === t || l.vis !== t.vis || l.farger.length < 2) continue;
+      const bl = baner.get(l); if (!bl?.length) continue;
+      const rl = boks(bl);
+      const dx = Math.max(0, rl.x0 - rt.x1, rt.x0 - rl.x1), dy = Math.max(0, rl.y0 - rt.y1, rt.y0 - rl.y1);
+      const d = Math.hypot(dx, dy);
+      if (d < best) { best = d; logo = l; }
+    }
+    if (!logo) continue;
+    const hex = t.farger[0].hex;
+    if (!logo.farger.some((f) => f.hex === hex)) continue;   // da ville logoen faatt en ny farge
+    const rl = boks(baner.get(logo)!);
+    // retning: teksten under/over logoen (vannrett tekst) eller ved siden av (loddrett, toppvisning)
+    const under = rt.y1 <= rl.y0 + 1e-6, over = rt.y0 >= rl.y1 - 1e-6;
+    const vannrett = under || over;
+    const komp: { f: any; b: { x0: number; y0: number; x1: number; y1: number } }[] = [];
+    for (const b of bt) {
+      const f = flateAvSegs(b.segs as any[]);
+      if (!f) continue;
+      for (const poly of f) {
+        const pk = poly[0] as [number, number][];
+        komp.push({ f: [poly], b: { x0: Math.min(...pk.map((q) => q[0])), y0: Math.min(...pk.map((q) => q[1])),
+          x1: Math.max(...pk.map((q) => q[0])), y1: Math.max(...pk.map((q) => q[1])) } });
+      }
+    }
+    if (komp.length < 2) continue;
+    const hoyde = (k: typeof komp[number]) => vannrett ? k.b.y1 - k.b.y0 : k.b.x1 - k.b.x0;
+    const maks = Math.max(...komp.map(hoyde));
+    const hoye = komp.filter((k) => hoyde(k) >= 0.9 * maks).sort((a, b) => vannrett ? a.b.x0 - b.b.x0 : b.b.y1 - a.b.y1);
+    const valgt = hoye.length > 1 ? [hoye[0], hoye[hoye.length - 1]] : hoye;
+    const stubber: Bane[] = [];
+    for (const k of valgt) {
+      // band ved kanten som vender mot logoen
+      let r: number[];
+      if (vannrett) r = under ? [k.b.x0 - 1, k.b.y1 - stubb, k.b.x1 + 1, k.b.y1 + 1] : [k.b.x0 - 1, k.b.y0 - 1, k.b.x1 + 1, k.b.y0 + stubb];
+      else r = rt.x1 <= rl.x0 + 1e-6 ? [k.b.x1 - stubb, k.b.y0 - 1, k.b.x1 + 1, k.b.y1 + 1] : [k.b.x0 - 1, k.b.y0 - 1, k.b.x0 + stubb, k.b.y1 + 1];
+      let del: any;
+      try { del = pc.intersection(k.f, [[[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]], [r[0], r[1]]]]); } catch { continue; }
+      if (!del?.length) continue;
+      const segs: any[] = [];
+      for (const poly of del) for (const ring of poly) {
+        segs.push({ t: "m", p: ring[0] });
+        for (let i = 1; i < ring.length - 1; i++) segs.push({ t: "l", p: ring[i] });
+        segs.push({ t: "h" });
+      }
+      const pts = segs.filter((x) => x.p).map((x) => x.p as number[]);
+      const kilde = bt.find((x) => x.fyll) ?? bt[0];
+      stubber.push({ segs, farge: kilde.farge.slice(), strekFarge: kilde.farge.slice(), fyll: true, strek: false, bredde: 0,
+        boks: { x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
+          x1: Math.max(...pts.map((p) => p[0])), y1: Math.max(...pts.map((p) => p[1])) } } as Bane);
+    }
+    if (!stubber.length) continue;
+    nyeBaner.set(logo, [...(nyeBaner.get(logo) ?? baner.get(logo)!), ...stubber]);
+    logo.passmerke = { mot: t.navn, hex, lengdeMm: TEKST_STUBB_MM };
+    logg.push(`${logo.navn}: passmerke for ${t.navn}: ${TEKST_STUBB_MM} mm av foerste og siste hoeye tegn i teksten ` +
+      "ligger med i logoen. Montoeren legger teksten saa tegnene dekker stubbene.");
+  }
+  for (const [l, bs] of nyeBaner) { baner.set(l, bs); l.pdf = await skrivPdf(bs); }
+}
+
 async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Bane[]>,
                               malestokk: number, merknader: string[], utskilt: Set<string> = new Set()) {
   const boks = (bs: Bane[]) => ({
@@ -973,7 +1146,8 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
     const ra = boks(ba), rb = boks(bb);
     // utskilt tekst faar passmerke bare mot logoen den ble skilt fra (flerfarget)
     const erUtskilt = (e: BilElement) => [...utskilt].some((n) => e.navn.includes(n));
-    if ((erUtskilt(a) && b.farger.length < 2) || (erUtskilt(b) && a.farger.length < 2)) continue;
+    // utskilt tekst faar bokstav-passmerke i leggTekstPassmerker, ikke strimmel
+    if (erUtskilt(a) || erUtskilt(b)) continue;
     /**
      * Side om side (XL-boksen og PROFF): loddrett strimmel ved naboens kant,
      * i naboens hoeyde. Over og under hverandre (Eirik 16.11.2026, LTS

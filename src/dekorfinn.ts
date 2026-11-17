@@ -43,6 +43,8 @@ const svart = (b: Boks) => !!b.farge && b.farge.length === 4 && (
 /** over denne andelen bilgraatt er klyngen en del av bilen */
 const BILGRAA_ANDEL = 0.25;
 
+/** En graa flate bak en kuloer er dekor naar den er hoeyst saa mange ganger stoerre. */
+const GRAA_BAK_MAKS = 4;
 /** Hvit flate paa moerk bil stoerre enn dette er dekor uansett tegnerekkefoelge. */
 const STOR_LYS_MM = 300;
 /** Kuloeren som dekker mer enn denne andelen av det fylte, er bilens lakk. */
@@ -133,6 +135,25 @@ function profilDel(bokser: Boks[], vannrett: boolean, glippe: number): Boks[][] 
   })).filter((g) => g.length);
 }
 
+/** Andelen av flaten som har et speilbilde om midtlinjen paa langs. Over dette er visningen toppen. */
+const SYMMETRI_TOPP = 0.5;
+function symmetri(bokser: Boks[], v: { x0: number; y0: number; x1: number; y1: number }): number {
+  const inni = bokser.filter((b) => b.x0 >= v.x0 - 1 && b.x1 <= v.x1 + 1 && b.y0 >= v.y0 - 1 && b.y1 <= v.y1 + 1
+    && (b.x1 - b.x0) * (b.y1 - b.y0) > 0);
+  const my = (v.y0 + v.y1) / 2, tol = 0.01 * (v.y1 - v.y0);
+  let tot = 0, treff = 0;
+  for (const b of inni) {
+    const a = (b.x1 - b.x0) * (b.y1 - b.y0);
+    if (a > 0.25 * (v.x1 - v.x0) * (v.y1 - v.y0)) continue;   // omrisset selv sier ingenting
+    tot += a;
+    const s0 = 2 * my - b.y1, s1 = 2 * my - b.y0;
+    if (inni.some((c) => c !== b && Math.abs(c.x0 - b.x0) < tol && Math.abs(c.x1 - b.x1) < tol
+      && Math.abs(c.y0 - s0) < tol && Math.abs(c.y1 - s1) < tol)
+      || (Math.abs(b.y0 + b.y1 - 2 * my) < tol)) treff += a;
+  }
+  return tot ? treff / tot : 0;
+}
+
 export function finnVisninger(bokser: Boks[], malestokk: number,
                               dim: { L: number | null; B: number | null; H: number | null }): Visning[] {
   const grupper = profilDel(bokser, true, 2 * MM)
@@ -172,6 +193,25 @@ export function finnVisninger(bokser: Boks[], malestokk: number,
       v.navn = dim.B && dim.H
         ? (Math.abs(v.hoydeEkteMm / 1000 - dim.B) < Math.abs(v.hoydeEkteMm / 1000 - dim.H) ? "topp" : "side")
         : "langs";
+    }
+    /**
+     * Bare én side tegnet (E-Partner 306005): to visninger paa langs, en
+     * side og toppen. Paa en varebil er bredde og hoyde nesten like, saa
+     * begge kan bli «topp». CCVision legger toppen nederst paa arket.
+     */
+    if (langs.length === 2) {
+      /**
+       * Bredde og hoyde skiller ikke en varebil. Toppen er speilsymmetrisk om
+       * midtlinjen paa langs (venstre og hoyre side av bilen), siden er ikke
+       * det (tak over, hjul under). Vito 304160 har to sider og ingen topp;
+       * E-Partner 306005 har én side og toppen.
+       */
+      const sym = langs.map((v) => symmetri(bokser, v));
+      if (process.env.SIGNHUB_DEBUG) console.log("symmetri", sym.map((x) => x.toFixed(2)).join(" "));
+      if (sym.every((x) => x < SYMMETRI_TOPP)) { langs.forEach((v) => (v.navn = "side")); }
+      else if (sym[0] >= SYMMETRI_TOPP !== sym[1] >= SYMMETRI_TOPP) {
+        langs.forEach((v, i) => (v.navn = sym[i] >= SYMMETRI_TOPP ? "topp" : "side"));
+      }
     }
   }
   const sortert = ender.slice().sort((x, y) => x.x0 - y.x0);
@@ -263,7 +303,27 @@ export function finnDekor(lest0: LettLest, malestokk: number,
   /** ekte kuloer, ikke rik sort: CMY ulike */
   const ekte = (b: Boks) => !!b.farge &&
     Math.max(b.farge[0], b.farge[1], b.farge[2]) - Math.min(b.farge[0], b.farge[1], b.farge[2]) > 0.2;
-  const iDekorbolk = new Set<Boks>();
+  /**
+   * En graa flate rett bak en kuloert dekorflate er dekor, ikke bil (Eirik
+   * 17.11.2026, LTS Maskin paa E-Partner 306005: den graa ruten bak den
+   * roede haken). Kjennetegnet: den er tegnet rett foer kuloeren, kuloeren
+   * ligger inni den, og den er ikke mye stoerre enn kuloeren.
+   */
+  const graaBak = new Set<Boks>();
+  {
+    const bx = lest.bokser;
+    for (let i = 0; i < bx.length; i++) {
+      const g = bx[i];
+      if (!bilTone(g) || g.bareStrek) continue;
+      for (let j = i + 1; j <= Math.min(bx.length - 1, i + 2); j++) {
+        const k = bx[j];
+        if (!ekte(k) || k.bareStrek || BILFARGER.has(fargenavn(k)) || erLakk(k)) continue;
+        const aG = (g.x1 - g.x0) * (g.y1 - g.y0), aK = (k.x1 - k.x0) * (k.y1 - k.y0);
+        if (andelInni(k, g) >= 0.6 && aG <= GRAA_BAK_MAKS * aK) { graaBak.add(g); break; }
+      }
+    }
+  }
+  const iDekorbolk = new Set<Boks>(graaBak);
   {
     let bolk: Boks[] = [];
     let harKulor = false, lyse = 0;
@@ -278,7 +338,7 @@ export function finnDekor(lest0: LettLest, malestokk: number,
       bolk = []; harKulor = false; lyse = 0;
     };
     for (const b of lest.bokser) {
-      if (bilTone(b) || BILFARGER.has(fargenavn(b)) || erLakk(b) || (moerkBil && svart(b))) { avslutt(); continue; }
+      if ((bilTone(b) && !graaBak.has(b)) || BILFARGER.has(fargenavn(b)) || erLakk(b) || (moerkBil && svart(b))) { avslutt(); continue; }
       bolk.push(b);
       if (ekte(b)) harKulor = true;
       if (lys(b)) lyse++;
@@ -329,6 +389,7 @@ export function finnDekor(lest0: LettLest, malestokk: number,
      * Kia PV5 (310079) staar alene i sort. Sort fra en dekorbolk er
      * designerens og er en kandidat i seg selv.
      */
+    [...graaBak].filter(iVisning),
     lest.bokser.filter((b) => !kulor(b) && noytral(b) && iVisning(b) && (iDekorbolk.has(b) ||
       /**
        * Paa moerk bil er en stor hvit flate dekor selv om den staar alene i

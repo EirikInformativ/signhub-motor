@@ -333,16 +333,17 @@ export function velgMalestokk(
     return { malestokk: malt, avvikProsent: avvik };
   }
   /**
-   * Tegningen er skalert ned eller opp for aa passe paa arket (E-Partner
-   * 306005: teksten sier 1:30, tegningen er 92,6 prosent av det, 1:32,4).
-   * Maalingen kommer fra to maal som stoetter hverandre innenfor 1 prosent,
-   * saa den er til aa stole paa. Det er tegningen som skjaeres, og den er i
-   * 1:32,4. Avvik over SKALERT_MAKS_PROSENT er tull og stoppes.
+   * Trykt malestokk er fasit ogsaa naar maalingen bommer med noen prosent
+   * (Eirik 17.11.2026, E-Partner 306005: teksten sier 1:30, L, B og H paa
+   * arket peker paa 1:32,4, men sidelogoen skal vaere 1739,7 mm, som er
+   * 1:30). Natt til 17.11 ble den maalte brukt, og alt ble 8 prosent for
+   * stort. Avvik under SKALERT_MAKS_PROSENT: trykt brukes, med merknad.
+   * Over det er skissen ikke til aa stole paa.
    */
   if (Math.abs(avvik) <= SKALERT_MAKS_PROSENT) {
-    merknader.push(`Teksten sier 1:${trykt}, men tegningen er skalert til ${Math.round((trykt / malt) * 100)} prosent ` +
-      `(maalt 1:${malt.toFixed(1)} paa L, B og H). Den maalte brukes. Kontroller ett maal paa bilen.`);
-    return { malestokk: malt, avvikProsent: avvik };
+    merknader.push(`Teksten sier 1:${trykt}, men L, B og H paa arket peker paa 1:${malt.toFixed(1)} ` +
+      `(${avvik > 0 ? "+" : ""}${avvik.toFixed(1)} prosent). Den trykte malestokken brukes. Kontroller ett maal paa bilen.`);
+    return { malestokk: trykt, avvikProsent: avvik };
   }
   merknader.push(`Teksten sier 1:${trykt}, malingen sier 1:${malt.toFixed(1)}. ` +
     `Det er verken samme malestokk eller en rent skalert utgave av den, saa ` +

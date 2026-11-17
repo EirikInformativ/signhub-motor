@@ -31,13 +31,22 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
   const sjekk = (ok: boolean, tekst: string) => { console.log(`${ok ? "ok  " : "FEIL"} ${tekst}`); if (!ok) feil++; };
 
   const ep: any = await lesBilskisse(new Uint8Array(fs.readFileSync("ep306005.pdf")), { jobb: "ep", bilder, lerret } as any);
-  sjekk(Math.abs(ep.malestokk - 32.4) < 0.3, `E-Partner: maalt malestokk 1:32,4 brukes (${ep.malestokk.toFixed(2)})`);
+  // Eirik 17.11.2026: sidelogoen er 1739,683 mm i hans printfil. Den trykte 1:30 er fasit.
+  sjekk(ep.malestokk === 30, `E-Partner: trykt malestokk 1:30 brukes (${ep.malestokk.toFixed(2)})`);
+  const sidelogo = ep.elementer.find((e: any) => e.vis === "side" && e.farger.length > 1);
+  sjekk(sidelogo && Math.abs(sidelogo.breddeMm - 1739.7) < 5, `E-Partner: sidelogoen 1739,7 mm (${sidelogo?.breddeMm})`);
+  sjekk(sidelogo?.farger.some((f: any) => f.hex === "#A6A6A6"), "E-Partner: den graa ruten bak haken er med");
   const flerfarget = ep.elementer.filter((e: any) => e.farger.length > 1);
   sjekk(flerfarget.length === 3, `E-Partner: tre logoer i blaatt og roedt (${flerfarget.length})`);
   const tekster = ep.elementer.filter((e: any) => e.farger.length === 1 && e.farger[0].hex === "#FFFFFF");
   sjekk(tekster.some((e: any) => e.breddeMm > 1700 && e.hoydeMm < 120), "E-Partner: teksten under sidelogoen er eget element");
-  sjekk(tekster.some((e: any) => Math.abs(e.breddeMm - 661) < 20 && Math.abs(e.hoydeMm - 234) < 20), "E-Partner: kontaktteksten paa siden er ett element");
-  sjekk(ep.logg.filter((m: string) => /vannrett strimmel/.test(m)).length >= 2, "E-Partner: vannrett passmerke mellom logo og tekst under");
+  sjekk(tekster.some((e: any) => Math.abs(e.breddeMm - 612) < 20 && Math.abs(e.hoydeMm - 216) < 20), "E-Partner: kontaktteksten paa siden er ett element");
+  sjekk(ep.logg.filter((m: string) => /foerste og siste hoeye tegn/.test(m)).length >= 3, "E-Partner: passmerke av foerste og siste hoeye tegn mellom logo og tekst");
+  sjekk(!ep.logg.some((m: string) => /strimmel/.test(m)), "E-Partner: ingen strimmel som passmerke for utskilt tekst");
+  const sideEl = ep.elementer.filter((e: any) => e.vis === "side");
+  sjekk(sideEl.length >= 3 && sideEl.every((e: any) => e.antall === 2 && e.ensidig && !e.ensidig.speilet),
+    "E-Partner: bare én side tegnet, tekst og logo paa siden telles to ganger uten speilvending");
+  sjekk(!ep.elementer.some((e: any) => e.vis !== "side" && e.ensidig), "E-Partner: front, bak og topp dupliseres ikke");
   sjekk(!ep.elementer.some((e: any) => e.breddeMm > 470 && e.breddeMm < 600 && e.hoydeMm > 90 && e.hoydeMm < 140), "E-Partner: nummerskiltene er ikke dekor");
 
   const v: any = await lesBilskisse(new Uint8Array(fs.readFileSync("vito304160.pdf")), { jobb: "v", bilder, lerret } as any);
