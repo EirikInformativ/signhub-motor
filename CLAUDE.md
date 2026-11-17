@@ -757,6 +757,17 @@ og Vito 304160):**
   fargene utenom den stoerste dekker under `LITEN_FARGE = 0.25` av rammen.
   I register maa den roede folien vaere like stor som hele oppsettet. Proace:
   2,92 til 0,96 m². `test/tettark.ts` vokter det.
+- Bitene som teipes inn (`egetArk`) skal ikke appliseres (Eirik
+  17.11.2026: «de legges uten laminat oppå med tape. deretter appliseres alt
+  samlet»). Er de hele, konvekse stykker, heter fila `Thru`, og arket er
+  akkurat innholdet, uten overmaal og uten `felt` i navnet. Hvert eksemplar
+  er et eget element, saa hver bit kan dreies inntil naboen.
+- Enveis thru ogsaa paa kanter som bare nesten er parallelle: minst
+  `NESTEN_ANDEL = 0.25` av kanten innenfor `NESTEN_MM = 2` (svakt buede
+  sider). Kontakt teller som `KANT_TOLERANSE_MM` smalere felt naar vinkel og
+  snuing velges. Proace: fire trekanter kant i kant, 125 x 58 mm.
+- Oppsettet med markering (omrisset av det som teipes inn) legges ogsaa kant
+  i kant med enveis kiss.
 - `skyvSammen` dreier bare et element med én plassering (dreies formen,
   dreies alle kopiene), og setter et felt tilbake hvis det havner oppaa noe.
 - Rydd Bergen (gul Fiat): tonet graa (CMY nesten like) er bilens graa, og

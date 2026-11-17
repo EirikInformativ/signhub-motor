@@ -145,8 +145,10 @@ const fyllgrad = async (bytes: Uint8Array) => {
   // Fra 17.11.2026 skjaeres den roede trekanten tett og teipes inn (LITEN_FARGE):
   // foer var begge arkene 1145 x 1272 mm, naa er det roede feltet 190 x 100 mm.
   const roed = r.ark.find((k: any) => k.foliekode === "751-031"), blaa = r.ark.find((k: any) => k.foliekode === "751-086");
-  sjekk("roedt tett: 190 x 100 mm, blaatt 1208 x 780 mm",
-    roed?.breddeMm === 190 && Math.round(roed?.lengdeMm) === 100 && blaa?.breddeMm === 1208 && Math.round(blaa?.lengdeMm) === 780,
+  // Trekantene thru-cuttes kant i kant og teipes paa (Thru, ikke applisert), arket er bare innholdet.
+  sjekk("roedt tett: Thru-ark under 150 x 70 mm, blaatt under 1210 x 800 mm",
+    roed?.breddeMm <= 150 && roed?.lengdeMm <= 70 && blaa?.breddeMm <= 1210 && blaa?.lengdeMm <= 800 &&
+    r.filer.some((f: any) => / Thru 751-031 100%\.pdf$/.test(f.navn)),
     r.ark.map((k: any) => `${k.foliekode} ${k.breddeMm} x ${k.lengdeMm.toFixed(0)}`).join(" | "));
   // Én produksjonsfil per folie fra 16.11.2026 (ikke lenger summa + wild).
   sjekk("tre filer: én per folie og kundeskisse", r.filer.length === 3,

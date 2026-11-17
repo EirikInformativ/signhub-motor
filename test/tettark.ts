@@ -104,6 +104,10 @@ const sjekk = (ok: boolean, t: string) => { console.log(`${ok ? "ok  " : "FEIL"}
     const m2 = (k: string) => r.ark.filter((a: any) => a.foliekode === k).reduce((t: number, a: any) => t + a.kvadratmeter, 0);
     sjekk(m2("751-031") < 0.1, `Proace: roedt tett, ikke i register (${m2("751-031").toFixed(2)} m²)`);
     sjekk(m2("751-031") + m2("751-086") < 1.5, `Proace: under halvparten av folien mot register (${(m2("751-031") + m2("751-086")).toFixed(2)} m², var 2,92)`);
+    sjekk(r.filer.some((f: any) => / Thru 751-031 100%\.pdf$/.test(f.navn)) && !r.filer.some((f: any) => /Appliser\+thru 751-031/.test(f.navn)),
+      "Proace: de roede bitene er Thru (teipes paa), ikke Appliser+thru");
+    sjekk(r.advarsler.filter((a: string) => /751-031 tett.*dreid/.test(a)).length >= 1 && r.advarsler.some((a: string) => /enveis thru/.test(a)),
+      "Proace: bitene dreies og legges inntil hverandre (enveis thru)");
   }
   if (feil) { console.log(`\n${feil} feil`); process.exit(1); }
   console.log("\nok: tett ark velges naar det loenner seg");

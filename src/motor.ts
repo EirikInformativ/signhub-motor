@@ -11,7 +11,7 @@ import { hentGeometri, hentGeometriPerFarge, areal, omkrets, antallHull,
          lukkGlipper, ryddFlate, kuttTrygt } from "./pdfbaner.ts";
 import type { MultiPoly, Geometri, GeometriPerFarge } from "./pdfbaner.ts";
 import { tynnesteDetalj } from "./tykkelse.ts";
-import { pakkFritt } from "./pakk.ts";
+import { pakkFritt, KANT_TOLERANSE_MM } from "./pakk.ts";
 import { PDFDocument } from "pdf-lib";
 import { konvekstSkall, offsetRinger } from "./ramme.ts";
 import { cmykTilRgb, tilHex } from "./pdfbaner.ts";
@@ -90,6 +90,9 @@ const TEKST_GLIPPE_MM = 3;
 const TEKST_PASS_MM = 10;
 /** overmaal paa hver side av feltet som appliseres foer thru-cut */
 const APPLISER_OVERMAAL_MM = 20;
+/** kanter innenfor dette (mm) over minst NESTEN_ANDEL av lengden legges inntil hverandre */
+const NESTEN_MM = 2;
+const NESTEN_ANDEL = 0.25;
 /** timekost i produksjon til regnestykket for tett ark (full selvkost, 850 til 980) */
 const TIMEKOST_KR = 900;
 /**
@@ -566,8 +569,17 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
            */
           kl.forEach((f, ki) => {
             const bb = boks(f), [w2, h2] = mmAv(bb);
-            ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}`, lagvis: false, bbox: bb, skala: e.skala,
-              breddeMm: w2, hoydeMm: h2, antall: e.antall, deler: [{ ...x.d, flate: f }], omriss: f, egetArk: true });
+            /*
+             * Hvert eksemplar for seg, saa hver bit kan dreies og legges inntil
+             * naboen med enveis thru (Eirik 17.11.2026, Proace: «greier du ikke
+             * faa alle trekantene inntil hverandre»).
+             */
+            for (let n = 0; n < e.antall; n++) {
+              ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}${e.antall > 1 ? ` (${n + 1}/${e.antall})` : ""}`,
+                lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2, antall: 1,
+                deler: [{ ...x.d, flate: f.map((poly) => poly.map((r) => r.map((q) => [q[0], q[1]] as [number, number]))) }],
+                omriss: f, egetArk: true });
+            }
           });
         }
       }
@@ -820,7 +832,14 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
     }
     if (min === Infinity) return { s: Math.max(0, kant), kontakt: false };
     const naer = d.filter((x) => x - min < PARALLELL_MM);
-    const kontakt = d.length > 3 && naer.length >= 0.5 * d.length;
+    /*
+     * Ogsaa kanter som bare nesten er parallelle (svakt buede sider paa
+     * trekantene i Rosen-logoen) legges inntil hverandre der de er naermest:
+     * enveis thru «i stoerre eller mindre grad» (Eirik 17.11.2026). Kravet er
+     * at minst NESTEN_ANDEL av kanten ligger innenfor NESTEN_MM.
+     */
+    const nesten = d.filter((x) => x - min < NESTEN_MM);
+    const kontakt = d.length > 3 && (naer.length >= 0.5 * d.length || nesten.length >= NESTEN_ANDEL * d.length);
     if (kontakt && min <= kant) return { s: Math.max(0, min), kontakt: true };
     return { s: Math.max(0, Math.min(kant, min - geo.gap - 0.5)), kontakt: false };
   };
@@ -883,7 +902,8 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
     let a0 = proev();
     snuEnhet(u);
     const a1 = proev();
-    if (a1.hoyre > a0.hoyre - 0.5 && !(a1.kontakt && !a0.kontakt && a1.hoyre <= a0.hoyre + 0.5)) snuEnhet(u); else a0 = a1;
+    // enveis thru vinner naar feltet blir inntil KANT_TOLERANSE_MM bredere (Eirik 17.11.2026, Proace)
+    if (a1.hoyre > a0.hoyre - 0.5 && !(a1.kontakt && !a0.kontakt && a1.hoyre <= a0.hoyre + KANT_TOLERANSE_MM)) snuEnhet(u); else a0 = a1;
     /**
      * Et felt alene kan dreies saa en av sidene ligger parallelt med naboens
      * kant, og legges inntil med enveis thru (Eirik 16.11.2026: «snu det
@@ -925,13 +945,15 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
       }
       const andreH = Math.max(...ps.filter((q) => !u.includes(q)).map((q) => q.y + q.h));
       const andreB = Math.max(...ps.filter((q) => !u.includes(q)).map((q) => q.x + q.w));
-      let best: { g: number; areal: number; kontakt: boolean } | null = null;
+      let best: { g: number; areal: number; poeng: number; kontakt: boolean } | null = null;
       for (const g of vinkler) {
         try {
           sett(g);
           const a = proev();
           const areal = Math.max(a.hoyre, andreB) * Math.max(andreH, p.y + p.h);
-          if (!best || areal < best.areal - 1 || (Math.abs(areal - best.areal) <= 1 && a.kontakt && !best.kontakt)) best = { g, areal, kontakt: a.kontakt };
+          // kontakt (enveis thru) teller som KANT_TOLERANSE_MM mindre bredde
+          const poeng = areal - (a.kontakt ? KANT_TOLERANSE_MM * Math.max(andreH, p.y + p.h) : 0);
+          if (!best || poeng < best.poeng - 1) best = { g, areal, poeng, kontakt: a.kontakt };
         } catch { /* proev neste */ }
         tilbake();
       }
@@ -1993,6 +2015,13 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     // helfolieringsfolie: hver flate er selve stykket, ogsaa naar den ikke er konveks
     const helfol = folier.length === 1 && !!folier[0].helfoliering &&
       gruppe.every((e) => e.deler.length === 1 && !e.trykk && e.deler[0].flate.every((p) => p.length === 1));
+    /**
+     * Biter som teipes inn i et annet oppsett (samleFiler, egetArk) skal ikke
+     * appliseres: de thru-cuttes paa folien alene og legges oppaa med tape,
+     * og saa appliseres alt samlet (Eirik 17.11.2026). Fila heter da Thru,
+     * og arket er ikke stoerre enn innholdet.
+     */
+    const teip = gruppe.every((e) => e.egetArk && !e.thruForm);
     const kunThru = helfol || (folier.length === 1 &&
       gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || heltKonveks(e.deler[0].flate))));
     /**
@@ -2014,7 +2043,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       ? { ...grunngeo, foliebredde, skjaerebredde, bleed: 0 }
       : kunThru
       ? { ...grunngeo, foliebredde, bleed: 0, kissInset: 0, regClear: 0, regmarkD: 0, regmarkKiss: 0,
-          skjaerebredde: Math.min(foliebredde - grunngeo.rullKant, grunngeo.summaMaksSkjaer) - 2 * APPLISER_OVERMAAL_MM }
+          skjaerebredde: Math.min(foliebredde - grunngeo.rullKant, grunngeo.summaMaksSkjaer) - (teip ? 0 : 2 * APPLISER_OVERMAAL_MM) }
       : { ...grunngeo, foliebredde, skjaerebredde };
 
     /**
@@ -2036,7 +2065,8 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       // alle fire sider rette: tegnes paa nytt som et eksakt rektangel paa rammens maal
       if (sider.every(Boolean)) d.flate = [[[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]]];
     }
-    const kantKiss = !kunThru && gruppe.reduce((t, e) => t + e.antall, 0) > 1 && gruppe.every((e) => !e.thruForm && !e.markering?.length);
+    // ogsaa med markering (omrisset av det som teipes inn): rammene kant i kant med enveis kiss (Eirik 17.11.2026)
+    const kantKiss = !kunThru && gruppe.reduce((t, e) => t + e.antall, 0) > 1 && gruppe.every((e) => !e.thruForm);
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
@@ -2075,10 +2105,12 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       const ps = ark.plasseringer;
       const x0 = Math.min(...ps.map((p) => p.x)), y0 = Math.min(...ps.map((p) => p.y));
       const x1 = Math.max(...ps.map((p) => p.x + p.w)), y1 = Math.max(...ps.map((p) => p.y + p.h));
-      const dx = APPLISER_OVERMAAL_MM - x0, dy = APPLISER_OVERMAAL_MM - y0;
+      // teipes: arket er akkurat innholdet (Eirik: «artboardet trenger aldri vaere stoerre enn det maa vaere»)
+      const om = teip ? 0 : APPLISER_OVERMAAL_MM;
+      const dx = om - x0, dy = om - y0;
       for (const p of ps) { p.x += dx; p.y += dy; }
-      ark.breddeMm = Math.ceil((x1 - x0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
-      ark.arklengde = Math.ceil((y1 - y0 + 2 * APPLISER_OVERMAAL_MM) / 10) * 10;
+      ark.breddeMm = teip ? Math.ceil(x1 - x0) : Math.ceil((x1 - x0 + 2 * om) / 10) * 10;
+      ark.arklengde = teip ? Math.ceil(y1 - y0) : Math.ceil((y1 - y0 + 2 * om) / 10) * 10;
       ark.regY = []; ark.regBokser = [];
       if (!helfol && ark.breddeMm > foliebredde) advarsler.push(`Feltet som skal appliseres er ${ark.breddeMm} mm bredt, ` +
         `bredere enn folien (${foliebredde} mm).`);
@@ -2153,10 +2185,10 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
          */
         const harTrykk = gruppe.some((e) => e.trykk?.length);
         const prosess = v.valg.print ? (medKiss ? "Print+kiss+thru" : "Print+thru")
-          : helfol && v.valg.kunThru ? "Thru"
+          : (helfol || teip) && v.valg.kunThru ? "Thru"
           : v.valg.kunThru ? (medKiss ? "Kiss+thru" : "Appliser+thru")
           : harTrykk && v.valg.thruCut ? "Print+kiss+thru" : v.valg.thruCut ? "Kiss+thru" : "Kiss";
-        const felt = v.valg.kunThru && !regThru && !helfol ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
+        const felt = v.valg.kunThru && !regThru && !helfol && !teip ? ` felt ${ark.breddeMm}x${ark.arklengde}` : "";
         filer.push({
           slag: "produksjon",
           navn: `${grunnNavn} ${prosess} ${folie.kode}${felt} 100%.pdf`,
