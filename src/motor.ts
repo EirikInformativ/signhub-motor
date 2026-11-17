@@ -897,6 +897,23 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
         }
         return bestX === null ? [X, Y] as [number, number] : fraArk(p, bestX, y);
       }))) }));
+      /*
+       * Et konvekst stykke holdes konvekst (Eirik 17.11.2026, Rosen: «ujevn
+       * kant»). Snappingen flytter bare punktene som ligger innenfor
+       * PARALLELL_MM av naboens linje, saa en avrundet hjoerne fikk et hakk
+       * der de flyttede punktene sluttet. Skallet rundt de flyttede punktene
+       * gaar rett fra linjen og inn paa buen.
+       */
+      for (let i = 0; i < ny.length; i++) {
+        const f0 = e.deler[i].flate;
+        if (f0.length !== 1 || f0[0].length !== 1 || !heltKonveks(f0)) continue;
+        const sk = konvekstSkall(ny[i].flate[0][0].slice(0, -1) as [number, number][]);
+        if (sk.length < 3) continue;
+        // skallet maa ikke gaa inn i det som alt er lagt (naboens avrundede hjoerne)
+        const paaArk = [...sk, sk[0]].map(([X, Y]) => tilArk(p, X, Y) as [number, number]);
+        if (lagt.length && overlapper([paaArk as any], lagt)) continue;
+        ny[i] = { ...ny[i], flate: [[[...sk, sk[0]] as any]] };
+      }
       e.deler = ny;
       e.omriss = e.deler[0].flate;
     }
