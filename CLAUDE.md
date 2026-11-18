@@ -896,6 +896,10 @@ med skraa striper i lakken mellom feltene og tekst i graatt oppaa.
   stykke. Ikke-konvekse stykker faar thru rundt det konvekse skallet
   (`tilTettStykke`), og hele siden nestes paa formen, snudd 180°, saa
   trekantene legges parvis.
+- Feltet deles i bilens skjoeter **uten overlapp**: skjoeten er kanten
+  (Eirik 18.11.2026, Saethre, med hjelpeskisse: «overlapp er ikke veien aa
+  gaa her ... ikke overlapp, ikke passmerker»). Stripene paa Vito beholder
+  `SKJOT_BIL_MM`. Saethre: oransje 7,84 til 7,60 m.
 - Et flerfarget element bredere enn rullen deles i register (alle
   fargene med de samme stykkene).
 Resultat paa 1524-rull: oransje 8,2 m ark mot 8,5 m i fasiten

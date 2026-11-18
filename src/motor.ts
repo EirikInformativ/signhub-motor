@@ -1965,6 +1965,11 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       if (e.bilde) { if (kort > maksLengde) advarsler.push(`${e.navn}: bildet er ${Math.round(kort)} mm paa det smaleste, ` +
         `bredere enn printmediet. Det maa flislegges i RIP-en.`); continue; }
       // et felt med bilens skjoeter (Saethre) deles i skjoetene, ogsaa naar det ikke er en stripe
+      /*
+       * Et felt deles i bilens egne skjoeter uten overlapp: skjoeten er
+       * kanten (Eirik 18.11.2026, Saethre: «overlapp er ikke veien aa gaa
+       * her ... ikke overlapp, ikke passmerker»).
+       */
       const feltSkjot = !fler && !!e.skjoter?.length && lang > maksLengde && lang < STRIPE_FORHOLD * kort;
       if (!(f.length && lang > maksLengde && (lang >= STRIPE_FORHOLD * kort || forBred || feltSkjot))) continue;
       const langsX = forBred ? e.breddeMm < e.hoydeMm : e.breddeMm >= e.hoydeMm;
@@ -1981,7 +1986,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
        * skjoeter som gir stykker som faar plass paa tvers.
        */
       if (!fler && f.length === 1 && f[0].length === 1 && e.skjoter?.length) {
-        const ov = mmTil(SKJOT_BIL_MM);
+        const ov = feltSkjot ? 0 : mmTil(SKJOT_BIL_MM);
         const steder = e.skjoter.map((x) => b0 + x * (b1 - b0));
         const ok = (kutt: number[]) => {
           const g = [b0, ...kutt, b1];
