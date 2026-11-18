@@ -86,6 +86,31 @@ export function utvid(mp: any, d: number, rett = false): any {
   return flate(ringer) ?? [];
 }
 
+/** Unionen av flatene, med ClipperLib. */
+export function clipUnion(fs: any[]): any {
+  const S = 1e3;
+  const c = new ClipperLib.Clipper();
+  for (const mp of fs) for (const poly of mp) for (const r of poly)
+    c.AddPath(r.map(([x, y]: Pt) => ({ X: Math.round(x * S), Y: Math.round(y * S) })), ClipperLib.PolyType.ptSubject, true);
+  const res: any[] = [];
+  c.Execute(ClipperLib.ClipType.ctUnion, res, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  const ringer: Ring[] = res.map((p: any[]) => p.map((q) => [q.X / S, q.Y / S] as Pt)).filter((r) => r.length > 2);
+  return flate(ringer) ?? [];
+}
+
+/** a minus alle i bs, med ClipperLib (taaler hakkete geometri bedre enn polygon-clipping). */
+export function clipDiff(a: any, bs: any[]): any {
+  const S = 1e3;
+  const c = new ClipperLib.Clipper();
+  const til = (mp: any) => { const ut: any[] = []; for (const poly of mp) for (const r of poly) ut.push(r.map(([x, y]: Pt) => ({ X: Math.round(x * S), Y: Math.round(y * S) }))); return ut; };
+  c.AddPaths(til(a), ClipperLib.PolyType.ptSubject, true);
+  for (const b of bs) c.AddPaths(til(b), ClipperLib.PolyType.ptClip, true);
+  const res: any[] = [];
+  c.Execute(ClipperLib.ClipType.ctDifference, res, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  const ringer: Ring[] = res.map((p: any[]) => p.map((q) => [q.X / S, q.Y / S] as Pt)).filter((r) => r.length > 2);
+  return flate(ringer) ?? [];
+}
+
 /** Bare ytterringene: et hull i det tillatte skal aldri bli hull i dekoren. */
 const utenHull = (mp: any) => mp.map((poly: any) => [poly[0]]);
 
@@ -128,8 +153,18 @@ export const opphavAv = new WeakMap<Bane, Bane>();
  * bruke allerede eksisterende clippingmask»).
  */
 export const feltLuft = new WeakMap<Bane, number>();
-/** glipper under saa mange ganger feltluften bygges over i feltkuttet */
-const FELT_BRO = 3;
+/**
+ * Fyll i bilens lakkfarge tegnet oppaa et felt er en stripe i designet, ikke
+ * en bildel (Eirik 18.11.2026, Saethre: «den grå skillestripen ... har samme
+ * fargekode som lakken, skal den dele det oransje feltet»). Settes av
+ * lesBilskisse for hver skisse.
+ */
+let feltLakk: ((o: Bane) => boolean) | null = null;
+const KLIPP_DEKK = true;
+/** en synlig oey er et eget feltstykke naar den er minst saa stor som andel av den stoerste */
+const OEY_STOR = 0.03;
+export function settFeltLakk(f: ((o: Bane) => boolean) | null) { feltLakk = f; }
+export function erFeltLakk(o: Bane): boolean { return !!feltLakk?.(o); }
 
 export function kuttVedKlipp(b: Bane, luft: number, rett = false): Bane {
   const k = klippFlate(b);
@@ -275,17 +310,26 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     try {
       const dekkFlater = dekk.map((o) => {
         const f = flate(ringerAv(o.segs as any[]));
-        if (!o.bilde || !f) return f;
+        if (!f) return f;
+        // en bildel dekker bare det som synes av den, innenfor sitt eget klipp
+        // (Saethre: en graa flate tegnet etter hjoernet bak, klippet bort der)
+        if (!o.bilde && !(o.klipp?.length && KLIPP_DEKK)) return f;
         const k = klippFlate(o);
-        return k ? pc.intersection(f, k) : f;
+        try { return k ? pc.intersection(f, k) : f; } catch { return f; }
       }).filter((f) => f && f.length);
       if (!dekkFlater.length) return b;
-      dekkSamlet = pc.union(...(dekkFlater as [any]));
-      skjult = pc.intersection(egen, dekkSamlet);
+      try {
+        dekkSamlet = pc.union(...(dekkFlater as [any]));
+        skjult = pc.intersection(egen, dekkSamlet);
+      } catch {
+        // mange og hakkete bildeler (Saethre side 2): ClipperLib i stedet
+        dekkSamlet = clipUnion(dekkFlater);
+        skjult = clipDiff(egen, [clipDiff(egen, [dekkSamlet])]);
+      }
     } catch { return b; }
     if (areal(skjult) < a0 * 1e-3) return b;                // ingenting av betydning er dekket
     let synlig: any;
-    try { synlig = pc.difference(egen, skjult); } catch { return b; }
+    try { synlig = pc.difference(egen, skjult); } catch { try { synlig = clipDiff(egen, [skjult]); } catch { return b; } }
     // helt skjult under bildeler (en hvit flate under doerhaandtaket paa
     // Oesterboe): synes ikke paa bilen, er ikke dekor
     if (!synlig.length || areal(synlig) < a0 * 1e-3) { skjulte.push(b); return b; }
@@ -342,9 +386,48 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
        * langs terskelen) bygges over med lukking, saa kanten blir én rett
        * strek like utenfor bilen, ikke en tynn stripe for seg.
        */
+      /*
+       * Folien gaar `fl` inn under bildelene (hjulbuen, lyktene, listen
+       * langs terskelen) og utenfor bilen, men aldri ut over lakk som synes:
+       * kanten designeren har tegnet mot lakken staar som den er (Eirik
+       * 18.11.2026: trekanten der alle tre sidene synes skal ikke forstoerres),
+       * og stripene i lakkfargen deler feltet.
+       */
       try {
-        const G = FELT_BRO * fl;
-        tillatt = utenHull(utvid(utvid(synlig, fl + G, true), -G, true));
+        /*
+         * Hver synlige oey faar sin egen utfallende kant, og oeyene holdes
+         * fra hverandre: to felt som moetes under en bildel (under hjulet)
+         * skal ikke vokse sammen til ett stykke (Saethre: hjoernet bak og det
+         * skraa feltet). Smaa, tynne oeyer (gjennomsyn langs terskelen)
+         * hoerer til naermeste store oey.
+         */
+        const oeyer = (synlig as any[]).map((p) => [p]);
+        const storst = Math.max(...oeyer.map((o) => areal(o)));
+        const store = oeyer.filter((o) => areal(o) >= OEY_STOR * storst);
+        const smaa = oeyer.filter((o) => !store.includes(o));
+        const grupper = store.map((o) => [o]);
+        for (const sm of smaa) {
+          let best = 0, bd = Infinity;
+          store.forEach((o, k) => { try { const d = areal(pc.intersection(utvid(sm, fl, true), o)) > 0 ? 0 : 1; if (d < bd) { bd = d; best = k; } } catch { /* */ } });
+          grupper[best].push(sm);
+        }
+        const deler: any[] = [];
+        for (const g of grupper) {
+          let tg = utvid(g.length > 1 ? pc.union(...(g as [any])) : g[0], fl, true);
+          for (const d of deler) tg = clipDiff(tg, [utvid(d, fl / 30, true)]);
+          deler.push(tg);
+        }
+        let t = deler.flatMap((d) => d);
+        const orig = opphavAv.get(b) ?? b;
+        const k = klippFlate(orig), origF = flate(ringerAv(orig.segs as any[]));
+        const striper = dekk.filter((o) => o.fyll && !o.bilde && feltLakk?.(o)).map((o) => flate(ringerAv(o.segs as any[]))).filter((f: any) => f?.length);
+        // ClipperLib, saa hakkete geometri ikke faar polygon-clipping til aa gi opp
+        if (striper.length) t = clipDiff(t, striper);
+        if (k?.length && origF?.length) {
+          const lakk = clipDiff(clipDiff(k, [origF]), [dekkSamlet]);
+          if (lakk.length) t = clipDiff(t, [lakk]);
+        }
+        tillatt = t;
       } catch { tillatt = utenHull(utvid(synlig, fl, true)); }
     } else try {
       /**

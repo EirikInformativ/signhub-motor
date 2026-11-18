@@ -21,7 +21,7 @@ import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
 import { konvekstSkall } from "./ramme.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, settFeltLakk, erFeltLakk, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -396,6 +396,19 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
    * synes (Eirik 16.11.2026, Kia PV5 310079). Reglene staar i klippkant.ts.
    */
   const alleDekor = new Set(valgtPerOmraade.flatMap((x) => x.valgte));
+  /*
+   * Bilens lakkfarge: den fyllfargen utenom dekoren som dekker mest. Fyll i
+   * den fargen tegnet oppaa et stort felt er en stripe i designet.
+   */
+  {
+    const perHex = new Map<string, number>();
+    for (const b of baner) if (b.fyll && !b.bilde && !b.gradient && !alleDekor.has(b)) {
+      const h = baneHex(b.farge);
+      perHex.set(h, (perHex.get(h) ?? 0) + (b.boks.x1 - b.boks.x0) * (b.boks.y1 - b.boks.y0));
+    }
+    const lakkHex = [...perHex].sort((a, b) => b[1] - a[1])[0]?.[0];
+    settFeltLakk(lakkHex ? (o: Bane) => !!o.fyll && baneHex(o.farge) === lakkHex : null);
+  }
   const dekorOpphav = new Set([...alleDekor].map((b) => opphavAv.get(b) ?? b));
   const bilLinjer = baner.filter((b) => !b.bilde && !b.gradient && !alleDekor.has(b) && !dekorOpphav.has(b));
   const luft = (KLIPP_LUFT_MM / malestokk) * MM, min = (KLIPP_MIN_MM / malestokk) * MM;
@@ -709,6 +722,12 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
      * lakken er bare parallelle, og kanten langs bilens ytterkant (laget av
      * klippet) teller ikke.
      */
+    const feltIx0 = Math.min(...stk.flatMap((x) => arbeid[x.i].valgte.map((b) => baner.indexOf(opphavAv.get(b) ?? b))).filter((k) => k >= 0), Infinity);
+    const bildelFlater: { f: any; b: Bane["boks"] }[] = [];
+    baner.forEach((b, k) => {
+      if (k <= feltIx0 || alleDekor.has(b) || erFeltLakk(b) || (!b.fyll && !b.bilde)) return;
+      try { let f = flateKlipp(ringerAv(b.segs as any[])); const kl = klippFlateBane(b); if (kl && f) f = pc.intersection(f, kl); if (f?.length) bildelFlater.push({ f, b: b.boks }); } catch { /* */ }
+    });
     const designKanter = (x: Stk): [number, number, number, number][] => {
       // kanten langs bilens ytterkant ligger utenfor klippet (feltluften); den teller ikke
       const orig = arbeid[x.i].valgte.map((b) => opphavAv.get(b) ?? b);
@@ -719,10 +738,24 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       } catch { klipp = null; }
       const kanter: [number, number, number, number][] = [];
       const sk = x.skall;
+      /*
+       * Bare kanter mot lakk som synes teller (kanten designeren har tegnet).
+       * Kanten mot en bildel (listen langs terskelen, hjulet) er bilens, og
+       * den er ikke noe montoeren skal treffe.
+       */
+      const dekket = (px: number, py: number) => bildelFlater.some((f) => px >= f.b.x0 && px <= f.b.x1 && py >= f.b.y0 && py <= f.b.y1 && inni(f.f, px, py));
       for (let k = 0; k < sk.length; k++) {
         const [x1, y1] = sk[k], [x2, y2] = sk[(k + 1) % sk.length];
-        if (Math.hypot(x2 - x1, y2 - y1) < tilU(100)) continue;
+        const l = Math.hypot(x2 - x1, y2 - y1);
+        if (l < tilU(100)) continue;
         if (klipp && ![0.25, 0.5, 0.75].every((t) => inni(klipp, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))) continue;
+        const nx = -(y2 - y1) / l, ny = (x2 - x1) / l, o = tilU(15);
+        const mot = [0.25, 0.5, 0.75].map((t) => {
+          const mx = x1 + (x2 - x1) * t, my = y1 + (y2 - y1) * t;
+          const [ax, ay] = [mx + nx * o, my + ny * o], [bx, by] = [mx - nx * o, my - ny * o];
+          return inni(x.form, ax, ay) ? [bx, by] : [ax, ay];
+        });
+        if (mot.filter(([px, py]) => !dekket(px, py)).length < 2) continue;
         kanter.push([x1, y1, x2, y2]);
       }
       return kanter;
@@ -755,6 +788,12 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     }
     const grupper = new Map<number, Stk[]>();
     stk.forEach((x, k) => { const r = finn(k); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
+    // stripene i lakkfargen, til kutteformene
+    const feltIx = Math.min(...stk.flatMap((x) => arbeid[x.i].valgte.map((b) => baner.indexOf(opphavAv.get(b) ?? b))).filter((k) => k >= 0), Infinity);
+    const lakkFlater: any[] = baner.filter((b, k) => k > feltIx && erFeltLakk(b) && stk.some((x) => {
+      const r = x.skall; const xs = r.map((q) => q[0]), ys = r.map((q) => q[1]);
+      return b.boks.x1 > Math.min(...xs) && b.boks.x0 < Math.max(...xs) && b.boks.y1 > Math.min(...ys) && b.boks.y0 < Math.max(...ys);
+    })).map((b) => flateKlipp(ringerAv(b.segs as any[]))).filter((f: any) => f?.length);
     const fjern = new Set<number>();
     const nye: typeof arbeid = [];
     // smaa deler av et feltstykke (under FELT_MIN_MM) staar igjen som de var
@@ -762,8 +801,12 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     for (const i of new Set(stk.map((x) => x.i))) {
       const store = stk.filter((x) => x.i === i);
       const rest = arbeid[i].valgte.filter((b) => {
-        const bx = (b.boks.x0 + b.boks.x1) / 2, by = (b.boks.y0 + b.boks.y1) / 2;
-        return !store.some((x) => inni(x.form, bx, by));
+        const f = flateKlipp(ringerAv(b.segs as any[]));
+        if (!f?.length) return false;
+        const a = arealKlipp(f);
+        let inne = 0;
+        for (const x of store) { try { inne += arealKlipp(pc.intersection(f, x.form)); } catch { /* */ } }
+        return inne < 0.5 * a;
       });
       if (rest.length) restAv.set(i, rest);
     }
@@ -777,10 +820,32 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
          * hjulbuen (Eirik 18.11.2026: «det med at hjulbuen er konkav skjært
          * ut synes jeg bare er lekkert»). Smaa hakk og tapper fylles.
          */
-        let form: any = [[[...x.skall, x.skall[0]]]];
+        /*
+         * Hjoernet mellom side og front (eller bak) blir daarligst gjengitt i
+         * en 2D-skisse (Eirik 18.11.2026: «derfor maa denne stripen vaere
+         * lenger enn det det ser ut som»). Et stykke som naar bilens ende i
+         * visningen, forlenges FELT_ENDE_MM rundt hjoernet.
+         */
+        let skall = x.skall;
+        const vis = funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis);
+        if (vis) {
+          const sx0 = Math.min(...skall.map((q) => q[0])), sx1 = Math.max(...skall.map((q) => q[0]));
+          const e = tilU(FELT_ENDE_MM), naer = tilU(FELT_ENDE_NAER_MM);
+          let pk = skall.slice();
+          if (sx0 - vis.x0 < naer) pk = pk.concat(skall.map(([px, py]) => [px - e, py] as [number, number]));
+          if (vis.x1 - sx1 < naer) pk = pk.concat(skall.map(([px, py]) => [px + e, py] as [number, number]));
+          if (pk.length > skall.length) skall = konvekstSkall(pk);
+        }
+        let form: any = [[[...skall, skall[0]]]];
         try {
           const inn = pc.difference(form, x.form) as any[];
-          const store = inn.filter((p: any) => arealKlipp([p]) > tilU(FELT_BUE_MM) * tilU(FELT_BUE_MM));
+          /*
+           * Innbuktninger der lakk synes (en stripe i lakkfargen) skjaeres
+           * ogsaa ut, uansett stoerrelse: kutteformen foelger designets kant
+           * (Eirik 18.11.2026, hjoernet bak oeverst: «jeg savner den kurven»).
+           */
+          const lakkHer = (p: any) => lakkFlater.some((l) => { try { return arealKlipp(pc.intersection([p], l)) > tilU(20) * tilU(20); } catch { return false; } });
+          const store = inn.filter((p: any) => arealKlipp([p]) > tilU(FELT_BUE_MM) * tilU(FELT_BUE_MM) || lakkHer(p));
           if (store.length) form = pc.difference(form, ...store.map((p: any) => [p]));
         } catch { /* skallet */ }
         const segs: any[] = [];
@@ -807,6 +872,12 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       arbeid.length = 0;
       arbeid.push(...rest, ...nye);
     }
+  }
+  if (process.env.FELT_JSON) {
+    const fs = await import("fs");
+    for (const x of arbeid) fs.appendFileSync(process.env.FELT_JSON, JSON.stringify({ navn: x.o.vis + " " + x.o.navn,
+      hoved: hovedfelt.has(x.valgte), hex: x.valgte.find((b) => b.fyll) ? baneHex(x.valgte.find((b) => b.fyll)!.farge) : "",
+      baner: x.valgte.map((b) => (b.segs as any[]).filter((q) => q.p || q.c).map((q) => q.p ?? q.c)) }) + "\n");
   }
   for (const { o, valgte: raa } of arbeid) {
     let rett = rettOpp(raa);
@@ -1578,13 +1649,17 @@ const FELT_GLIPPE_MM = 20;
 /** et felt lengre enn dette kuttes ved klippebanen som en stripe */
 const FELT_KLIPP_MM = 1.5 * 1150;
 /** et stort felt kuttes saa langt utenfor klippebanen (mm) */
-const FELT_LUFT_MM = 20;
+const FELT_LUFT_MM = 75;
 /** et feltstykke er minst saa bredt paa det smaleste (mm); mindre er tekst og smaabiter */
 const FELT_MIN_MM = 100;
 /** glipper mellom feltstykker som maales for bilens linjer (mm) */
 const FELT_REL_MM = 60;
 /** innbuktninger i feltstykket stoerre enn dette i kvadrat (mm) skjaeres ut (hjulbuen) */
 const FELT_BUE_MM = 150;
+/** et feltstykke ved bilens ende forlenges saa mye rundt hjoernet (mm) */
+const FELT_ENDE_MM = 150;
+/** ... naar det naar saa naer bilens ende i visningen (mm) */
+const FELT_ENDE_NAER_MM = 150;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
 /** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
