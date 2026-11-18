@@ -2202,8 +2202,13 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
        * formen.
        */
       const omg = ny.map((e) => e.felt ? tilFeltStykke(e) : e);
-      const hele = omg.filter((e) => e.utenKiss), resten = omg.filter((e) => !e.utenKiss);
+      const hele = omg.filter((e) => e.utenKiss);
+      // feltstykker med kiss inni nestes paa formen for seg; blandes de med
+      // vanlige rammer, kan rammene krysse thru-formene (Eirik 18.11.2026)
+      const feltKiss = omg.filter((e) => !e.utenKiss && e.felt && e.thruForm);
+      const resten = omg.filter((e) => !hele.includes(e) && !feltKiss.includes(e));
       if (hele.length) feltHele.push([nokkel + "|felthel", hele]);
+      if (feltKiss.length) feltHele.push([nokkel + "|tett", feltKiss]);
       grupper.set(nokkel, resten);
     } else grupper.set(nokkel, [...feltDelt].some((e) => g.includes(e) && !hel.has(e)) ? ny.map(tilTettStykke) : ny);
   }
@@ -2418,7 +2423,9 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     const ark = pakkFritt(tilPakking, geo);
     advarsler.push(...ark.feil);
     const kantIKant = kantKiss && ark.strategi.startsWith("kant i kant");
-    if (kunThru) {
+    // stykker nestet paa formen (felt og tette grupper) ligger der nestingen la dem:
+    // skyves de etterpaa, kan thru-linjene krysse hverandre (Eirik 18.11.2026)
+    if (kunThru && !gruppe.some((e) => e.thruForm)) {
       // feltet er skjaerebredden innenfor regmark-kolonnene (ingen paa Appliser+thru)
       const reservert = geo.kissInset + geo.regClear + (geo.regmarkD + 2 * geo.regmarkKiss) + geo.regClear;
       // med regmarks staar arkbredden og regmark-kolonnene fast: strekk innenfor dem
