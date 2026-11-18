@@ -321,6 +321,8 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
   const listeTekst = new Set<Bane[]>();
   const listeNavn = new Set<string>();
   const valgtPerOmraade: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
+  /** omraadene med store felt (Saethre): delene skjaeres som ferdige feltstykker */
+  const feltOmr = new Set<string>();
   for (const o of funn.omraader) {
     /**
      * Bilens egne streker og flater ligger ofte inne i rammen til en stor
@@ -376,6 +378,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
          * Saethre, hjelpeskisse trinn 2 til 6).
          */
         if (felt && !stripe) {
+          feltOmr.add(`${o.vis}|${o.navn}@${baneHex(b.farge)}`);
           const fl = (FELT_LUFT_MM / malestokk) * MM;
           const k = kuttVedKlipp(b, fl, true);
           feltLuft.set(k, fl); feltLuft.set(b, fl);
@@ -697,9 +700,9 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     const skjot = fylte.length >= 1 && (fylte.length <= 2 || erFeltEl) ? skjoterLangs(storste,
       baner, (x) => alleDekor.has(x), (SKJOT_TOL_MM / malestokk) * MM, (SKJOT_KANT_MM / malestokk) * MM, erFeltEl) : [];
     // et stort felt i én farge (ikke en stripe), som de oransje paa Saethre
-    const erFeltKutt = enFarge && !!storste && (() => {
+    const erFeltKutt = enFarge && !!storste && [...feltOmr].some((k) => { const [om, hx] = k.split("@"); return `${o.vis}|${o.navn}`.startsWith(om) && baneHex(storste.farge) === hx; }) && (() => {
       const w = storste.boks.x1 - storste.boks.x0, h = storste.boks.y1 - storste.boks.y0;
-      return (Math.max(w, h) / MM) * malestokk > FELT_KLIPP_MM && Math.max(w, h) < STRIPE_FORHOLD_BIL * Math.min(w, h);
+      return (Math.min(w, h) / MM) * malestokk > FELT_MIN_MM && Math.max(w, h) < STRIPE_FORHOLD_BIL * Math.min(w, h);
     })();
     let pdf = await skrivPdf(valgte, undefined, forleng, skjot, erFeltKutt);
     let brukte = valgte;
@@ -1389,6 +1392,8 @@ const FELT_GLIPPE_MM = 20;
 const FELT_KLIPP_MM = 1.5 * 1150;
 /** et stort felt kuttes saa langt utenfor klippebanen (mm) */
 const FELT_LUFT_MM = 20;
+/** et feltstykke er minst saa bredt paa det smaleste (mm); mindre er tekst og smaabiter */
+const FELT_MIN_MM = 100;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
 /** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */

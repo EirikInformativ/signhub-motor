@@ -128,6 +128,8 @@ export const opphavAv = new WeakMap<Bane, Bane>();
  * bruke allerede eksisterende clippingmask»).
  */
 export const feltLuft = new WeakMap<Bane, number>();
+/** glipper under saa mange ganger feltluften bygges over i feltkuttet */
+const FELT_BRO = 3;
 
 export function kuttVedKlipp(b: Bane, luft: number, rett = false): Bane {
   const k = klippFlate(b);
@@ -334,7 +336,16 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     let tillatt: any;
     const fl = feltLuft.get(b) ?? feltLuft.get(opphavAv.get(b)!);
     if (fl !== undefined) {
-      try { tillatt = utenHull(utvid(grunnlag, fl, true)); } catch { tillatt = utenHull(utvid(synlig, fl, true)); }
+      /*
+       * Feltet kuttes langs det synlige selv (ikke det aapnede, som runder
+       * hjoernene), og smale glipper under bildeler som stikker ut (listen
+       * langs terskelen) bygges over med lukking, saa kanten blir én rett
+       * strek like utenfor bilen, ikke en tynn stripe for seg.
+       */
+      try {
+        const G = FELT_BRO * fl;
+        tillatt = utenHull(utvid(utvid(synlig, fl + G, true), -G, true));
+      } catch { tillatt = utenHull(utvid(synlig, fl, true)); }
     } else try {
       /**
        * Skallet tas per synlige oey, ikke rundt alt (Saethre ID.Buzz

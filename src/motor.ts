@@ -2160,7 +2160,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
       }
       biterAv.set(e, biter);
     }
-    if (!biterAv.size) continue;
+    if (!biterAv.size && !g.some((e) => e.felt)) continue;
     const hel = new Set<Elem>();
     const sett = () => g.flatMap((e) => biterAv.has(e) && !hel.has(e) ? biterAv.get(e)! : [e]);
     for (const e of biterAv.keys()) {
