@@ -477,6 +477,56 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       }
       return [d];
     });
+    /**
+     * En tekstblokk i én farge rett over, under eller ved siden av en
+     * flerfarget logo, i en farge logoen ogsaa har, skilles ut naar det
+     * sparer folie (Eirik 18.11.2026, Rydd Bergen bak: «smørbrødlisten» under
+     * logoen. I register maa den roede folien vaere like stor som hele
+     * logoen med lista; skilt ut kan lista gaa paa det sorte oppsettet).
+     * Kravet er et rent mellomrom paa tvers (ingen del krysser det), og at
+     * logoens ramme blir minst DEL_SPAR mindre. Lista faar passmerke mot
+     * logoen som annen utskilt tekst.
+     */
+    deler = deler.flatMap((d) => {
+      const fylt = d.filter((b) => b.fyll);
+      const hexer = new Set(fylt.map((b) => baneHex(b.farge)));
+      if (hexer.size < 2) return [d];
+      const ramme = (bs: Bane[]) => ({ x0: Math.min(...bs.map((b) => b.boks.x0)), y0: Math.min(...bs.map((b) => b.boks.y0)),
+        x1: Math.max(...bs.map((b) => b.boks.x1)), y1: Math.max(...bs.map((b) => b.boks.y1)) });
+      const ar = (r: ReturnType<typeof ramme>) => (r.x1 - r.x0) * (r.y1 - r.y0);
+      const hel = ar(ramme(d));
+      const minGlipe = (MIN_BAND_MM / malestokk) * MM;
+      let best: { logo: Bane[]; tekst: Bane[]; a: number } | null = null;
+      for (const akse of ["y", "x"] as const) {
+        const lo = (b: Bane) => akse === "y" ? b.boks.y0 : b.boks.x0, hi = (b: Bane) => akse === "y" ? b.boks.y1 : b.boks.x1;
+        const sortert = d.slice().sort((a, b) => lo(a) - lo(b));
+        let maks = -Infinity;
+        for (let k = 0; k < sortert.length - 1; k++) {
+          maks = Math.max(maks, hi(sortert[k]));
+          const glipe = lo(sortert[k + 1]) - maks;
+          if (glipe < minGlipe) continue;
+          const A = sortert.slice(0, k + 1), B = sortert.slice(k + 1);
+          for (const [logo, tekst] of [[A, B], [B, A]] as const) {
+            const tf = new Set(tekst.filter((b) => b.fyll).map((b) => baneHex(b.farge)));
+            const lf = new Set(logo.filter((b) => b.fyll).map((b) => baneHex(b.farge)));
+            if (tf.size !== 1 || lf.size < 2 || !lf.has([...tf][0])) continue;
+            const flater = tekst.reduce((n, b) => n + (b.segs as any[]).filter((x) => x.t === "m").length, 0);
+            if (flater < TEKST_FLATER) continue;
+            // et ekte mellomrom, ikke luften mellom to bokstavkolonner i et ordmerke
+            const hs = tekst.filter((b) => b.fyll).map((b) => b.boks.y1 - b.boks.y0).sort((p, q) => p - q);
+            if (glipe < BAND_MOT_TEGN * hs[Math.floor(hs.length / 2)]) continue;
+            const a = ar(ramme(logo));
+            if (a > (1 - DEL_SPAR) * hel) continue;
+            if (!best || a < best.a) best = { logo: [...logo], tekst: [...tekst], a };
+          }
+        }
+      }
+      if (!best) return [d];
+      utskiltTekst.add(best.tekst);
+      logg.push(`${o.vis} ${o.navn}: teksten i én farge ved logoen skilles ut og skjaeres for seg, ` +
+        `logoens ramme blir ${Math.round((1 - best.a / hel) * 100)} % mindre.`);
+      return [best.logo, best.tekst];
+    });
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
     deler.forEach((d, k) => {
       arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d });
@@ -484,6 +534,35 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     });
     logg.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
       "(tekst og striper som bare staar ved siden av hverandre).");
+  }
+  /**
+   * Sperret tekst gaar paa tvers av omraadene finnDekor fant (Rydd Bergen:
+   * «RYDDING OG BOSSKJØRING» kom i tre omraader). Delene i samme visning
+   * kjedes derfor ogsaa paa tvers, med samme regel som inne i et omraade.
+   */
+  {
+    const perVis = new Map<string, number[]>();
+    arbeid.forEach((x, i) => { if (!perVis.has(x.o.vis)) perVis.set(x.o.vis, []); perVis.get(x.o.vis)!.push(i); });
+    const fjern = new Set<number>();
+    const nye: typeof arbeid = [];
+    for (const ix of perVis.values()) {
+      if (ix.length < 2) continue;
+      const grupper = ix.map((i) => arbeid[i].valgte);
+      const samlet = tekstlinjer(grupper, malestokk / MM);
+      for (const gg of samlet) {
+        const med = ix.filter((i) => arbeid[i].valgte.every((b) => gg.includes(b)));
+        if (med.length < 2) continue;
+        for (const i of med) fjern.add(i);
+        const f = arbeid[med[0]];
+        nye.push({ o: { ...f.o, navn: med.map((i) => arbeid[i].o.navn).join(" + ") }, valgte: gg });
+        logg.push(`${f.o.vis}: ${med.length} deler (${med.map((i) => arbeid[i].o.navn).join(", ")}) er én sperret tekstlinje og leveres samlet.`);
+      }
+    }
+    if (fjern.size) {
+      const rest = arbeid.filter((_, i) => !fjern.has(i));
+      arbeid.length = 0;
+      arbeid.push(...rest, ...nye);
+    }
   }
   for (const { o, valgte: raa } of arbeid) {
     let rett = rettOpp(raa);
@@ -668,6 +747,18 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     brukteBaner.set(nytt, brukte);
   }
   if (!elementer.length) merknader.push("Ingen dekor a produsere i denne skissen.");
+
+  /**
+   * En logo har laaste proporsjoner (Eirik 18.11.2026, Rydd Bergen: logoen
+   * fremst paa taket er strukket i hoeyden for aa se riktig ut paa det
+   * skraa taket, «men faktum er at en logo har låste proposjoner». Bredden
+   * er master). Finnes samme logo andre steder paa bilen, kjennes den igjen
+   * paa delene (bokstaver og flater i samme farge og samme innbyrdes
+   * plassering) med ulik skalering paa langs og tvers. Er de andre
+   * forekomstene enige seg imellom, og denne er den som skiller seg ut,
+   * skaleres hoeyden til proporsjonene de andre har.
+   */
+  await laasProporsjoner(elementer, brukteBaner, logg);
 
   /**
    * Samme merke sett fra to visninger. Paa 309916 e-expert staar XL PROFF
@@ -913,6 +1004,84 @@ async function dupliserSide(visninger: string[], elementer: BilElement[],
 }
 
 /** En bane delt i delbaner, en per «m», med egen ramme. */
+/** proporsjonsavvik under dette er tegnenoeyaktighet, ikke en strukket logo */
+const PROP_TOL = 0.03;
+/** andel av delene som maa kjennes igjen i den andre forekomsten */
+const PROP_TREFF = 0.9;
+async function laasProporsjoner(elementer: BilElement[], baner: Map<BilElement, Bane[]>, logg: string[]) {
+  type Del = { x0: number; y0: number; x1: number; y1: number; hex: string };
+  const deler = new Map<BilElement, Del[]>();
+  for (const e of elementer) {
+    const bs = (baner.get(e) ?? []).filter((b) => b.fyll);
+    const d: Del[] = [];
+    for (const b of bs) for (const db of delbaner(b)) d.push({ ...db.boks, hex: baneHex(b.farge) });
+    deler.set(e, d);
+  }
+  // E kartlagt inn i R: R = (sx, sy) * E + t. Gir sy/sx, eller null
+  const mot = (E: Del[], R: Del[]): number | null => {
+    if (E.length < 4 || R.length < E.length) return null;
+    const ex0 = Math.min(...E.map((p) => p.x0)), ey0 = Math.min(...E.map((p) => p.y0));
+    const ex1 = Math.max(...E.map((p) => p.x1)), ey1 = Math.max(...E.map((p) => p.y1));
+    const areal = (p: Del) => (p.x1 - p.x0) * (p.y1 - p.y0);
+    const anker = E.slice().sort((a, b) => areal(b) - areal(a))[0];
+    const pw = anker.x1 - anker.x0, ph = anker.y1 - anker.y0;
+    if (pw <= 0 || ph <= 0) return null;
+    for (const q of R) {
+      if (q.hex !== anker.hex) continue;
+      const sx = (q.x1 - q.x0) / pw, sy = (q.y1 - q.y0) / ph;
+      if (!(sx > 0 && sy > 0) || sx / sy > 3 || sy / sx > 3) continue;
+      const tx = q.x0 - anker.x0 * sx, ty = q.y0 - anker.y0 * sy;
+      const tol = 0.03 * Math.max((ex1 - ex0) * sx, (ey1 - ey0) * sy);
+      let treff = 0;
+      for (const p of E) {
+        const m = { x0: p.x0 * sx + tx, x1: p.x1 * sx + tx, y0: p.y0 * sy + ty, y1: p.y1 * sy + ty };
+        if (R.some((r) => r.hex === p.hex && Math.abs(r.x0 - m.x0) < tol && Math.abs(r.x1 - m.x1) < tol &&
+          Math.abs(r.y0 - m.y0) < tol && Math.abs(r.y1 - m.y1) < tol)) treff++;
+      }
+      if (treff >= PROP_TREFF * E.length) return sy / sx;
+    }
+    return null;
+  };
+  const treff = new Map<BilElement, { r: BilElement; f: number }[]>();
+  for (const e of elementer) {
+    const E = deler.get(e)!;
+    const liste: { r: BilElement; f: number }[] = [];
+    for (const r of elementer) {
+      if (r === e) continue;
+      const f = mot(E, deler.get(r)!);
+      if (f !== null) liste.push({ r, f });
+    }
+    treff.set(e, liste);
+  }
+  const lik = (f: number) => Math.abs(f - 1) <= PROP_TOL;
+  for (const e of elementer) {
+    const l = treff.get(e)!;
+    const skjeve = l.filter((x) => !lik(x.f));
+    if (!skjeve.length || skjeve.length !== l.length) continue;
+    const f0 = skjeve[0].f;
+    if (!skjeve.every((x) => Math.abs(x.f - f0) / f0 <= PROP_TOL)) continue;
+    // de andre maa vaere enige seg imellom: minst to som stemmer med hverandre
+    const enige = skjeve.some((x) => elementer.some((z) => z !== e && z !== x.r &&
+      ((treff.get(x.r) ?? []).some((y) => y.r === z && lik(y.f)) || (treff.get(z) ?? []).some((y) => y.r === x.r && lik(y.f)))));
+    if (!enige && skjeve.length < 2) continue;
+    const f = skjeve.reduce((t, x) => t + x.f, 0) / skjeve.length;
+    const bs = baner.get(e)!;
+    const y0 = Math.min(...bs.map((b) => b.boks.y0));
+    const sk = (p: [number, number]): [number, number] => [p[0], y0 + (p[1] - y0) * f];
+    const nye: Bane[] = bs.map((b) => ({
+      ...b, klipp: undefined,
+      segs: (b.segs as any[]).map((x) => x.t === "c" ? { t: "c", a: sk(x.a), b: sk(x.b), c: sk(x.c) } : x.p ? { t: x.t, p: sk(x.p) } : { ...x }) as any,
+      boks: { x0: b.boks.x0, x1: b.boks.x1, y0: y0 + (b.boks.y0 - y0) * f, y1: y0 + (b.boks.y1 - y0) * f },
+    }));
+    const foer = e.hoydeMm;
+    e.pdf = await skrivPdf(nye);
+    e.hoydeMm = Math.round(e.hoydeMm * f);
+    baner.set(e, nye);
+    logg.push(`${e.navn}: samme logo som ${skjeve.map((x) => x.r.navn).join(", ")}, men strukket i skissen. ` +
+      `Hoeyden rettet fra ${foer} til ${e.hoydeMm} mm etter logoens proporsjoner, bredden ${e.breddeMm} mm staar.`);
+  }
+}
+
 function delbaner(b: Bane): { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] {
   const ut: { kilde: Bane; segs: any[]; boks: Bane["boks"] }[] = [];
   let cur: any[] = [];
@@ -1179,6 +1348,65 @@ const STOR_FLATE_MM = 400;
 /** naboen maa spenne over minst denne andelen av stripen for aa vaere samme element */
 const STRIPE_SPENN = 0.9;
 
+/**
+ * Sperret tekst er én tekst (Eirik 18.11.2026, Rydd Bergen: «R Y D D I N G
+ * O G  B O S S K J Ø R I N G» og «92 83 27 82» kom som enkeltbokstaver og
+ * ga «et realt puslespill» å montere). Glippen mellom tegnene er over
+ * DEL_GLIPPE_MM, saa avstand alene holder dem ikke sammen. Kjennetegn paa
+ * en tekstlinje: deler i samme farge, like hoeye (bokstavhoeyde), paa samme
+ * grunnlinje eller midtlinje, etter hverandre med glipper under
+ * TEKST_SPERR ganger bokstavhoeyden (ordmellomrom inkludert), og minst
+ * TEKST_SPERR_TEGN deler. Linja leveres hel; kjorJobb skjoeter den i
+ * mellomrommet mellom bokstavene naar den er lengre enn rullen.
+ */
+const TEKST_SPERR = 4.5;
+/** rent mellomrom mellom en logo og en tekstblokk ved siden av (ekte mm) */
+const MIN_BAND_MM = 5;
+/** tekstblokken skilles ut fra logoen naar logoens ramme blir minst saa mye mindre */
+const DEL_SPAR = 0.25;
+/** mellomrommet maa vaere minst saa stort som andel av tekstens tegnhoeyde */
+const BAND_MOT_TEGN = 0.4;
+const TEKST_SPERR_TEGN = 4;
+const TEKST_SPERR_MAKS_MM = 300;
+function tekstlinjer(g: Bane[][], mmPerEnhet: number): Bane[][] {
+  const info = g.map((d) => {
+    const fyll = d.filter((b) => b.fyll);
+    const hexer = new Set(fyll.map((b) => baneHex(b.farge)));
+    const bb = { x0: Math.min(...d.map((b) => b.boks.x0)), y0: Math.min(...d.map((b) => b.boks.y0)),
+      x1: Math.max(...d.map((b) => b.boks.x1)), y1: Math.max(...d.map((b) => b.boks.y1)) };
+    const h = bb.y1 - bb.y0, w = bb.x1 - bb.x0;
+    const ok = hexer.size === 1 && fyll.length > 0 && h * mmPerEnhet <= TEKST_SPERR_MAKS_MM && w > 0;
+    return { bb, h, hex: ok ? [...hexer][0] : null };
+  });
+  const p = g.map((_, i) => i);
+  const rot = (i: number): number => p[i] === i ? i : (p[i] = rot(p[i]));
+  for (let i = 0; i < g.length; i++) {
+    const a = info[i];
+    if (!a.hex) continue;
+    // naermeste nabo til hoeyre paa samme linje
+    let best = -1, bestGap = Infinity;
+    for (let j = 0; j < g.length; j++) {
+      const b = info[j];
+      if (j === i || b.hex !== a.hex) continue;
+      const hm = Math.max(a.h, b.h);
+      if (Math.min(a.h, b.h) < 0.65 * hm) continue;
+      const linje = Math.abs(a.bb.y0 - b.bb.y0) <= 0.25 * hm || Math.abs(a.bb.y1 - b.bb.y1) <= 0.25 * hm;
+      const gap = b.bb.x0 - a.bb.x1;
+      if (!linje || gap < -0.2 * hm || gap > TEKST_SPERR * hm) continue;
+      if (gap < bestGap) { bestGap = gap; best = j; }
+    }
+    if (best >= 0) p[rot(i)] = rot(best);
+  }
+  const kl = new Map<number, number[]>();
+  g.forEach((_, i) => { const r = rot(i); if (!kl.has(r)) kl.set(r, []); kl.get(r)!.push(i); });
+  const ut: Bane[][] = [];
+  for (const ix of kl.values()) {
+    if (ix.length >= TEKST_SPERR_TEGN) ut.push(ix.flatMap((i) => g[i]));
+    else for (const i of ix) ut.push(g[i]);
+  }
+  return ut;
+}
+
 function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[]) => boolean,
                     par?: (a: Bane[], b: Bane[]) => boolean): Bane[][] {
   /**
@@ -1188,6 +1416,7 @@ function samleDeler(baner: Bane[], fin: number, glippe: number, ok?: (g: Bane[])
    */
   const paaFormen = !!ok;
   let g = delIDeler(baner, fin, DEL_GLIPPE_MM / glippe, paaFormen);
+  g = tekstlinjer(g, DEL_GLIPPE_MM / glippe);
   /**
    * Hva hoerer sammen? (Eirik 16.11.2026, Vito: «24 timers service:» og
    * «41770011» er én gruppe, logoen en annen, «men hvorfor? det er jo det
