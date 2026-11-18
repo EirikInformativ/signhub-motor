@@ -450,6 +450,7 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
   });
   // feltene beholder merket sitt gjennom kuttet
   ut.forEach((n, i) => { const fl = feltLuft.get(dekor[i]) ?? feltLuft.get(opphavAv.get(dekor[i])!); if (n !== dekor[i] && fl !== undefined) feltLuft.set(n, fl); });
+  ut.forEach((n, i) => { if (n !== dekor[i] && !opphavAv.has(n)) opphavAv.set(n, opphavAv.get(dekor[i]) ?? dekor[i]); });
   return { baner: ut.filter((b) => !skjulte.includes(b)), fjernet, foer, kortForbi: [...korte], gjennomsyn,
     forlenget: lagtTil, knotter, rettet, helSkjult: skjulte };
 }

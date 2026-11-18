@@ -1439,16 +1439,16 @@ function tilFeltStykke(e: Elem): Elem {
   const f = e.deler[0].flate;
   if (!f.length) return e;
   const ut = { ...e, lagvis: false, forleng: new Set<string>(), skjoter: [] as number[] };
+  // et sekundaerfelt: ett konvekst stykke, thru langs kanten
   if (f.length === 1 && f[0].length === 1) return { ...ut, omriss: f, thruForm: f, utenKiss: true };
+  /*
+   * Et hovedfelt: stykkene ligger i fast forhold og kiss-cuttes; thru gaar
+   * rundt hele feltet, TETT_THRU_MM utenfor det konvekse skallet (thru er
+   * aldri konkav).
+   */
   try {
-    const ytre = pc.union(...(f.map((poly) => [poly[0]]) as [any])) as MultiPoly;
-    let form: MultiPoly = ytre;
-    for (let rMm = 1; form.length > 1 && rMm <= 100; rMm *= 1.25) {
-      const r = (rMm * MM) / e.skala;
-      form = pc.union(utvidKlipp(utvidKlipp(ytre, r, true), -r, true), ytre as any) as MultiPoly;
-    }
-    if (form.length > 1) return tilTettStykke(e);
-    form = form.map((poly) => [poly[0]]) as MultiPoly;
+    const sk = konvekstSkall(f.flatMap((poly) => poly[0].slice(0, -1)) as [number, number][]);
+    const form = pc.union(...(offsetRinger([sk], (TETT_THRU_MM * MM) / e.skala).map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
     return { ...ut, omriss: form, thruForm: form };
   } catch { return tilTettStykke(e); }
 }

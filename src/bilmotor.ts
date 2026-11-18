@@ -20,6 +20,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
+import { konvekstSkall } from "./ramme.ts";
 import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
@@ -323,6 +324,8 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
   const valgtPerOmraade: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
   /** omraadene med store felt (Saethre): delene skjaeres som ferdige feltstykker */
   const feltOmr = new Set<string>();
+  /** hovedfeltene: feltstykker i fast forhold til hverandre (banelistene) */
+  const hovedfelt = new Set<Bane[]>();
   for (const o of funn.omraader) {
     /**
      * Bilens egne streker og flater ligger ofte inne i rammen til en stor
@@ -613,6 +616,190 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
         const f = arbeid[med[0]];
         nye.push({ o: { ...f.o, navn: med.map((i) => arbeid[i].o.navn).join(" + ") }, valgte: gg });
         logg.push(`${f.o.vis}: ${med.length} deler (${med.map((i) => arbeid[i].o.navn).join(", ")}) er én sperret tekstlinje og leveres samlet.`);
+      }
+    }
+    if (fjern.size) {
+      const rest = arbeid.filter((_, i) => !fjern.has(i));
+      arbeid.length = 0;
+      arbeid.push(...rest, ...nye);
+    }
+  }
+  /*
+   * Store felt (Eirik 18.11.2026, Saethre, hjelpeskisse 1 til 7):
+   * - hvert feltstykke faar en rett, konveks kutteform rundt det som synes;
+   *   hjulbuen skjaeres ikke ut, den tar montoeren paa bilen;
+   * - stykker som er delt av en av bilens egne linjer (profilen ved
+   *   vinduskanten, en skjoet) er ett hovedfelt: de maa staa i fast forhold
+   *   og kiss-cuttes, lukes og appliseres samlet;
+   * - stykker som bare grenser mot hverandre langs en stripe i lakken er
+   *   sekundaerfelt: de thru-skjaeres ut hver for seg, og montoeren legger
+   *   dem etter stripa.
+   * Montoerens arbeid gaar foran folien: et hovedfelt deles aldri for aa
+   * spare folie.
+   */
+  {
+    const tilU = (mm: number) => (mm / malestokk) * MM;
+    const feltHex = (x: { o: typeof arbeid[number]["o"]; valgte: Bane[] }) => {
+      const fylte = x.valgte.filter((b) => b.fyll);
+      if (!fylte.length || x.valgte.some((b) => !b.fyll)) return null;
+      const hx = new Set(fylte.map((b) => baneHex(b.farge)));
+      if (hx.size !== 1) return null;
+      const h = [...hx][0];
+      const navn = `${x.o.vis}|${x.o.navn}`;
+      if (![...feltOmr].some((k) => { const [om, kh] = k.split("@"); return navn.startsWith(om) && kh === h; })) return null;
+      return h;
+    };
+    const formAv = (bs: Bane[]) => { try { return pc.union(...(bs.map((b) => flateKlipp(ringerAv(b.segs as any[]))).filter((f: any) => f?.length) as [any])); } catch { return null; } };
+    type Stk = { i: number; hex: string; form: any; skall: [number, number][] };
+    const stk: Stk[] = [];
+    arbeid.forEach((x, i) => {
+      const hx = feltHex(x);
+      if (!hx) return;
+      const hel = formAv(x.valgte);
+      if (!hel?.length) return;
+      // hver sammenhengende del for seg: en stripe i lakken tvers over gir to stykker
+      for (const poly of hel as any[]) {
+        const form = [poly];
+        const pk = poly[0].slice(0, -1) as [number, number][];
+        const skall = konvekstSkall(pk);
+        const xs = skall.map((q) => q[0]), ys = skall.map((q) => q[1]);
+        if (((Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / MM) * malestokk) < FELT_MIN_MM) continue;
+        stk.push({ i, hex: hx, form, skall });
+      }
+    });
+    // bilens linjer som segmenter, til aa se om en av dem gaar i glippa
+    const segmenter: [number, number, number, number][] = [];
+    for (const b of bilLinjer) {
+      let fra: [number, number] | null = null, start: [number, number] | null = null;
+      for (const sg of b.segs as any[]) {
+        if (sg.t === "m") { fra = sg.p; start = sg.p; continue; }
+        if (sg.t === "h") { if (fra && start) segmenter.push([fra[0], fra[1], start[0], start[1]]); fra = start; continue; }
+        if (sg.t === "c" && fra) {
+          let f0 = fra;
+          for (let n = 1; n <= 8; n++) {
+            const t = n / 8, u = 1 - t;
+            const q: [number, number] = [u * u * u * fra[0] + 3 * u * u * t * sg.a[0] + 3 * u * t * t * sg.b[0] + t * t * t * sg.c[0],
+              u * u * u * fra[1] + 3 * u * u * t * sg.a[1] + 3 * u * t * t * sg.b[1] + t * t * t * sg.c[1]];
+            segmenter.push([f0[0], f0[1], q[0], q[1]]); f0 = q;
+          }
+          fra = sg.c; continue;
+        }
+        if (sg.p && fra) segmenter.push([fra[0], fra[1], sg.p[0], sg.p[1]]);
+        if (sg.p) fra = sg.p;
+      }
+    }
+    const inni = (mp: any, x: number, y: number) => {
+      let inn = false;
+      for (const poly of mp) poly.forEach((r: [number, number][], k: number) => {
+        let c = false;
+        for (let a = 0, z = r.length - 1; a < r.length; z = a++) {
+          const [xa, ya] = r[a], [xz, yz] = r[z];
+          if ((ya > y) !== (yz > y) && x < ((xz - xa) * (y - ya)) / (yz - ya) + xa) c = !c;
+        }
+        if (c) inn = k === 0 ? true : false;
+      });
+      return inn;
+    };
+    const omkrets = (mp: any) => { let l = 0; for (const poly of mp) for (const r of poly) for (let k = 0; k < r.length - 1; k++) l += Math.hypot(r[k + 1][0] - r[k][0], r[k + 1][1] - r[k][1]); return l; };
+    /*
+     * To stykker er ett hovedfelt naar en kant designeren har tegnet
+     * fortsetter rett over glippa i nabostykket (det skraa baandet paa
+     * Saethre er brutt ved profilen under vinduene: de skraa kantene ligger
+     * paa samme linje paa begge sider). Kanter som grenser mot en stripe i
+     * lakken er bare parallelle, og kanten langs bilens ytterkant (laget av
+     * klippet) teller ikke.
+     */
+    const designKanter = (x: Stk): [number, number, number, number][] => {
+      // kanten langs bilens ytterkant ligger utenfor klippet (feltluften); den teller ikke
+      const orig = arbeid[x.i].valgte.map((b) => opphavAv.get(b) ?? b);
+      let klipp: any = null;
+      try {
+        const ks = orig.map((b) => klippFlateBane(b)).filter((k: any) => k?.length);
+        if (ks.length) klipp = utvidKlipp(pc.union(...(ks as [any])), tilU(5));
+      } catch { klipp = null; }
+      const kanter: [number, number, number, number][] = [];
+      const sk = x.skall;
+      for (let k = 0; k < sk.length; k++) {
+        const [x1, y1] = sk[k], [x2, y2] = sk[(k + 1) % sk.length];
+        if (Math.hypot(x2 - x1, y2 - y1) < tilU(100)) continue;
+        if (klipp && ![0.25, 0.5, 0.75].every((t) => inni(klipp, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))) continue;
+        kanter.push([x1, y1, x2, y2]);
+      }
+      return kanter;
+    };
+    const kantCache = new Map<Stk, [number, number, number, number][]>();
+    const kanterAv = (x: Stk) => { if (!kantCache.has(x)) kantCache.set(x, designKanter(x)); return kantCache.get(x)!; };
+    const sammen = (a: Stk, b: Stk): boolean => {
+      for (const [ax1, ay1, ax2, ay2] of kanterAv(a)) for (const [bx1, by1, bx2, by2] of kanterAv(b)) {
+        const va = [ax2 - ax1, ay2 - ay1], vb = [bx2 - bx1, by2 - by1];
+        const la = Math.hypot(va[0], va[1]), lb = Math.hypot(vb[0], vb[1]);
+        const sin = Math.abs(va[0] * vb[1] - va[1] * vb[0]) / (la * lb);
+        if (sin > Math.sin((1 * Math.PI) / 180)) continue;
+        // avstand fra b-kantens ender til a-kantens linje
+        const avst = (px: number, py: number) => Math.abs((px - ax1) * va[1] - (py - ay1) * va[0]) / la;
+        if (Math.max(avst(bx1, by1), avst(bx2, by2)) > tilU(6)) continue;
+        // kantene ligger etter hverandre med en glippe imellom, ikke oppaa hverandre
+        const proj = (px: number, py: number) => ((px - ax1) * va[0] + (py - ay1) * va[1]) / la;
+        const b0 = Math.min(proj(bx1, by1), proj(bx2, by2)), b1 = Math.max(proj(bx1, by1), proj(bx2, by2));
+        const glippe = Math.max(b0 - la, -b1);
+        if (glippe > 0 && glippe < tilU(FELT_REL_MM)) return true;
+      }
+      return false;
+    };
+    const rot = stk.map((_, k) => k);
+    const finn = (k: number): number => rot[k] === k ? k : (rot[k] = finn(rot[k]));
+    for (let a = 0; a < stk.length; a++) for (let b = a + 1; b < stk.length; b++) {
+      if (arbeid[stk[a].i].o.vis !== arbeid[stk[b].i].o.vis || stk[a].hex !== stk[b].hex) continue;
+      if (finn(a) === finn(b)) continue;
+      if (sammen(stk[a], stk[b])) rot[finn(a)] = finn(b);
+    }
+    const grupper = new Map<number, Stk[]>();
+    stk.forEach((x, k) => { const r = finn(k); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
+    const fjern = new Set<number>();
+    const nye: typeof arbeid = [];
+    // smaa deler av et feltstykke (under FELT_MIN_MM) staar igjen som de var
+    const restAv = new Map<number, Bane[]>();
+    for (const i of new Set(stk.map((x) => x.i))) {
+      const store = stk.filter((x) => x.i === i);
+      const rest = arbeid[i].valgte.filter((b) => {
+        const bx = (b.boks.x0 + b.boks.x1) / 2, by = (b.boks.y0 + b.boks.y1) / 2;
+        return !store.some((x) => inni(x.form, bx, by));
+      });
+      if (rest.length) restAv.set(i, rest);
+    }
+    for (const [i, rest] of restAv) nye.push({ o: { ...arbeid[i].o, navn: arbeid[i].o.navn + " rest" }, valgte: rest });
+    for (const g of grupper.values()) {
+      // konveks kutteform per stykke: én rett bane rundt det som synes
+      const baner = g.map((x) => {
+        const mal = arbeid[x.i].valgte.slice().sort((p, q) => (q.boks.x1 - q.boks.x0) * (q.boks.y1 - q.boks.y0) - (p.boks.x1 - p.boks.x0) * (p.boks.y1 - p.boks.y0))[0];
+        /*
+         * Kutteformen er det konvekse skallet, minus store innbuktninger som
+         * hjulbuen (Eirik 18.11.2026: «det med at hjulbuen er konkav skjært
+         * ut synes jeg bare er lekkert»). Smaa hakk og tapper fylles.
+         */
+        let form: any = [[[...x.skall, x.skall[0]]]];
+        try {
+          const inn = pc.difference(form, x.form) as any[];
+          const store = inn.filter((p: any) => arealKlipp([p]) > tilU(FELT_BUE_MM) * tilU(FELT_BUE_MM));
+          if (store.length) form = pc.difference(form, ...store.map((p: any) => [p]));
+        } catch { /* skallet */ }
+        const segs: any[] = [];
+        for (const poly of form) for (const r of poly) {
+          segs.push({ t: "m", p: r[0] });
+          for (const q of r.slice(1, -1)) segs.push({ t: "l", p: q });
+          segs.push({ t: "h" });
+        }
+        const pts = segs.filter((q) => q.p).map((q) => q.p);
+        return { ...mal, klipp: undefined, strek: false, segs,
+          boks: { x0: Math.min(...pts.map((q: any) => q[0])), y0: Math.min(...pts.map((q: any) => q[1])),
+                  x1: Math.max(...pts.map((q: any) => q[0])), y1: Math.max(...pts.map((q: any) => q[1])) } } as Bane;
+      });
+      for (const x of g) fjern.add(x.i);
+      const f = arbeid[g[0].i];
+      nye.push({ o: { ...f.o, navn: [...new Set(g.map((x) => arbeid[x.i].o.navn))].join(" + ") + (g.length === 1 && stk.filter((y) => y.i === g[0].i).length > 1 ? ` stykke ${stk.filter((y) => y.i === g[0].i).indexOf(g[0]) + 1}` : "") }, valgte: baner });
+      if (g.length > 1) {
+        hovedfelt.add(baner);
+        logg.push(`${f.o.vis}: ${g.length} feltstykker (${g.map((x) => arbeid[x.i].o.navn).join(", ")}) er delt av bilens egne linjer og er ett hovedfelt: kiss-cuttes, lukes og appliseres samlet.`);
       }
     }
     if (fjern.size) {
@@ -1394,6 +1581,10 @@ const FELT_KLIPP_MM = 1.5 * 1150;
 const FELT_LUFT_MM = 20;
 /** et feltstykke er minst saa bredt paa det smaleste (mm); mindre er tekst og smaabiter */
 const FELT_MIN_MM = 100;
+/** glipper mellom feltstykker som maales for bilens linjer (mm) */
+const FELT_REL_MM = 60;
+/** innbuktninger i feltstykket stoerre enn dette i kvadrat (mm) skjaeres ut (hjulbuen) */
+const FELT_BUE_MM = 150;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
 /** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
