@@ -258,7 +258,7 @@ export async function hentBaner(pdf: Uint8Array): Promise<{ baner: Bane[]; side:
 const nr = (v: number) => (Math.round(v * 1000) / 1000).toString();
 
 /** Skriver de valgte banene til en ny PDF, flyttet til origo. */
-export async function skrivPdf(baner: Bane[], marg = 6, forleng: string[] = [], skjot: number[] = []): Promise<Uint8Array> {
+export async function skrivPdf(baner: Bane[], marg = 6, forleng: string[] = [], skjot: number[] = [], felt = false): Promise<Uint8Array> {
   const x0 = Math.min(...baner.map((b) => b.boks.x0)) - marg;
   const y0 = Math.min(...baner.map((b) => b.boks.y0)) - marg;
   const x1 = Math.max(...baner.map((b) => b.boks.x1)) + marg;
@@ -305,6 +305,8 @@ export async function skrivPdf(baner: Bane[], marg = 6, forleng: string[] = [], 
   // bilens naturlige skjoeter langs stripen, som andel av lengden
   if (skjot.length) nokkelord.push(`signhub-skjot:${skjot.map((x) => x.toFixed(4)).join(",")}`);
   for (const [f, v] of spotter) nokkelord.push(`signhub-spot:${f}=${v}`);
+  // et stort felt (Saethre): skjaeres som ferdige stykker langs formen
+  if (felt) nokkelord.push("signhub-felt");
   if (nokkelord.length) doc.setKeywords(nokkelord);
   return doc.save();
 }

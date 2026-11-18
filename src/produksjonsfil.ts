@@ -84,6 +84,8 @@ export interface Motiv {
    * Bitene (flate) kiss-cuttes; linjen her thru-cuttes.
    */
   thruForm?: MultiPoly;
+  /** thru langs selve stykket, ingen kiss */
+  utenKiss?: boolean;
   /** flater som vises med sitt fyll og kiss-strek (det som er lagt tett) */
   markering?: { flate: MultiPoly; fyllOp: string }[];
   /**
@@ -457,11 +459,11 @@ export async function byggProduksjonsfil(
     }
     ops.push("Q\nEMC\n");
     // kiss rundt hver bit i de tette gruppene
-    if (motiver.some((m) => m.thruForm)) {
+    if (motiver.some((m) => m.thruForm && !m.utenKiss)) {
       ops.push("/OC /L3 BDC\nq\n");
       for (const p of ark.plasseringer) {
         const m = motiver[p.id];
-        if (m.thruForm) ops.push(iElement(p, strekOps(m.flate, m.skala, "CS1")));
+        if (m.thruForm && !m.utenKiss) ops.push(iElement(p, strekOps(m.flate, m.skala, "CS1")));
       }
       ops.push("Q\nEMC\n");
     }
@@ -656,7 +658,7 @@ export async function byggProduksjonsfil(
     D: doc.context.obj({ Order: oc, ON: oc, OFF: [], BaseState: PDFName.of("ON") }),
   }));
 
-  const medKiss = motiver.some((m) => m.thruForm);
+  const medKiss = motiver.some((m) => m.thruForm && !m.utenKiss);
   doc.setTitle(valg.helfoliering
     ? `${jobb} | Thru | ${folieTekst} | Helfolieringsfolie: thru-cut langs stykkene, ingen applisering`
     : valg.kunThru && (valg.print || medKiss)

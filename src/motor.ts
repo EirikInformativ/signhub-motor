@@ -789,6 +789,14 @@ const naerHex = (a: string, b: string) => {
   return Math.max(...x.map((v, i) => Math.abs(v - y[i]))) <= 3 / 255;
 };
 
+/** Et stort felt fra bilskissen (PDF-noekkelord): ferdige stykker langs formen. */
+async function lesFelt(pdf: Uint8Array): Promise<boolean> {
+  try {
+    const d = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
+    return /signhub-felt/.test(d.getKeywords() ?? "");
+  } catch { return false; }
+}
+
 /** Bilens skjoeter langs en stripe (PDF-noekkelord fra bilskissen). */
 async function lesSkjoter(pdf: Uint8Array): Promise<number[]> {
   try {
@@ -1374,6 +1382,10 @@ interface Elem {
    * enheter. Bitene selv kiss-cuttes.
    */
   thruForm?: MultiPoly;
+  /** et stort felt fra bilskissen: deles ikke i doerene, skjaeres som ferdige stykker langs formen */
+  felt?: boolean;
+  /** thru langs selve stykket, ingen kiss (feltstykke uten noe inni seg) */
+  utenKiss?: boolean;
   /**
    * Fargene som er tatt ut og lagt tett, vist i oppsettet med sin fyllfarge
    * og kiss-strek, saa montoeren ser hvor de skal (Eirik 16.11.2026).
@@ -1391,6 +1403,31 @@ interface Elem {
 }
 
 /** Et stykke i én farge som ikke er konvekst: kiss langs formen, thru rundt det konvekse skallet. */
+/**
+ * Et feltstykke fra bilskissen (Saethre): uten noe inni seg er stykket selve
+ * thru-formen, ogsaa naar det ikke er konvekst (hjulbuen). Med flere deler
+ * eller hull gaar thru langs ytterkanten, med den minste lukkingen som gjoer
+ * delene til ett stykke, og kiss langs formen.
+ */
+function tilFeltStykke(e: Elem): Elem {
+  if (e.thruForm || e.bilde || e.deler.length !== 1 || e.trykk?.length) return e;
+  const f = e.deler[0].flate;
+  if (!f.length) return e;
+  const ut = { ...e, lagvis: false, forleng: new Set<string>(), skjoter: [] as number[] };
+  if (f.length === 1 && f[0].length === 1) return { ...ut, omriss: f, thruForm: f, utenKiss: true };
+  try {
+    const ytre = pc.union(...(f.map((poly) => [poly[0]]) as [any])) as MultiPoly;
+    let form: MultiPoly = ytre;
+    for (let rMm = 1; form.length > 1 && rMm <= 100; rMm *= 1.25) {
+      const r = (rMm * MM) / e.skala;
+      form = pc.union(utvidKlipp(utvidKlipp(ytre, r, true), -r, true), ytre as any) as MultiPoly;
+    }
+    if (form.length > 1) return tilTettStykke(e);
+    form = form.map((poly) => [poly[0]]) as MultiPoly;
+    return { ...ut, omriss: form, thruForm: form };
+  } catch { return tilTettStykke(e); }
+}
+
 function tilTettStykke(e: Elem): Elem {
   if (e.thruForm || e.bilde || e.deler.length !== 1 || e.lagvis || e.trykk?.length) return e;
   const f = e.deler[0].flate;
@@ -1482,6 +1519,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     let trykk: Elem["trykk"];
     const spotter = await lesSpot(l.pdf);
     const skjoter = await lesSkjoter(l.pdf);
+    const erFelt = await lesFelt(l.pdf);
     // Skal fargene skilles, ma boksen omfatte alle fargene, ikke bare de
     // som star igjen nar hvitt er visket bort.
     const g0 = await medNavn<Geometri | GeometriPerFarge>(l.navn, () =>
@@ -1881,7 +1919,8 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
                      bbox: boks, skala,
                      breddeMm, hoydeMm, antall: l.antall, deler, omriss: kuttet,
                      ...(forleng.size ? { forleng } : {}), ...(skjoter.length ? { skjoter } : {}),
-                     ...(trykk?.length ? { trykk } : {}), ...(bilde ? { bilde } : {}) });
+                     ...(trykk?.length ? { trykk } : {}), ...(bilde ? { bilde } : {}),
+                     ...(erFelt && deler.length === 1 ? { felt: true } : {}) });
 
     const cmykAv = (f: Folie) => rgbTilCmyk(...hexTilRgb(f.hex ?? "#000000"));
     skisseMotiv.push({
@@ -1924,6 +1963,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
    * deles i like lange stykker med SKJOT_MM overlapp. Gruppen pakkes begge
    * veier, og den korteste vinner. Skjoetingen meldes alltid.
    */
+  const feltHele: [string, Elem[]][] = [];
   for (const [nokkel, g] of grupper) {
     const fb = Math.min(...g.flatMap((e) => e.deler.map((d) => d.folie.breddeMm ?? grunngeo.foliebredde)));
     const sk = Math.min(fb - grunngeo.rullKant,
@@ -1970,6 +2010,12 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
        * kanten (Eirik 18.11.2026, Saethre: «overlapp er ikke veien aa gaa
        * her ... ikke overlapp, ikke passmerker»).
        */
+      /*
+       * Et stort felt deles ikke i doerene naar det faar plass paa langs av
+       * rullen (Eirik 18.11.2026, Saethre-hjelpeskissen: stykkene gaar over
+       * doerskjoetene; de deles bare i designets egne mellomrom).
+       */
+      if (e.felt && kort <= maksLengde) continue;
       const feltSkjot = !fler && !!e.skjoter?.length && lang > maksLengde && lang < STRIPE_FORHOLD * kort;
       if (!(f.length && lang > maksLengde && (lang >= STRIPE_FORHOLD * kort || forBred || feltSkjot))) continue;
       const langsX = forBred ? e.breddeMm < e.hoydeMm : e.breddeMm >= e.hoydeMm;
@@ -2146,8 +2192,23 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      * Konvekse stykker thru-cuttes langs kanten som foer.
      */
     const ny = sett();
-    grupper.set(nokkel, [...feltDelt].some((e) => g.includes(e) && !hel.has(e)) ? ny.map(tilTettStykke) : ny);
+    if (ny.some((e) => e.felt)) {
+      /*
+       * Feltene skjaeres som ferdige stykker (Eirik 18.11.2026, hjelpeskisse
+       * trinn 6 og 7). Et stykke uten noe inni seg thru-cuttes langs sin egen
+       * form, ogsaa rundt hjulbuen, og faar fila Thru. Et stykke med flere
+       * deler eller hull kiss-cuttes langs formen og thru-cuttes langs
+       * ytterkanten med bro over glippene, i fila Kiss+thru. Begge nestes paa
+       * formen.
+       */
+      const omg = ny.map((e) => e.felt ? tilFeltStykke(e) : e);
+      const hele = omg.filter((e) => e.utenKiss), resten = omg.filter((e) => !e.utenKiss);
+      if (hele.length) feltHele.push([nokkel + "|felthel", hele]);
+      grupper.set(nokkel, resten);
+    } else grupper.set(nokkel, [...feltDelt].some((e) => g.includes(e) && !hel.has(e)) ? ny.map(tilTettStykke) : ny);
   }
+  for (const [n, g] of feltHele) grupper.set(n, g);
+  for (const [n, g] of [...grupper]) if (!g.length) grupper.delete(n);
 
   /**
    * En gruppe med faerre folier kan legges inn i en storre gruppe naar
@@ -2192,7 +2253,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     for (const liten of noklene) {
       for (const stor of noklene) {
         if (liten === stor || !grupper.has(liten) || !grupper.has(stor)) continue;
-        if (liten.endsWith("|tett") || stor.endsWith("|tett")) continue;
+        if (liten.endsWith("|tett") || stor.endsWith("|tett") || liten.endsWith("|felthel") || stor.endsWith("|felthel")) continue;
         const a = foliesett(grupper.get(liten)!), c = foliesett(grupper.get(stor)!);
         if (a.size >= c.size) continue;
         if (![...a].every((k) => c.has(k))) continue;
@@ -2291,7 +2352,8 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      * og saa appliseres alt samlet (Eirik 17.11.2026). Fila heter da Thru,
      * og arket er ikke stoerre enn innholdet.
      */
-    const teip = gruppe.every((e) => e.egetArk && !e.thruForm);
+    // ferdige feltstykker uten noe inni seg: arket er akkurat innholdet, fila heter Thru
+    const teip = gruppe.every((e) => (e.egetArk && !e.thruForm) || e.utenKiss);
     const kunThru = helfol || (folier.length === 1 &&
       gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || e.bilde || heltKonveks(e.deler[0].flate))));
     /**
@@ -2301,7 +2363,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      */
     const printThru = kunThru && gruppe.some((e) => e.bilde || printes(e.deler[0]));
     // tette grupper (tettArk) har kiss rundt bitene: to oppgaver, saa regmarks
-    const medKiss = kunThru && gruppe.some((e) => e.thruForm);
+    const medKiss = kunThru && gruppe.some((e) => e.thruForm && !e.utenKiss);
     const regThru = printThru || medKiss;
     /**
      * Appliser+thru gaar bare paa summa og har ingen regmarks: hele
@@ -2340,7 +2402,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
     const tilPakking: Motiv[] = gruppe.map((e) => ({
       navn: e.navn, flate: [], bbox: e.bbox, skala: e.skala,
       breddeMm: e.breddeMm, hoydeMm: e.hoydeMm, antall: e.antall, omriss: e.omriss,
-      ...(e.thruForm ? { thruForm: e.thruForm } : {}),
+      ...(e.thruForm ? { thruForm: e.thruForm } : {}), ...(e.utenKiss ? { utenKiss: true } : {}),
       // bilder printes utfallende og faar gap: kant i kant viser naboens bilde i kanten
       ...(kunThru ? { sider: e.thruForm || e.bilde ? [false, false, false, false] as [boolean, boolean, boolean, boolean]
         : retteSider(e.deler[0].flate, e.bbox, e.skala) }
@@ -2413,7 +2475,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
         flate: e.deler.find((d) => d.folie.kode === folie.kode)?.flate ?? [],
         bbox: e.bbox, skala: e.skala, breddeMm: e.breddeMm,
         hoydeMm: e.hoydeMm, antall: e.antall,
-        ...(e.thruForm ? { thruForm: e.thruForm } : {}),
+        ...(e.thruForm ? { thruForm: e.thruForm } : {}), ...(e.utenKiss ? { utenKiss: true } : {}),
         ...(e.bilde ? { bilde: e.bilde } : {}),
         ...(e.trykk?.length ? { trykk: e.trykk.map((t) => ({ flate: t.flate, fyllOp: rgbOp(t.hex), ...(t.spot ? { spot: t.spot } : {}) })) } : {}),
         // markeringen av det som er lagt tett, bare paa primaerarket

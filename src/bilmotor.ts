@@ -696,7 +696,12 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     const erFeltEl = enFarge && !!storste && (Math.max(storste.boks.x1 - storste.boks.x0, storste.boks.y1 - storste.boks.y0) / MM) * malestokk > MAKS_DEL_MM;
     const skjot = fylte.length >= 1 && (fylte.length <= 2 || erFeltEl) ? skjoterLangs(storste,
       baner, (x) => alleDekor.has(x), (SKJOT_TOL_MM / malestokk) * MM, (SKJOT_KANT_MM / malestokk) * MM, erFeltEl) : [];
-    let pdf = await skrivPdf(valgte, undefined, forleng, skjot);
+    // et stort felt i én farge (ikke en stripe), som de oransje paa Saethre
+    const erFeltKutt = enFarge && !!storste && (() => {
+      const w = storste.boks.x1 - storste.boks.x0, h = storste.boks.y1 - storste.boks.y0;
+      return (Math.max(w, h) / MM) * malestokk > FELT_KLIPP_MM && Math.max(w, h) < STRIPE_FORHOLD_BIL * Math.min(w, h);
+    })();
+    let pdf = await skrivPdf(valgte, undefined, forleng, skjot, erFeltKutt);
     let brukte = valgte;
     let per = await lesTrygt(pdf);
     let tegnetB = (per.bbox[2] - per.bbox[0]) / MM;
