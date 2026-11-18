@@ -21,7 +21,7 @@ import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
 import { konvekstSkall } from "./ramme.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, settFeltLakk, erFeltLakk, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, settFeltLakk, erFeltLakk, feltLakkSynlig, finnDekk, sirkel, clipDiff as clipDiffKlipp, clipUnion as clipUnionKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -356,7 +356,17 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     // en graa flate finnDekor selv har valgt (graa rute bak en kuloer, LTS Maskin) er dekor
     const valgtGraa = (b: Bane) => o.liste.some((x) => !!x.farge && x.farge.length === 4 &&
       Math.max(x.farge[0], x.farge[1], x.farge[2]) < 0.01 && x.farge[3] > 0.01 && x.farge[3] < 0.99) && likBoks(b);
-    const valgte = baner.filter((b) => !b.gradient && !b.bilde && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && (!erBil(b) || valgtGraa(b)) && likBoks(b))
+    const valgte0 = baner.filter((b) => !b.gradient && !b.bilde && andel({ ...b, boks: synligBoks(b) } as Bane, o) >= 0.9 && (!erBil(b) || valgtGraa(b)) && likBoks(b));
+    const erStripe = (b: Bane) => { const w = b.boks.x1 - b.boks.x0, h = b.boks.y1 - b.boks.y0; return Math.max(w, h) >= STRIPE_FORHOLD_BIL * Math.max(1e-9, Math.min(w, h)); };
+    /*
+     * Er en flate i omraadet et felt, er de andre store flatene i samme farge
+     * det ogsaa (Saethre: hjoernet bak bakhjulet er en egen bane, kortere enn
+     * rullen er bred, og ble skaaret som en logo med rett skraa kant over
+     * hjulbuen og uten utfallende bak).
+     */
+    const feltFarger = new Set(valgte0.filter((b) => b.fyll && !erStripe(b) &&
+      (Math.max(b.boks.x1 - b.boks.x0, b.boks.y1 - b.boks.y0) / MM) * malestokk > FELT_KLIPP_MM).map((b) => baneHex(b.farge)));
+    const valgte = valgte0
       /**
        * Bare striper kuttes ved klippet. Et logoikon som designeren har
        * klippet langs karosseriet skjaeres helt (Eirik 17.11.2026, Oesterboe:
@@ -373,7 +383,8 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
          * folie der 5,4 m² synes). Et logoikon (Oe-en paa Oesterboe, 1,1 m)
          * er kortere og skjaeres fortsatt helt.
          */
-        const felt = (Math.max(w, h) / MM) * malestokk > FELT_KLIPP_MM;
+        const felt = (Math.max(w, h) / MM) * malestokk > FELT_KLIPP_MM ||
+          (!!b.fyll && !stripe && feltFarger.has(baneHex(b.farge)) && (Math.min(w, h) / MM) * malestokk > FELT_MIN_MM && !!b.klipp?.length);
         /*
          * Et felt kuttes tett langs klippet, FELT_LUFT_MM utenfor, med rette
          * hjoerner: hjulbuen foelger klippebanen, og kanten mot bilens
@@ -407,7 +418,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       perHex.set(h, (perHex.get(h) ?? 0) + (b.boks.x1 - b.boks.x0) * (b.boks.y1 - b.boks.y0));
     }
     const lakkHex = [...perHex].sort((a, b) => b[1] - a[1])[0]?.[0];
-    settFeltLakk(lakkHex ? (o: Bane) => !!o.fyll && baneHex(o.farge) === lakkHex : null);
+    settFeltLakk(lakkHex ? (o: Bane) => !!o.fyll && baneHex(o.farge) === lakkHex : null, MM / malestokk);
   }
   const dekorOpphav = new Set([...alleDekor].map((b) => opphavAv.get(b) ?? b));
   const bilLinjer = baner.filter((b) => !b.bilde && !b.gradient && !alleDekor.has(b) && !dekorOpphav.has(b));
@@ -810,7 +821,10 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       });
       if (rest.length) restAv.set(i, rest);
     }
+    if (process.env.FELT_FORM) { const fs = await import("fs"); for (const x of stk) fs.appendFileSync(process.env.FELT_FORM, JSON.stringify({ navn: arbeid[x.i].o.vis + " " + arbeid[x.i].o.navn, baner: (x.form as any[]).flatMap((p: any) => p) }) + "\n"); }
     for (const [i, rest] of restAv) nye.push({ o: { ...arbeid[i].o, navn: arbeid[i].o.navn + " rest" }, valgte: rest });
+    const egenLakkAv = (x: Stk) => arbeid[x.i].valgte.map((b) => feltLakkSynlig.get(b)).filter((l: any) => l?.length);
+    const dekkene = finnDekk(baner, MM / malestokk);
     for (const g of grupper.values()) {
       // konveks kutteform per stykke: én rett bane rundt det som synes
       const baner = g.map((x) => {
@@ -828,14 +842,33 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
          */
         let skall = x.skall;
         const vis = funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis);
-        if (vis) {
+        // bilens ende: klippet designeren har lagt paa feltet (karosseriet), ellers visningen
+        let ende: { x0: number; x1: number } | null = vis ? { x0: vis.x0, x1: vis.x1 } : null;
+        try {
+          const ks = arbeid[x.i].valgte.map((b) => klippFlateBane(opphavAv.get(b) ?? b)).filter((k: any) => k?.length);
+          const kp = ks.flatMap((k: any) => k.flat(2)) as [number, number][];
+          if (kp.length) ende = { x0: Math.min(...kp.map((q) => q[0])), x1: Math.max(...kp.map((q) => q[0])) };
+        } catch { /* visningen */ }
+        if (ende) {
+          const vis = ende;
           const sx0 = Math.min(...skall.map((q) => q[0])), sx1 = Math.max(...skall.map((q) => q[0]));
+          if (process.env.FELT_OEY) console.log("ENDE", arbeid[x.i].o.vis, [sx0, sx1, vis.x0, vis.x1, funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis)?.x0, funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis)?.x1].map((v) => Math.round((v ?? 0) * 2.0833)).join(" "));
           const e = tilU(FELT_ENDE_MM), naer = tilU(FELT_ENDE_NAER_MM);
           let pk = skall.slice();
-          if (sx0 - vis.x0 < naer) pk = pk.concat(skall.map(([px, py]) => [px - e, py] as [number, number]));
-          if (vis.x1 - sx1 < naer) pk = pk.concat(skall.map(([px, py]) => [px + e, py] as [number, number]));
+          // forbi bilens ende i visningen, ikke bare forbi stykket (Eirik 18.11.2026: hjoernet bak «maa legges overlappende»)
+          if (sx0 - vis.x0 < naer) { const d = sx0 - (vis.x0 - e); pk = pk.concat(skall.filter(([px]) => px - sx0 < naer).map(([px, py]) => [px - d, py] as [number, number])); }
+          if (vis.x1 - sx1 < naer) { const d = vis.x1 + e - sx1; pk = pk.concat(skall.filter(([px]) => sx1 - px < naer).map(([px, py]) => [px + d, py] as [number, number])); }
           if (pk.length > skall.length) skall = konvekstSkall(pk);
         }
+        /*
+         * Forlengelsen rundt hjoernet legges til etter at innbuktningene og
+         * lakken er tatt ut av stykket: rundt hjoernet skal folien gaa over
+         * det som ser ut som lakk eller grill i 2D (Eirik 18.11.2026: «ikke
+         * tenk saa mye paa grillen paa sidebildet. montoeren skjaerer til det»).
+         */
+        let forlengelse: any = [];
+        if (skall !== x.skall) { try { forlengelse = clipDiffKlipp([[[...skall, skall[0]]]], [[[[...x.skall, x.skall[0]]]], ...dekkene.map((d) => sirkel(d.cx, d.cy, d.r))]); } catch { forlengelse = []; } }
+        skall = x.skall;
         let form: any = [[[...skall, skall[0]]]];
         try {
           const inn = pc.difference(form, x.form) as any[];
@@ -844,10 +877,20 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
            * ogsaa ut, uansett stoerrelse: kutteformen foelger designets kant
            * (Eirik 18.11.2026, hjoernet bak oeverst: «jeg savner den kurven»).
            */
-          const lakkHer = (p: any) => lakkFlater.some((l) => { try { return arealKlipp(pc.intersection([p], l)) > tilU(20) * tilU(20); } catch { return false; } });
+          const egenLakk = arbeid[x.i].valgte.map((b) => feltLakkSynlig.get(b)).filter((l: any) => l?.length);
+          const lakkHer = (p: any) => [...lakkFlater, ...egenLakk].some((l) => { try { return arealKlipp(pc.intersection([p], l)) > tilU(20) * tilU(20); } catch { return false; } });
           const store = inn.filter((p: any) => arealKlipp([p]) > tilU(FELT_BUE_MM) * tilU(FELT_BUE_MM) || lakkHer(p));
           if (store.length) form = pc.difference(form, ...store.map((p: any) => [p]));
         } catch { /* skallet */ }
+        /*
+         * Kutteformen gaar aldri ut over lakk som synes eller inn paa dekket
+         * (Saethre: hjoernet foran dekket forhjulet, trekanten bak dekket lakk).
+         */
+        try {
+          const bort = [...egenLakkAv(x), ...dekkene.map((d) => sirkel(d.cx, d.cy, d.r))];
+          if (bort.length) { const f2 = clipDiffKlipp(form, bort); if (f2.length) form = f2.filter((p: any) => arealKlipp([p]) > 0.02 * arealKlipp(f2)); }
+        } catch { /* som foer */ }
+        if (forlengelse.length) { try { let f3: any; try { f3 = pc.union(form, forlengelse); } catch { f3 = clipUnionKlipp([form, forlengelse]); } if (f3.length) form = f3.sort((a: any, b: any) => arealKlipp([b]) - arealKlipp([a])).slice(0, 1).map((p: any) => [p[0]]); } catch { /* uten */ } }
         const segs: any[] = [];
         for (const poly of form) for (const r of poly) {
           segs.push({ t: "m", p: r[0] });

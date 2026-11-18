@@ -111,6 +111,120 @@ export function clipDiff(a: any, bs: any[]): any {
   return flate(ringer) ?? [];
 }
 
+/** Snittet av a og b, med ClipperLib. */
+export function clipInter(a: any, b: any): any {
+  const S = 1e3;
+  const c = new ClipperLib.Clipper();
+  const til = (mp: any) => { const ut: any[] = []; for (const poly of mp) for (const r of poly) ut.push(r.map(([x, y]: Pt) => ({ X: Math.round(x * S), Y: Math.round(y * S) }))); return ut; };
+  c.AddPaths(til(a), ClipperLib.PolyType.ptSubject, true);
+  c.AddPaths(til(b), ClipperLib.PolyType.ptClip, true);
+  const res: any[] = [];
+  c.Execute(ClipperLib.ClipType.ctIntersection, res, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  const ringer: Ring[] = res.map((p: any[]) => p.map((q) => [q.X / S, q.Y / S] as Pt)).filter((r) => r.length > 2);
+  return flate(ringer) ?? [];
+}
+
+const rektangel = (x0: number, y0: number, x1: number, y1: number) => [[[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]]];
+export const sirkel = (cx: number, cy: number, r: number, n = 72) => {
+  const ring: Pt[] = [];
+  for (let i = 0; i < n; i++) ring.push([cx + r * Math.cos((2 * Math.PI * i) / n), cy + r * Math.sin((2 * Math.PI * i) / n)]);
+  return [[[...ring, ring[0]]]];
+};
+
+/**
+ * Lakk som synes innenfor et omraade: fyll i lakkfargen, innenfor sitt eget
+ * klipp, minus alt som er tegnet etter det. Feltet selv dekker bare der det
+ * synes (innenfor sitt klipp): der designeren har klippet feltet bort,
+ * synes lakken, ogsaa om feltbanen ligger der (Saethre: graatt ved siden av
+ * trekanten bak og under hjoernet oeverst bak).
+ */
+function synligLakk(alle: Bane[], rg: Bane["boks"], felt: number, feltSynlig: any): any {
+  if (!feltLakk) return [];
+  const R = rektangel(rg.x0, rg.y0, rg.x1, rg.y1);
+  const lakk: any[] = [];
+  alle.forEach((o, j) => {
+    if (!o.fyll || o.bilde || !feltLakk!(o) || !overlapper(o.boks, rg)) return;
+    let f = flate(ringerAv(o.segs as any[]));
+    if (!f?.length) return;
+    f = clipInter(f, R);
+    const kl = klippFlate(o);
+    if (kl?.length) f = clipInter(f, kl);
+    if (!f.length) return;
+    const dekk: any[] = [];
+    for (let q = j + 1; q < alle.length; q++) {
+      const d = alle[q];
+      if (q === felt || (!d.fyll && !d.bilde) || feltLakk!(d) || !overlapper(d.boks, o.boks) || !overlapper(d.boks, rg)) continue;
+      let g = flate(ringerAv(d.segs as any[]));
+      if (!g?.length) continue;
+      const k2 = klippFlate(d);
+      if (k2?.length) g = clipInter(g, k2);
+      if (g.length) dekk.push(g);
+    }
+    if (felt > j && feltSynlig?.length) dekk.push(feltSynlig);
+    const s2 = dekk.length ? clipDiff(f, dekk) : f;
+    if (s2.length) lakk.push(s2);
+  });
+  return lakk.length ? clipUnion(lakk) : [];
+}
+
+/**
+ * Dekkene i skissen: nesten sorte, runde flater paa 500 til 950 mm. Brukes
+ * til aa gi felt utfallende inn til dekket under hele hjulbuen (Eirik
+ * 18.11.2026: «dekket paa bilen pleier aa vaere en god pekepinn paa hvor
+ * utfallende boer ligge»).
+ */
+export function finnDekk(alle: Bane[], perMm: number): { cx: number; cy: number; r: number; j: number }[] {
+  const ut: { cx: number; cy: number; r: number; j: number }[] = [];
+  for (let j = 0; j < alle.length; j++) {
+    const o = alle[j];
+    if (!o.fyll || o.bilde) continue;
+    const c = o.farge as any;
+    const moerk = Array.isArray(c) && (c.length === 4 ? c[0] < 0.1 && c[1] < 0.1 && c[2] < 0.1 && c[3] >= 0.85 : c.length === 3 ? Math.max(...c) < 0.15 : c.length === 1 ? c[0] < 0.15 : false);
+    if (!moerk) continue;
+    const w = o.boks.x1 - o.boks.x0, h = o.boks.y1 - o.boks.y0;
+    if (Math.abs(w / h - 1) > 0.1 || w / perMm < 500 || w / perMm > 950) continue;
+    let a = 0;
+    try { a = areal(flate(ringerAv(o.segs as any[]))); } catch { continue; }
+    const fyll = a / ((Math.PI / 4) * w * h);
+    if (fyll < 0.95 || fyll > 1.05) continue;
+    ut.push({ cx: (o.boks.x0 + o.boks.x1) / 2, cy: (o.boks.y0 + o.boks.y1) / 2, r: (w + h) / 4, j });
+  }
+  return ut;
+}
+
+/** Det som synes av bane j: innenfor sitt klipp, minus alt tegnet etter den (unntatt `unntak`). */
+function synligAv(alle: Bane[], j: number, unntak: number): any {
+  const o = alle[j];
+  let f = flate(ringerAv(o.segs as any[]));
+  if (!f?.length) return [];
+  const kl = klippFlate(o);
+  if (kl?.length) f = clipInter(f, kl);
+  const dekk: any[] = [];
+  for (let q = j + 1; q < alle.length; q++) {
+    const d = alle[q];
+    if (q === unntak || (!d.fyll && !d.bilde) || !overlapper(d.boks, o.boks)) continue;
+    let g = flate(ringerAv(d.segs as any[]));
+    if (!g?.length) continue;
+    const k2 = klippFlate(d);
+    if (k2?.length) g = clipInter(g, k2);
+    if (g.length) dekk.push(g);
+  }
+  return dekk.length ? clipDiff(f, dekk) : f;
+}
+
+/** feltets lakk som synes rundt det, til kutteformen i bilmotor */
+export const feltLakkSynlig = new WeakMap<Bane, any>();
+/** tegnede enheter per mm, satt av lesBilskisse sammen med lakkfargen */
+let feltPerMm = 1;
+/** utfallende under hjulbuen gaar inntil dette forbi det synlige, men aldri inn paa dekket */
+const FELT_BUE_TIL_DEKK_MM = 250;
+/** synlige prikker i et felt under dette (mm²) er designerens rusk og styrer ikke kuttet */
+const FELT_PRIKK_MM2 = 2500;
+/** en synlig oey deles i en smal hals under 2 x dette (mm) */
+const FELT_HALS_MM = 40;
+/** halsen ligger over hjulbuen: innenfor dette fra dekket */
+const FELT_BUE_HALS_MM = 400;
+
 /** Bare ytterringene: et hull i det tillatte skal aldri bli hull i dekoren. */
 const utenHull = (mp: any) => mp.map((poly: any) => [poly[0]]);
 
@@ -163,7 +277,7 @@ let feltLakk: ((o: Bane) => boolean) | null = null;
 const KLIPP_DEKK = true;
 /** en synlig oey er et eget feltstykke naar den er minst saa stor som andel av den stoerste */
 const OEY_STOR = 0.03;
-export function settFeltLakk(f: ((o: Bane) => boolean) | null) { feltLakk = f; }
+export function settFeltLakk(f: ((o: Bane) => boolean) | null, perMm = 1) { feltLakk = f; feltPerMm = perMm; }
 export function erFeltLakk(o: Bane): boolean { return !!feltLakk?.(o); }
 
 export function kuttVedKlipp(b: Bane, luft: number, rett = false): Bane {
@@ -280,6 +394,110 @@ export function stripeKanter(mp: any, st: { ux: number; uy: number }):
 }
 
 /**
+ * Feltet i én farge: det som synes av alle banene, delt i oeyer (og i smale
+ * halser), hver oey med utfallende kant `fl` inn under bildelene og utenfor
+ * bilen, inn til dekket under hjulbuen, aldri ut over lakk som synes.
+ */
+function feltSamlet0(bs: Bane[], alle: Bane[], indeks: Map<Bane, number>, erDekor: (b: Bane) => boolean): { form: any; lakk: any } | null {
+  const fl = feltLuft.get(bs[0]) ?? feltLuft.get(opphavAv.get(bs[0])!)!;
+  const mm = feltPerMm;
+  const synlige: any[] = [];
+  let rg = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  for (const b of bs) {
+    const i = indeks.get(b) ?? indeks.get(opphavAv.get(b)!);
+    if (i === undefined) continue;
+    const orig = alle[i];
+    const origF = flate(ringerAv(orig.segs as any[]));
+    if (!origF?.length) continue;
+    const k = klippFlate(orig);
+    let f = k?.length ? clipInter(origF, k) : origF;
+    const dekk: any[] = [];
+    for (let q = i + 1; q < alle.length; q++) {
+      const o = alle[q];
+      if ((!o.fyll && !o.bilde) || erDekor(o) || !overlapper(o.boks, orig.boks)) continue;
+      let g = flate(ringerAv(o.segs as any[]));
+      if (!g?.length) continue;
+      const k2 = klippFlate(o);
+      if (k2?.length) g = clipInter(g, k2);
+      if (g.length) dekk.push(g);
+    }
+    if (dekk.length) f = clipDiff(f, dekk);
+    if (f.length) synlige.push(f);
+    const bb = b.boks;
+    rg = { x0: Math.min(rg.x0, bb.x0), y0: Math.min(rg.y0, bb.y0), x1: Math.max(rg.x1, bb.x1), y1: Math.max(rg.y1, bb.y1) };
+  }
+  if (!synlige.length) return null;
+  rg = { x0: rg.x0 - 4 * fl, y0: rg.y0 - 4 * fl, x1: rg.x1 + 4 * fl, y1: rg.y1 + 4 * fl };
+  const synlig = clipUnion(synlige);
+  // designerens rusk (Eirik 18.11.2026: «vi boer vite bedre enn aa legge utfallende for den»)
+  let syn = (synlig as any[]).filter((p) => areal([p]) >= FELT_PRIKK_MM2 * mm * mm);
+  if (!syn.length) syn = synlig;
+  const storst0 = Math.max(...syn.map((p) => areal([p])));
+  /*
+   * En smal hals over hjulbuen deler oeyen (Saethre: hjoernet bak hjulet
+   * henger sammen med det skraa feltet over buen; Eirik vil ha dem hver for
+   * seg, som hjoernet foran). Bare halser ved et dekk: smale striper ellers
+   * i feltet er design.
+   */
+  const dekk0 = finnDekk(alle, mm);
+  const bueSone = dekk0.length ? clipUnion(dekk0.map((d) => clipInter(sirkel(d.cx, d.cy, d.r + FELT_BUE_HALS_MM * mm), rektangel(d.cx - 3 * d.r, d.cy, d.cx + 3 * d.r, d.cy + 3 * d.r)))) : [];
+  const oeyer: any[] = [];
+  for (const p of syn) {
+    if (areal([p]) < OEY_STOR * storst0 || !bueSone.length) { oeyer.push([p]); continue; }
+    let hals: any[] = [];
+    try { hals = clipInter(clipDiff([p], [utvid(utvid([p], -FELT_HALS_MM * mm), FELT_HALS_MM * mm)]), bueSone); } catch { hals = []; }
+    const rest = hals.length ? clipDiff([p], [hals]) : [];
+    const d2 = rest.filter((q: any) => areal([q]) >= OEY_STOR * storst0);
+    if (d2.length < 2) { oeyer.push([p]); continue; }
+    for (const q of rest) oeyer.push([q]);
+    for (const q of hals) oeyer.push([q]);
+  }
+  const storst = Math.max(...oeyer.map((o) => areal(o)));
+  const store = oeyer.filter((o) => areal(o) >= OEY_STOR * storst).sort((a, b) => areal(b) - areal(a));
+  const smaa = oeyer.filter((o) => !store.includes(o));
+  if (process.env.FELT_OEY) console.log("OEY", oeyer.map((o) => Math.round(areal(o) / mm / mm)).join(" "));
+  const grupper = store.map((o) => [o]);
+  for (const sm of smaa) {
+    let best = 0, bd = Infinity;
+    const c = sm[0][0][0];
+    store.forEach((o, k) => { const d = Math.min(...o[0][0].map((q: Pt) => Math.hypot(q[0] - c[0], q[1] - c[1]))); if (d < bd) { bd = d; best = k; } });
+    grupper[best].push(sm);
+  }
+  let lakk: any = [];
+  try { lakk = synligLakk(alle, rg, -1, null); } catch { lakk = []; }
+  const dekkene = finnDekk(alle, mm).filter((d) => d.cx + d.r > rg.x0 && d.cx - d.r < rg.x1 && d.cy + d.r > rg.y0 && d.cy - d.r < rg.y1);
+  const deler: any[] = [];
+  for (const g of grupper) {
+    const gU = g.length > 1 ? clipUnion(g) : g[0];
+    let tg = utvid(gU, fl, true);
+    /*
+     * Under hjulbuen gaar folien inn til dekket rundt hele buen (Eirik
+     * 18.11.2026: «hvorfor har du bare fulgt 75 mm rundt hjulbuen halvveis?»).
+     */
+    if (dekkene.length) {
+      const naa = utvid(gU, FELT_BUE_TIL_DEKK_MM * mm, false);
+      for (const d of dekkene) {
+        const sone = clipDiff(clipInter(sirkel(d.cx, d.cy, d.r + FELT_BUE_TIL_DEKK_MM * mm), rektangel(d.cx - 3 * d.r, d.cy, d.cx + 3 * d.r, d.cy + 3 * d.r)), [sirkel(d.cx, d.cy, d.r)]);
+        const til = clipInter(naa, sone);
+        if (til.length) tg = clipUnion([tg, til]);
+      }
+      tg = clipDiff(tg, dekkene.map((d) => sirkel(d.cx, d.cy, d.r)));
+    }
+    if (lakk.length) tg = clipDiff(tg, [lakk]);
+    // utfallende gaar aldri inn over et annet stykke som synes
+    const andre = grupper.filter((x) => x !== g).flat();
+    if (andre.length) tg = clipDiff(tg, [utvid(clipUnion(andre), fl / 30, true)]);
+    for (const d of deler) tg = clipDiff(tg, [utvid(d, fl / 30, true)]);
+    // det som er igjen av oeyen selv (ikke biter av utfallende kanten)
+    tg = tg.filter((p: any) => { try { return clipInter([p], gU).length > 0; } catch { return true; } });
+    if (tg.length) deler.push(tg);
+  }
+  const form = deler.flatMap((d) => d);
+  if (!form.length) return null;
+  return { form, lakk };
+}
+
+/**
  * `dekor` er dekorbanene som skal kuttes. `alle` er skissens baner i
  * tegnerekkefoelge. `erDekor` sier hvilke av dem som er dekor (de dekker
  * aldri annen dekor her: lagene i en logo bygges i kjorJobb). `luft` og
@@ -294,7 +512,48 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
   let fjernet = 0, foer = 0, gjennomsyn = 0, lagtTil = 0, knotter = 0, rettet = 0;
   const korte = new Set<Bane>();
   const skjulte: Bane[] = [];
+  /*
+   * Feltene i samme farge behandles samlet (Saethre: hjoernet bak er en egen
+   * bane, og to baner i samme farge vokste sammen under terskelen). Det som
+   * synes av alle banene i fargen er feltet; hver synlige oey faar sin egen
+   * utfallende kant, og oeyene holdes fra hverandre.
+   */
+  const feltSamlet = new Map<Bane, any>();
+  const feltBort = new Set<Bane>();
+  {
+    const perHex = new Map<string, Bane[]>();
+    for (const b of dekor) {
+      if (!b.fyll || b.strek) continue;
+      if ((feltLuft.get(b) ?? feltLuft.get(opphavAv.get(b)!)) === undefined) continue;
+      const h = JSON.stringify(b.farge);
+      if (!perHex.has(h)) perHex.set(h, []);
+      perHex.get(h)!.push(b);
+    }
+    for (const bs of perHex.values()) {
+      try {
+        const r = feltSamlet0(bs, alle, indeks, erDekor);
+        if (!r) continue;
+        feltSamlet.set(bs[0], r);
+        for (const b of bs.slice(1)) feltBort.add(b);
+      } catch (e) { if (process.env.FELT_OEY) console.log("feltSamlet feilet", e); }
+    }
+  }
   const ut = dekor.map((b) => {
+    if (feltBort.has(b)) return b;
+    if (feltSamlet.has(b)) {
+      const { form, lakk } = feltSamlet.get(b);
+      const segs: any[] = [];
+      for (const poly of form) for (const r of poly) {
+        segs.push({ t: "m", p: r[0] });
+        for (let k = 1; k < r.length - 1; k++) segs.push({ t: "l", p: r[k] });
+        segs.push({ t: "h" });
+      }
+      const pts = segs.filter((q) => q.p).map((q) => q.p as Pt);
+      const nyB = { ...b, segs, boks: { x0: Math.min(...pts.map((q) => q[0])), y0: Math.min(...pts.map((q) => q[1])),
+        x1: Math.max(...pts.map((q) => q[0])), y1: Math.max(...pts.map((q) => q[1])) } } as Bane;
+      feltLakkSynlig.set(b, lakk);
+      return nyB;
+    }
     if (!b.fyll || b.strek) return b;
     const i = indeks.get(b) ?? indeks.get(opphavAv.get(b)!);
     if (i === undefined) return b;
@@ -378,6 +637,8 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
       }
     } catch { grunnlag = synlig; }
     let tillatt: any;
+    /** et felt kan gaa inn under bildelene saa langt designeren har tegnet det, ogsaa forbi sitt eget klipp */
+    let grunn: any = egen;
     const fl = feltLuft.get(b) ?? feltLuft.get(opphavAv.get(b)!);
     if (fl !== undefined) {
       /*
@@ -401,33 +662,83 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
          * skraa feltet). Smaa, tynne oeyer (gjennomsyn langs terskelen)
          * hoerer til naermeste store oey.
          */
-        const oeyer = (synlig as any[]).map((p) => [p]);
+        const mm = feltPerMm;
+        /*
+         * Smaa synlige prikker (designerens rusk ved kanten, Eirik 18.11.2026:
+         * «vi boer vite bedre enn aa legge utfallende for den») styrer ikke
+         * kuttet.
+         */
+        const orig = opphavAv.get(b) ?? b;
+        const k = klippFlate(orig), origF = flate(ringerAv(orig.segs as any[]));
+        // feltet synes der det ligger innenfor sitt klipp og ikke er dekket
+        let feltSyn: any = [];
+        try { feltSyn = k?.length && origF?.length ? clipDiff(clipInter(origF, k), [dekkSamlet]) : synlig; } catch { feltSyn = synlig; }
+        if (!feltSyn.length) feltSyn = synlig;
+        let syn = (feltSyn as any[]).filter((p) => areal([p]) >= FELT_PRIKK_MM2 * mm * mm);
+        if (!syn.length) syn = feltSyn as any[];
+        /*
+         * En oey med en smal hals deles i halsen (Saethre: hjoernet bak
+         * hjulet henger sammen med det skraa feltet i en smal stripe over
+         * hjulbuen; Eirik vil ha dem hver for seg).
+         */
+        const storst0 = Math.max(...syn.map((p) => areal([p])));
+        const oeyer: any[] = [];
+        for (const p of syn) {
+          if (areal([p]) < OEY_STOR * storst0) { oeyer.push([p]); continue; }
+          let deler2: any[] = [];
+          try {
+            const aap = utvid(utvid([p], -FELT_HALS_MM * mm), FELT_HALS_MM * mm);
+            deler2 = aap.filter((q: any) => areal([q]) >= OEY_STOR * storst0);
+          } catch { deler2 = []; }
+          if (deler2.length < 2) { oeyer.push([p]); continue; }
+          for (const q of deler2) oeyer.push([q]);
+          for (const q of clipDiff([p], deler2.map((x: any) => [x]))) if (areal([q]) > 0) oeyer.push([q]);
+        }
         const storst = Math.max(...oeyer.map((o) => areal(o)));
         const store = oeyer.filter((o) => areal(o) >= OEY_STOR * storst);
         const smaa = oeyer.filter((o) => !store.includes(o));
+        if (process.env.FELT_OEY) console.log("OEY", oeyer.map((o) => Math.round(areal(o) / mm / mm)).join(" "));
         const grupper = store.map((o) => [o]);
         for (const sm of smaa) {
           let best = 0, bd = Infinity;
-          store.forEach((o, k) => { try { const d = areal(pc.intersection(utvid(sm, fl, true), o)) > 0 ? 0 : 1; if (d < bd) { bd = d; best = k; } } catch { /* */ } });
+          store.forEach((o, k) => { const c = sm[0][0][0]; const d = Math.min(...o[0][0].map((q: Pt) => Math.hypot(q[0] - c[0], q[1] - c[1]))); if (d < bd) { bd = d; best = k; } });
           grupper[best].push(sm);
         }
+        const rg = { x0: b.boks.x0 - 4 * fl, y0: b.boks.y0 - 4 * fl, x1: b.boks.x1 + 4 * fl, y1: b.boks.y1 + 4 * fl };
+        let lakkSyn: any = [];
+        try { lakkSyn = synligLakk(alle, rg, i, feltSyn); } catch { lakkSyn = []; }
+        const dekkene = finnDekk(alle, mm).filter((d) => d.cx + d.r > rg.x0 && d.cx - d.r < rg.x1 && d.cy + d.r > rg.y0 && d.cy - d.r < rg.y1);
         const deler: any[] = [];
         for (const g of grupper) {
-          let tg = utvid(g.length > 1 ? pc.union(...(g as [any])) : g[0], fl, true);
+          const gU = g.length > 1 ? clipUnion(g) : g[0];
+          let tg = utvid(gU, fl, true);
+          /*
+           * Under hjulbuen gaar folien inn til dekket, rundt hele buen (Eirik
+           * 18.11.2026: «hvorfor har du bare fulgt 75 mm rundt hjulbuen
+           * halvveis?»): den oevre halvdelen av en ring rundt dekket.
+           */
+          if (dekkene.length) {
+            const naa = utvid(gU, FELT_BUE_TIL_DEKK_MM * mm, false);
+            for (const d of dekkene) {
+              const sone = clipDiff(clipInter(sirkel(d.cx, d.cy, d.r + FELT_BUE_TIL_DEKK_MM * mm), rektangel(d.cx - 2 * d.r - 1e4, d.cy, d.cx + 2 * d.r + 1e4, d.cy + 2 * d.r + 1e4)), [sirkel(d.cx, d.cy, d.r)]);
+              const til = clipInter(naa, sone);
+              if (process.env.FELT_OEY) console.log("DEKK", Math.round(d.cx*2.0833), Math.round(1658-d.cy*2.0833), Math.round(areal(sone)/mm/mm), Math.round(areal(til)/mm/mm), Math.round(areal(gU)/mm/mm));
+              if (til.length) tg = clipUnion([tg, til]);
+            }
+            // inn til dekkets ytterkant (sirkelen), ogsaa der skissen viser dekket under buen
+            tg = clipDiff(tg, dekkene.map((d) => sirkel(d.cx, d.cy, d.r)));
+          }
           for (const d of deler) tg = clipDiff(tg, [utvid(d, fl / 30, true)]);
           deler.push(tg);
         }
         let t = deler.flatMap((d) => d);
-        const orig = opphavAv.get(b) ?? b;
-        const k = klippFlate(orig), origF = flate(ringerAv(orig.segs as any[]));
-        const striper = dekk.filter((o) => o.fyll && !o.bilde && feltLakk?.(o)).map((o) => flate(ringerAv(o.segs as any[]))).filter((f: any) => f?.length);
-        // ClipperLib, saa hakkete geometri ikke faar polygon-clipping til aa gi opp
-        if (striper.length) t = clipDiff(t, striper);
-        if (k?.length && origF?.length) {
-          const lakk = clipDiff(clipDiff(k, [origF]), [dekkSamlet]);
-          if (lakk.length) t = clipDiff(t, [lakk]);
-        }
+        // folien gaar aldri ut over lakk som synes, og stripene i lakkfargen deler feltet
+        if (lakkSyn.length) t = clipDiff(t, [lakkSyn]);
         tillatt = t;
+        if (process.env.FELT_T) { const fs = require("fs"); fs.appendFileSync(process.env.FELT_T, JSON.stringify({ i, hoved: true, baner: t.flatMap((p: any) => p) }) + "\n"); fs.appendFileSync(process.env.FELT_T, JSON.stringify({ hoved: false, baner: (lakkSyn as any[]).flatMap((p: any) => p) }) + "\n"); }
+        // feltet er det som synes pluss utfallende, ikke formen designeren tegnet under bilen
+        grunn = null;
+        feltLakkSynlig.set(b, lakkSyn);
       } catch { tillatt = utenHull(utvid(synlig, fl, true)); }
     } else try {
       /**
@@ -447,7 +758,7 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
         : hele.length > 2 ? [[[...hele, hele[0]]]] : utenHull(oeyer);
     } catch { tillatt = utenHull(utvid(synlig, luft)); }
     let ny: any;
-    try { ny = pc.intersection(egen, tillatt); } catch { return b; }
+    try { ny = grunn ? pc.intersection(grunn, tillatt) : tillatt; } catch { try { ny = clipInter(grunn, tillatt); } catch { return b; } }
     /**
      * Gaar dekoren for kort inn under bildelen, forlenges den (Eirik
      * 16.11.2026: «forlenge den selv»). Det skjulte vokser `luft` videre
@@ -532,9 +843,9 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
     return nyBane;
   });
   // feltene beholder merket sitt gjennom kuttet
-  ut.forEach((n, i) => { const fl = feltLuft.get(dekor[i]) ?? feltLuft.get(opphavAv.get(dekor[i])!); if (n !== dekor[i] && fl !== undefined) feltLuft.set(n, fl); });
+  ut.forEach((n, i) => { const fl = feltLuft.get(dekor[i]) ?? feltLuft.get(opphavAv.get(dekor[i])!); if (n !== dekor[i] && fl !== undefined) feltLuft.set(n, fl); const ls = feltLakkSynlig.get(dekor[i]); if (n !== dekor[i] && ls) feltLakkSynlig.set(n, ls); });
   ut.forEach((n, i) => { if (n !== dekor[i] && !opphavAv.has(n)) opphavAv.set(n, opphavAv.get(dekor[i]) ?? dekor[i]); });
-  return { baner: ut.filter((b) => !skjulte.includes(b)), fjernet, foer, kortForbi: [...korte], gjennomsyn,
+  return { baner: ut.filter((b) => !skjulte.includes(b) && !feltBort.has(b)), fjernet, foer, kortForbi: [...korte], gjennomsyn,
     forlenget: lagtTil, knotter, rettet, helSkjult: skjulte };
 }
 
