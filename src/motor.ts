@@ -482,20 +482,12 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
   };
   if (!forMange && !elementer.some(smaaAndre)) return elementer;
   /**
-   * Har folien allerede et eget oppsett i jobben (et annet element bruker
-   * den), legges bitene der som vanlige elementer i stedet for paa et eget
-   * ark (Eirik 17.11.2026, XL-BYGG: «hvorfor legges disse 2 pinsene inn i
-   * egen fil?»). Gull-pinsen paa siden hoerer hjemme paa gulloppsettet, der
-   * pinsen bak allerede ligger.
+   * Bitene faar alltid eget ark, ogsaa naar folien har et oppsett i jobben
+   * (Eirik 18.11.2026, Rydd Bergen: de roede bitene som legges over sort
+   * skal ikke appliseres, i motsetning til tegneseriebilene, og skal ikke
+   * ligge i samme fil). XL-BYGG (17.11.2026) loeses av registerregelen:
+   * kjoeres en logo i register i de samme foliene, legges bitene der.
    */
-  // et oppsett i folien finnes naar et annet element har den som sin stoerste
-  // farge (eller eneste), ikke bare som en liten farge som selv skal teipes
-  // inn (Proace: alle de roede trekantene er smaa, saa roedt faar eget ark)
-  const fargenFinnes = (kode: string, utenom: Elem) => elementer.some((e) => {
-    if (e === utenom) return false;
-    const st = e.deler.slice().sort((a, b) => areal(b.flate) - areal(a.flate))[0];
-    return !!st && st.folie.kode === kode;
-  });
   const ut: Elem[] = [];
   const tatt: string[] = [];
   const biter = new Map<Elem, [number, number]>();
@@ -610,7 +602,7 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
               ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}${e.antall > 1 ? ` (${n + 1}/${e.antall})` : ""}`,
                 lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2, antall: 1,
                 deler: [{ ...x.d, flate: f.map((poly) => poly.map((r) => r.map((q) => [q[0], q[1]] as [number, number]))) }],
-                omriss: f, ...(fargenFinnes(x.d.folie.kode, e) ? {} : { egetArk: true }) });
+                omriss: f, egetArk: true });
             }
           });
         }
