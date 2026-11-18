@@ -317,6 +317,9 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
   /** tekst skilt ut fra en flerfarget logo; bare disse faar passmerke over/under logoen */
   const utskiltTekst = new Set<Bane[]>();
   const utskiltNavn = new Set<string>();
+  /** tekstlister skilt fra logoen for aa spare folie: ingen passmerke (Eirik 18.11.2026, Rydd Bergen) */
+  const listeTekst = new Set<Bane[]>();
+  const listeNavn = new Set<string>();
   const valgtPerOmraade: { o: typeof funn.omraader[number]; valgte: Bane[] }[] = [];
   for (const o of funn.omraader) {
     /**
@@ -530,6 +533,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       }
       if (!best) return [d];
       utskiltTekst.add(best.tekst);
+      listeTekst.add(best.tekst);
       logg.push(`${o.vis} ${o.navn}: teksten i én farge ved logoen skilles ut og skjaeres for seg, ` +
         `logoens ramme blir ${Math.round((1 - best.a / hel) * 100)} % mindre.`);
       return [best.logo, best.tekst];
@@ -547,6 +551,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     deler.forEach((d, k) => {
       arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d });
       if (utskiltTekst.has(d)) utskiltNavn.add(`${o.vis} ${o.navn} del ${k + 1}`);
+      if (listeTekst.has(d)) listeNavn.add(`${o.vis} ${o.navn} del ${k + 1}`);
     });
     logg.push(`${o.vis} ${o.navn}: delt i ${deler.length} deler som skjaeres hver for seg ` +
       "(tekst og striper som bare staar ved siden av hverandre).");
@@ -862,7 +867,12 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
    * skaleres hoeyden til proporsjonene de andre har.
    */
   await laasProporsjoner(elementer, brukteBaner, logg);
-  await leggTekstPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
+  /*
+   * En liste skilt fra logoen faar ikke passmerke mot logoen: stubbene
+   * gjoer logoens ramme stoerre og koster mer folie enn passmerket er verdt
+   * (Eirik 18.11.2026, Rydd Bergen: «fjerne»).
+   */
+  await leggTekstPassmerker(elementer, brukteBaner, malestokk, logg, new Set([...utskiltNavn].filter((n) => !listeNavn.has(n))));
   await leggPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
   await dupliserSide(funn.visninger.map((x) => x.navn), elementer, brukteBaner, merknader, logg);
 

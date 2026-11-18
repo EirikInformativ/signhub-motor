@@ -14,6 +14,7 @@ import { tynnesteDetalj } from "./tykkelse.ts";
 import { pakkFritt, KANT_TOLERANSE_MM } from "./pakk.ts";
 import { PDFDocument, PDFName, PDFArray, decodePDFRawStream } from "pdf-lib";
 import { konvekstSkall, offsetRinger } from "./ramme.ts";
+import { utvid as utvidKlipp } from "./klippkant.ts";
 import { cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
@@ -49,6 +50,10 @@ const DREI_GEVINST = 0.1;
 /** Flere filer enn dette for under SAMLE_M2 folie: logoer tas ut av registeret. */
 const MAKS_FILER = 6;
 const SAMLE_M2 = 5;
+/** thru rundt en bit som teipes inn: saa langt utenfor biten (mm) */
+const TEIP_THRU_MM = 5;
+/** ... men alltid saa langt klar av fargen biten legges inntil (mm) */
+const TEIP_KLAR_MM = 2;
 /** de andre fargene i en logo dekker under denne andelen av rammen: skjaeres tett og teipes inn */
 const LITEN_FARGE = 0.25;
 /** En farge som stikker minst saa langt ut rundt fargen over, kan monteres for haand. */
@@ -598,11 +603,32 @@ function samleFiler(elementer: Elem[], advarsler: string[]): Elem[] {
              * naboen med enveis thru (Eirik 17.11.2026, Proace: «greier du ikke
              * faa alle trekantene inntil hverandre»).
              */
+            /*
+             * Biten teipes inn ved siden av den positive fargen i oppsettet.
+             * Thru-cut gaar utenfor biten (TEIP_THRU_MM), men alltid
+             * TEIP_KLAR_MM klar av den fargen, saa bakpapiret aldri
+             * overlapper folien biten skal ligge inntil (Eirik 18.11.2026,
+             * Rydd Bergen). Biten kiss-cuttes og lukes; arket er Kiss+thru.
+             */
+            let form: MultiPoly = f;
+            // et helt, konvekst stykke er selve biten: thru langs kanten (Proace 17.11.2026)
+            if (!heltKonveks(f)) try {
+              const pk = f.flatMap((poly) => poly[0].map((q) => [q[0], q[1]] as [number, number]));
+              const sk = konvekstSkall(pk);
+              const ytre = offsetRinger([sk], (TEIP_THRU_MM * MM) / e.skala);
+              let fm = pc.union(...(ytre.map((r) => [[...r, r[0]]]) as [any])) as MultiPoly;
+              const svart = utvidKlipp(hovedHer, (TEIP_KLAR_MM * MM) / e.skala);
+              if (svart.length) fm = pc.difference(fm as any, svart) as MultiPoly;
+              fm = pc.union(fm as any, f as any) as MultiPoly;
+              // bare stykket med biten i; resten er avklipp
+              form = fm.length > 1 ? (fm.filter((poly) => pc.intersection([poly] as any, f as any).length) as MultiPoly) : fm;
+            } catch { form = f; }
+            const bbF = boks(form), [w3, h3] = mmAv(bbF);
             for (let n = 0; n < e.antall; n++) {
               ut.push({ navn: `${e.navn} ${x.d.folie.kode} tett${kl.length > 1 ? ` ${ki + 1}` : ""}${e.antall > 1 ? ` (${n + 1}/${e.antall})` : ""}`,
-                lagvis: false, bbox: bb, skala: e.skala, breddeMm: w2, hoydeMm: h2, antall: 1,
+                lagvis: false, bbox: bbF, skala: e.skala, breddeMm: w3, hoydeMm: h3, antall: 1,
                 deler: [{ ...x.d, flate: f.map((poly) => poly.map((r) => r.map((q) => [q[0], q[1]] as [number, number]))) }],
-                omriss: f, egetArk: true });
+                omriss: form, ...(form !== f ? { thruForm: form } : {}), egetArk: true });
             }
           });
         }
@@ -2261,13 +2287,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      * og arket er ikke stoerre enn innholdet.
      */
     const teip = gruppe.every((e) => e.egetArk && !e.thruForm);
-    /*
-     * Bitene som teipes inn legges i hullet oppsettet har kiss-markert, med
-     * bakpapiret. Thru-cut gaar derfor eksakt langs biten, ogsaa rundt hull
-     * og naar den ikke er konveks: et bakpapir stoerre enn biten overlapper
-     * folien rundt (Eirik 18.11.2026, Rydd Bergen: «det gaar ikke»).
-     */
-    const kunThru = helfol || (teip && folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && !e.trykk)) || (folier.length === 1 &&
+    const kunThru = helfol || (folier.length === 1 &&
       gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || e.bilde || heltKonveks(e.deler[0].flate))));
     /**
      * Printet folie: samme tette ark, men med regmarks og utfallende print.
@@ -2298,7 +2318,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      * til rammen. Det flytter kanten utover, aldri innover: det legges til
      * folie, ingenting trekkes fra.
      */
-    if (kunThru && !teip) for (const e of gruppe) {
+    if (kunThru) for (const e of gruppe) {
       if (e.thruForm) continue;
       const d = e.deler[0];
       const tol = (RETT_SIDE_MM * MM) / e.skala, b = e.bbox;
