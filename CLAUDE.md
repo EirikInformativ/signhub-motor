@@ -821,6 +821,10 @@ og Vito 304160):**
   tegnstoerrelsen, skilles ikke (Rydd Bergen: lista «rydding, transport,
   boss ...» er samlet). Feilsignatur: en liste delt i to, eller logo og
   www i ett element over en profil.
+- Passmerke-strimmel bare naar luften mellom elementene er hoeyst
+  `PASS_MAKS_LUFT_MM = 110` (Eirik 18.11.2026, Rydd Bergen: strimmelen
+  mellom tegneseriebilen og logoen 134 og 354 mm unna kostet mye folie).
+  XL-BYGG (94 til 102 mm) beholder den.
 - En tekstliste skilt fra logoen for aa spare folie faar ikke passmerke
   mot logoen (Eirik 18.11.2026, Rydd Bergen: stubbene koster for mye).
 - Kjoeres det uansett en logo i register i de samme foliene, legges alt i

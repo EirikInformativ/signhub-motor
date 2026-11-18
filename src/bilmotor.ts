@@ -1739,6 +1739,8 @@ function slaaSammenBaner(deler: Bane[], original: Bane[]): Bane[] {
 
 /** passmerkets bredde og hvor langt det gaar inn under nabo-elementet, i ekte mm */
 const PASS_BREDDE_MM = 10;
+/** passmerke-strimmel bare naar luften mellom elementene er hoeyst saa stor (mm) */
+const PASS_MAKS_LUFT_MM = 110;
 const PASS_OVERLAPP_MM = 5;
 
 /**
@@ -1955,6 +1957,13 @@ async function leggPassmerker(elementer: BilElement[], baner: Map<BilElement, Ba
       stablet = luft <= Math.max(ha, hb) && overlappX >= 0.5 * Math.min(wa, wb);
     }
     if (!side && !stablet) continue;
+    /*
+     * Strimmelen gjoer baererens ramme stoerre med luften mellom dem. Er
+     * luften stor, koster det mer folie enn passmerket er verdt (Eirik
+     * 18.11.2026, Rydd Bergen: tegneseriebilen og logoen ved siden av).
+     */
+    const luftMm = ((side ? Math.max(rb.x0 - ra.x1, ra.x0 - rb.x1) : Math.max(rb.y0 - ra.y1, ra.y0 - rb.y1)) / MM) * malestokk;
+    if (luftMm > PASS_MAKS_LUFT_MM) continue;
     const felles = a.farger.map((f) => f.hex).filter((h) => b.farger.some((g) => g.hex === h));
     if (!felles.length) continue;
     // morkeste felles farge: den ses best og er oftest naboens farge
