@@ -809,6 +809,10 @@ og Vito 304160):**
   som legges over sort appliseres ikke, tegneseriebilene gjoer, saa de skal
   ikke i samme fil). Regelen fra 17.11 om aa legge dem i foliens eget
   oppsett er erstattet; XL-BYGG loeses av registerregelen under.
+  Biten legges i hullet oppsettet har kiss-markert, med bakpapiret, saa
+  thru-cut gaar eksakt langs biten (ogsaa rundt hull og naar den ikke er
+  konveks), uten ramme og bleed. Fila heter `Thru`. Feilsignatur: et
+  bakpapir stoerre enn biten, som overlapper folien rundt (Rydd Bergen).
 - Kjoeres det uansett en logo i register i de samme foliene, legges alt i
   de foliene inn i det oppsettet i stedet for aa teipes (Eirik 17.11.2026,
   XL-BYGG: «istedenfor aa kjoere litt med ramme og litt med dobbeltsidig

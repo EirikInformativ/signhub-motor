@@ -2261,7 +2261,13 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      * og arket er ikke stoerre enn innholdet.
      */
     const teip = gruppe.every((e) => e.egetArk && !e.thruForm);
-    const kunThru = helfol || (folier.length === 1 &&
+    /*
+     * Bitene som teipes inn legges i hullet oppsettet har kiss-markert, med
+     * bakpapiret. Thru-cut gaar derfor eksakt langs biten, ogsaa rundt hull
+     * og naar den ikke er konveks: et bakpapir stoerre enn biten overlapper
+     * folien rundt (Eirik 18.11.2026, Rydd Bergen: «det gaar ikke»).
+     */
+    const kunThru = helfol || (teip && folier.length === 1 && gruppe.every((e) => e.deler.length === 1 && !e.trykk)) || (folier.length === 1 &&
       gruppe.every((e) => e.deler.length === 1 && !e.trykk && (e.thruForm || e.bilde || heltKonveks(e.deler[0].flate))));
     /**
      * Printet folie: samme tette ark, men med regmarks og utfallende print.
@@ -2292,7 +2298,7 @@ async function kjorJobbEn(b: Bestilling): Promise<JobbResultat> {
      * til rammen. Det flytter kanten utover, aldri innover: det legges til
      * folie, ingenting trekkes fra.
      */
-    if (kunThru) for (const e of gruppe) {
+    if (kunThru && !teip) for (const e of gruppe) {
       if (e.thruForm) continue;
       const d = e.deler[0];
       const tol = (RETT_SIDE_MM * MM) / e.skala, b = e.bbox;
