@@ -517,6 +517,11 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
             if (glipe < BAND_MOT_TEGN * hs[Math.floor(hs.length / 2)]) continue;
             const a = ar(ramme(logo));
             if (a > (1 - DEL_SPAR) * hel) continue;
+            // en liste i smaa bokstaver, ikke et ord som er en del av merket
+            // (PROFF ved XL-boksen paa panseret paa 309916 staar i register)
+            const lr = ramme(logo);
+            const tegn = tekst.filter((b) => b.fyll).map((b) => Math.min(b.boks.x1 - b.boks.x0, b.boks.y1 - b.boks.y0)).sort((p, q) => p - q);
+            if (tegn[Math.floor(tegn.length / 2)] > BAND_TEGN_LOGO * Math.min(lr.x1 - lr.x0, lr.y1 - lr.y0)) continue;
             if (!best || a < best.a) best = { logo: [...logo], tekst: [...tekst], a };
           }
         }
@@ -748,17 +753,6 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
   }
   if (!elementer.length) merknader.push("Ingen dekor a produsere i denne skissen.");
 
-  /**
-   * En logo har laaste proporsjoner (Eirik 18.11.2026, Rydd Bergen: logoen
-   * fremst paa taket er strukket i hoeyden for aa se riktig ut paa det
-   * skraa taket, «men faktum er at en logo har låste proposjoner». Bredden
-   * er master). Finnes samme logo andre steder paa bilen, kjennes den igjen
-   * paa delene (bokstaver og flater i samme farge og samme innbyrdes
-   * plassering) med ulik skalering paa langs og tvers. Er de andre
-   * forekomstene enige seg imellom, og denne er den som skiller seg ut,
-   * skaleres hoeyden til proporsjonene de andre har.
-   */
-  await laasProporsjoner(elementer, brukteBaner, logg);
 
   /**
    * Samme merke sett fra to visninger. Paa 309916 e-expert staar XL PROFF
@@ -843,6 +837,20 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       "sett fra en annen vinkel, og tas ikke med i jobben.");
   }
 
+  /**
+   * Etter at samme merke sett fra to vinkler er tatt ut: det
+   * sammentrykte panseret forfra skal ut, ikke rettes.
+   *
+   * En logo har laaste proporsjoner (Eirik 18.11.2026, Rydd Bergen: logoen
+   * fremst paa taket er strukket i hoeyden for aa se riktig ut paa det
+   * skraa taket, «men faktum er at en logo har låste proposjoner». Bredden
+   * er master). Finnes samme logo andre steder paa bilen, kjennes den igjen
+   * paa delene (bokstaver og flater i samme farge og samme innbyrdes
+   * plassering) med ulik skalering paa langs og tvers. Er de andre
+   * forekomstene enige seg imellom, og denne er den som skiller seg ut,
+   * skaleres hoeyden til proporsjonene de andre har.
+   */
+  await laasProporsjoner(elementer, brukteBaner, logg);
   await leggTekstPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
   await leggPassmerker(elementer, brukteBaner, malestokk, logg, utskiltNavn);
   await dupliserSide(funn.visninger.map((x) => x.navn), elementer, brukteBaner, merknader, logg);
@@ -1366,6 +1374,8 @@ const MIN_BAND_MM = 5;
 const DEL_SPAR = 0.25;
 /** mellomrommet maa vaere minst saa stort som andel av tekstens tegnhoeyde */
 const BAND_MOT_TEGN = 0.4;
+/** tekstens tegn (median, minste side) er hoeyst saa stor andel av logoens minste side */
+const BAND_TEGN_LOGO = 0.25;
 const TEKST_SPERR_TEGN = 4;
 const TEKST_SPERR_MAKS_MM = 300;
 function tekstlinjer(g: Bane[][], mmPerEnhet: number): Bane[][] {
