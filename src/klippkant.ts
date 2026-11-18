@@ -119,6 +119,9 @@ export function synligBoks(b: Bane): { x0: number; y0: number; x1: number; y1: n
  * bilens deler (Eirik 16.11.2026: 50 mm). Bare naar banen gaar mer enn
  * `luft` forbi klippet; ellers staar den hel.
  */
+/** banen kuttVedKlipp laget en kuttet kopi av, saa kopien finnes igjen i tegnerekkefoelgen */
+export const opphavAv = new WeakMap<Bane, Bane>();
+
 export function kuttVedKlipp(b: Bane, luft: number): Bane {
   const k = klippFlate(b);
   if (!k || !k.length) return b;
@@ -135,8 +138,10 @@ export function kuttVedKlipp(b: Bane, luft: number): Bane {
     segs.push({ t: "h" });
   }
   const pts = segs.filter((x) => x.p).map((x) => x.p as Pt);
-  return { ...b, segs, boks: { x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
+  const ut = { ...b, segs, boks: { x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
     x1: Math.max(...pts.map((p) => p[0])), y1: Math.max(...pts.map((p) => p[1])) } } as Bane;
+  opphavAv.set(ut, opphavAv.get(b) ?? b);
+  return ut;
 }
 
 export function areal(mp: any): number {
@@ -247,16 +252,24 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
   const skjulte: Bane[] = [];
   const ut = dekor.map((b) => {
     if (!b.fyll || b.strek) return b;
-    const i = indeks.get(b);
+    const i = indeks.get(b) ?? indeks.get(opphavAv.get(b)!);
     if (i === undefined) return b;
-    const dekk = alle.slice(i + 1).filter((o) => o.fyll && !erDekor(o) && overlapper(o.boks, b.boks));
+    // et innsatt bilde tegnet oppaa dekoren dekker den ogsaa: bildet printes
+    // og legges paa bilen, folien under synes ikke (Saethre 305007: oransje
+    // felt under fotoet)
+    const dekk = alle.slice(i + 1).filter((o) => (o.fyll || o.bilde) && !erDekor(o) && overlapper(o.boks, b.boks));
     if (!dekk.length) return b;
     const egen = flate(ringerAv(b.segs as any[]));
     if (!egen || !egen.length) return b;
     const a0 = areal(egen);
     let skjult: any, dekkSamlet: any;
     try {
-      const dekkFlater = dekk.map((o) => flate(ringerAv(o.segs as any[]))).filter((f) => f && f.length);
+      const dekkFlater = dekk.map((o) => {
+        const f = flate(ringerAv(o.segs as any[]));
+        if (!o.bilde || !f) return f;
+        const k = klippFlate(o);
+        return k ? pc.intersection(f, k) : f;
+      }).filter((f) => f && f.length);
       if (!dekkFlater.length) return b;
       dekkSamlet = pc.union(...(dekkFlater as [any]));
       skjult = pc.intersection(egen, dekkSamlet);

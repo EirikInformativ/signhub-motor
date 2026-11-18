@@ -20,7 +20,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -375,6 +375,8 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
    * synes (Eirik 16.11.2026, Kia PV5 310079). Reglene staar i klippkant.ts.
    */
   const alleDekor = new Set(valgtPerOmraade.flatMap((x) => x.valgte));
+  const dekorOpphav = new Set([...alleDekor].map((b) => opphavAv.get(b) ?? b));
+  const bilLinjer = baner.filter((b) => !b.bilde && !b.gradient && !alleDekor.has(b) && !dekorOpphav.has(b));
   const luft = (KLIPP_LUFT_MM / malestokk) * MM, min = (KLIPP_MIN_MM / malestokk) * MM;
   for (const x of valgtPerOmraade) {
     const r = kuttVedBildeler(x.valgte, baner, (b) => alleDekor.has(b), luft, min);
@@ -532,6 +534,15 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
         `logoens ramme blir ${Math.round((1 - best.a / hel) * 100)} % mindre.`);
       return [best.logo, best.tekst];
     });
+    /**
+     * Deler med en av bilens linjer i mellomrommet over hele bredden
+     * skilles (Eirik 18.11.2026, Saethre 305007: profilen i karosseriet
+     * mellom logoen og «www.skiferflis.no» er tredimensjonal, og folien kan
+     * ikke legges i ett stykke over den). Kravet er et rent mellomrom paa
+     * minst MIN_BAND_MM der bilens linjer dekker minst PROFIL_DEKK av
+     * bredden.
+     */
+    deler = deler.flatMap((d) => profilDel(d, (MIN_BAND_MM / malestokk) * MM, bilLinjer, o, logg));
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
     deler.forEach((d, k) => {
       arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d });
@@ -1370,6 +1381,65 @@ const STRIPE_SPENN = 0.9;
 const TEKST_SPERR = 4.5;
 /** rent mellomrom mellom en logo og en tekstblokk ved siden av (ekte mm) */
 const MIN_BAND_MM = 5;
+/** bilens linjer i mellomrommet dekker minst saa mye av delens bredde: profil, skill delene */
+const PROFIL_DEKK = 0.9;
+
+function profilDel(d: Bane[], minGlipe: number, bil: Bane[], o: { vis: string; navn: string }, logg: string[]): Bane[][] {
+  if (d.length < 2) return [d];
+  const r = { x0: Math.min(...d.map((b) => b.boks.x0)), y0: Math.min(...d.map((b) => b.boks.y0)),
+    x1: Math.max(...d.map((b) => b.boks.x1)), y1: Math.max(...d.map((b) => b.boks.y1)) };
+  for (const akse of ["y", "x"] as const) {
+    const lo = (b: Bane) => akse === "y" ? b.boks.y0 : b.boks.x0, hi = (b: Bane) => akse === "y" ? b.boks.y1 : b.boks.x1;
+    const [t0, t1] = akse === "y" ? [r.x0, r.x1] : [r.y0, r.y1];
+    const sortert = d.slice().sort((a, b) => lo(a) - lo(b));
+    let maks = -Infinity;
+    for (let k = 0; k < sortert.length - 1; k++) {
+      maks = Math.max(maks, hi(sortert[k]));
+      const g0 = maks, g1 = lo(sortert[k + 1]);
+      if (g1 - g0 < minGlipe) continue;
+      // intervallene paa tvers som bilens linjer dekker inne i mellomrommet
+      const iv: [number, number][] = [];
+      for (const b of bil) {
+        if (hi(b) < g0 || lo(b) > g1) continue;
+        let fra: Pt | null = null, start: Pt | null = null, fp: Pt | null = null;
+        for (const sg of b.segs as any[]) {
+          if (sg.t === "h") { if (fra && start) legg(fra, start); fra = start; continue; }
+          if (sg.t === "c" && fra) {
+            // kurven deles i 8 korder
+            for (let n = 1; n <= 8; n++) {
+              const t = n / 8, u = 1 - t;
+              const q: Pt = [u * u * u * fra[0] + 3 * u * u * t * sg.a[0] + 3 * u * t * t * sg.b[0] + t * t * t * sg.c[0],
+                u * u * u * fra[1] + 3 * u * u * t * sg.a[1] + 3 * u * t * t * sg.b[1] + t * t * t * sg.c[1]];
+              legg(n === 1 ? fra : fp!, q); fp = q;
+            }
+            fra = sg.c; continue;
+          }
+          if (!sg.p) continue;
+          if (sg.t === "m") { fra = sg.p; start = sg.p; continue; }
+          if (fra) legg(fra, sg.p);
+          fra = sg.p;
+        }
+      }
+      function legg(p: Pt, q: Pt) {
+        const [pa, pt] = akse === "y" ? [p[1], p[0]] : [p[0], p[1]];
+        const [qa, qt] = akse === "y" ? [q[1], q[0]] : [q[0], q[1]];
+        const a0 = Math.max(g0, Math.min(pa, qa)), a1 = Math.min(g1, Math.max(pa, qa));
+        if (a0 > a1) return;
+        if (Math.abs(qa - pa) < 1e-9) { iv.push([Math.min(pt, qt), Math.max(pt, qt)]); return; }
+        const u = (v: number) => pt + (qt - pt) * (v - pa) / (qa - pa);
+        iv.push([Math.min(u(a0), u(a1)), Math.max(u(a0), u(a1))]);
+      }
+      iv.sort((p, q) => p[0] - q[0]);
+      let dekt = 0, cur = t0;
+      for (const [p, q] of iv) { const a = Math.max(p, cur), b = Math.min(q, t1); if (b > a) { dekt += b - a; cur = b; } }
+      if (dekt < PROFIL_DEKK * (t1 - t0)) continue;
+      const A = sortert.slice(0, k + 1), B = sortert.slice(k + 1);
+      logg.push(`${o.vis} ${o.navn}: en av bilens linjer gaar i mellomrommet mellom delene og er en profil i karosseriet. Delene skjaeres hver for seg.`);
+      return [...profilDel(A, minGlipe, bil, o, []), ...profilDel(B, minGlipe, bil, o, [])];
+    }
+  }
+  return [d];
+}
 /** tekstblokken skilles ut fra logoen naar logoens ramme blir minst saa mye mindre */
 const DEL_SPAR = 0.25;
 /** mellomrommet maa vaere minst saa stort som andel av tekstens tegnhoeyde */
