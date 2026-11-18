@@ -74,12 +74,12 @@ export function flate(ringer: Ring[]): any {
   try { return pc.xor(...(deler as [any])); } catch { return null; }
 }
 
-export function utvid(mp: any, d: number): any {
+export function utvid(mp: any, d: number, rett = false): any {
   const S = 1e3;
-  const co = new ClipperLib.ClipperOffset(2, 0.25);
+  const co = new ClipperLib.ClipperOffset(rett ? 4 : 2, 0.25);
   for (const poly of mp) for (const r of poly)
     co.AddPath(r.map(([x, y]: Pt) => ({ X: Math.round(x * S), Y: Math.round(y * S) })),
-      ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+      rett ? ClipperLib.JoinType.jtMiter : ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
   const res: any[] = [];
   co.Execute(res, d * S);
   const ringer: Ring[] = res.map((p: any[]) => p.map((q) => [q.X / S, q.Y / S] as Pt)).filter((r) => r.length > 2);
@@ -121,14 +121,21 @@ export function synligBoks(b: Bane): { x0: number; y0: number; x1: number; y1: n
  */
 /** banen kuttVedKlipp laget en kuttet kopi av, saa kopien finnes igjen i tegnerekkefoelgen */
 export const opphavAv = new WeakMap<Bane, Bane>();
+/**
+ * Store felt (Saethre): kuttes langs det synlige med denne luften og rette
+ * hjoerner, ikke det konvekse skallet. Hjulbuen foelger buen (Eirik
+ * 18.11.2026, hjelpeskissen: «noen kutteformer maa tegnes og noen kan vi
+ * bruke allerede eksisterende clippingmask»).
+ */
+export const feltLuft = new WeakMap<Bane, number>();
 
-export function kuttVedKlipp(b: Bane, luft: number): Bane {
+export function kuttVedKlipp(b: Bane, luft: number, rett = false): Bane {
   const k = klippFlate(b);
   if (!k || !k.length) return b;
   const egen = flate(ringerAv(b.segs as any[]));
   if (!egen || !egen.length) return b;
   let ny: any;
-  try { ny = pc.intersection(egen, utvid(utenHull(k), luft)); } catch { return b; }
+  try { ny = pc.intersection(egen, utvid(utenHull(k), luft, rett)); } catch { return b; }
   const a0 = areal(egen), a1 = areal(ny);
   if (!ny.length || a1 > a0 * 0.999) return b;
   const segs: any[] = [];
@@ -325,7 +332,10 @@ export function kuttVedBildeler(dekor: Bane[], alle: Bane[], erDekor: (b: Bane) 
       }
     } catch { grunnlag = synlig; }
     let tillatt: any;
-    try {
+    const fl = feltLuft.get(b) ?? feltLuft.get(opphavAv.get(b)!);
+    if (fl !== undefined) {
+      try { tillatt = utenHull(utvid(grunnlag, fl, true)); } catch { tillatt = utenHull(utvid(synlig, fl, true)); }
+    } else try {
       /**
        * Skallet tas per synlige oey, ikke rundt alt (Saethre ID.Buzz
        * 17.11.2026: oransje felt skilt av skraa striper i lakken, tegnet oppaa

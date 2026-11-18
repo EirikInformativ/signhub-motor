@@ -20,7 +20,7 @@ import { hentGeometriPerFarge, areal, cmykTilRgb, tilHex } from "./pdfbaner.ts";
 import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -369,6 +369,18 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
          * er kortere og skjaeres fortsatt helt.
          */
         const felt = (Math.max(w, h) / MM) * malestokk > FELT_KLIPP_MM;
+        /*
+         * Et felt kuttes tett langs klippet, FELT_LUFT_MM utenfor, med rette
+         * hjoerner: hjulbuen foelger klippebanen, og kanten mot bilens
+         * ytterkant blir en rett strek like utenfor (Eirik 18.11.2026,
+         * Saethre, hjelpeskisse trinn 2 til 6).
+         */
+        if (felt && !stripe) {
+          const fl = (FELT_LUFT_MM / malestokk) * MM;
+          const k = kuttVedKlipp(b, fl, true);
+          feltLuft.set(k, fl); feltLuft.set(b, fl);
+          return k;
+        }
         return stripe || felt ? kuttVedKlipp(b, (KLIPP_LUFT_MM / malestokk) * MM) : b;
       });
     if (valgte.length) valgtPerOmraade.push({ o, valgte });
@@ -547,6 +559,27 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
      * bredden.
      */
     deler = deler.flatMap((d) => profilDel(d, (MIN_BAND_MM / malestokk) * MM, bilLinjer, o, logg));
+    /*
+     * Tekst i en annen farge som ligger oppaa et stort felt, limes aldri
+     * fast i feltet (Eirik 18.11.2026, Saethre: «KVA» havnet i det oransje
+     * feltet og resten av «KVALITET I OVER 100 ÅR» for seg). Teksten tas ut
+     * og settes sammen med resten av linja.
+     */
+    {
+      const feltMm = (b: Bane) => b.fyll && (Math.min(b.boks.x1 - b.boks.x0, b.boks.y1 - b.boks.y0) / MM) * malestokk > STOR_FLATE_MM &&
+        (Math.max(b.boks.x1 - b.boks.x0, b.boks.y1 - b.boks.y0) / MM) * malestokk > MAKS_DEL_MM;
+      let endret = false;
+      deler = deler.flatMap((d) => {
+        const f = d.find(feltMm);
+        if (!f) return [d];
+        const hx = baneHex(f.farge);
+        const andre = d.filter((b) => b.fyll && baneHex(b.farge) !== hx);
+        if (!andre.length) return [d];
+        endret = true;
+        return [d.filter((b) => !andre.includes(b)), andre];
+      });
+      if (endret) deler = tekstlinjer(deler, malestokk / MM);
+    }
     if (deler.length === 1) { arbeid.push({ o, valgte }); continue; }
     deler.forEach((d, k) => {
       arbeid.push({ o: { ...o, navn: `${o.navn} del ${k + 1}` }, valgte: d });
@@ -1349,6 +1382,8 @@ const DEL_FIN_MM = 10;
 const FELT_GLIPPE_MM = 20;
 /** et felt lengre enn dette kuttes ved klippebanen som en stripe */
 const FELT_KLIPP_MM = 1.5 * 1150;
+/** et stort felt kuttes saa langt utenfor klippebanen (mm) */
+const FELT_LUFT_MM = 20;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
 /** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
@@ -1455,7 +1490,9 @@ function profilDel(d: Bane[], minGlipe: number, bil: Bane[], o: { vis: string; n
        */
       const tegn = (bs: Bane[]) => { const v = bs.filter((b) => b.fyll).map((b) => Math.min(b.boks.x1 - b.boks.x0, b.boks.y1 - b.boks.y0)).sort((p, q) => p - q); return v.length ? v[Math.floor(v.length / 2)] : 0; };
       const ta = tegn(A), tb = tegn(B);
-      if (ta > 0 && tb > 0 && Math.min(ta, tb) >= PROFIL_STIL * Math.max(ta, tb) && g1 - g0 <= PROFIL_LINJE * Math.max(ta, tb)) continue;
+      // samme tekst: like store tegn, linjer tett paa hverandre, eller bokstaver i samme linje
+      if (ta > 0 && tb > 0 && Math.min(ta, tb) >= PROFIL_STIL * Math.max(ta, tb) &&
+          (akse === "x" || g1 - g0 <= PROFIL_LINJE * Math.max(ta, tb))) continue;
       logg.push(`${o.vis} ${o.navn}: en av bilens linjer gaar i mellomrommet mellom delene og er en profil i karosseriet. Delene skjaeres hver for seg.`);
       return [...profilDel(A, minGlipe, bil, o, []), ...profilDel(B, minGlipe, bil, o, [])];
     }
