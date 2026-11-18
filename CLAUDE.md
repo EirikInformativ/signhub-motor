@@ -814,6 +814,13 @@ og Vito 304160):**
   legges inntil, saa bakpapiret aldri overlapper den. Et helt, konvekst
   stykke er selve biten (Thru langs kanten, Proace). Feilsignatur:
   bakpapir som overlapper folien biten skal ligge ved siden av.
+- Deler med en av bilens linjer i mellomrommet over hele bredden skilles
+  (`profilDel`, Eirik 18.11.2026, Saethre: profilen mellom logoen og
+  «www.skiferflis.no» er tredimensjonal). Linjer i samme tekst, med like
+  store tegn (`PROFIL_STIL`) og mellomrom under `PROFIL_LINJE` ganger
+  tegnstoerrelsen, skilles ikke (Rydd Bergen: lista «rydding, transport,
+  boss ...» er samlet). Feilsignatur: en liste delt i to, eller logo og
+  www i ett element over en profil.
 - En tekstliste skilt fra logoen for aa spare folie faar ikke passmerke
   mot logoen (Eirik 18.11.2026, Rydd Bergen: stubbene koster for mye).
 - Kjoeres det uansett en logo i register i de samme foliene, legges alt i

@@ -1393,6 +1393,9 @@ const TEKST_SPERR = 4.5;
 const MIN_BAND_MM = 5;
 /** bilens linjer i mellomrommet dekker minst saa mye av delens bredde: profil, skill delene */
 const PROFIL_DEKK = 0.9;
+/** like store tegn (minst denne andelen) med mellomrom under PROFIL_LINJE ganger tegnstoerrelsen er samme tekst */
+const PROFIL_STIL = 0.8;
+const PROFIL_LINJE = 1.5;
 
 function profilDel(d: Bane[], minGlipe: number, bil: Bane[], o: { vis: string; navn: string }, logg: string[]): Bane[][] {
   if (d.length < 2) return [d];
@@ -1444,6 +1447,15 @@ function profilDel(d: Bane[], minGlipe: number, bil: Bane[], o: { vis: string; n
       for (const [p, q] of iv) { const a = Math.max(p, cur), b = Math.min(q, t1); if (b > a) { dekt += b - a; cur = b; } }
       if (dekt < PROFIL_DEKK * (t1 - t0)) continue;
       const A = sortert.slice(0, k + 1), B = sortert.slice(k + 1);
+      /*
+       * Linjer i samme tekst, i samme stil og tett paa hverandre, henger
+       * sammen selv om en av bilens linjer gaar mellom dem (Eirik 18.11.2026,
+       * Rydd Bergen: lista «rydding, transport, boss ...» skal vaere samlet).
+       * Logoen og «www.skiferflis.no» paa Saethre har ulik stoerrelse.
+       */
+      const tegn = (bs: Bane[]) => { const v = bs.filter((b) => b.fyll).map((b) => Math.min(b.boks.x1 - b.boks.x0, b.boks.y1 - b.boks.y0)).sort((p, q) => p - q); return v.length ? v[Math.floor(v.length / 2)] : 0; };
+      const ta = tegn(A), tb = tegn(B);
+      if (ta > 0 && tb > 0 && Math.min(ta, tb) >= PROFIL_STIL * Math.max(ta, tb) && g1 - g0 <= PROFIL_LINJE * Math.max(ta, tb)) continue;
       logg.push(`${o.vis} ${o.navn}: en av bilens linjer gaar i mellomrommet mellom delene og er en profil i karosseriet. Delene skjaeres hver for seg.`);
       return [...profilDel(A, minGlipe, bil, o, []), ...profilDel(B, minGlipe, bil, o, [])];
     }
