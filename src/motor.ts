@@ -930,6 +930,11 @@ async function lesForleng(pdf: Uint8Array): Promise<Set<string>> {
 function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld: string[] = []): number {
   const ps = ark.plasseringer;
   if (ps.length < 2) return 0;
+  // utgangspunktet, saa alt kan settes tilbake hvis noe ender oppaa hverandre
+  const psFoer = ps.map((p) => ({ ...p }));
+  const elFoer = gruppe.map((e) => ({ e, deler: e.deler.map((d) => ({ d, flate: d.flate })), omriss: e.omriss, bbox: e.bbox,
+    breddeMm: e.breddeMm, hoydeMm: e.hoydeMm }));
+  const meldFoer = meld.length;
   type R = [number, number][];
   const bl = geo.bleed;
   const tilArk = (p: any, X: number, Y: number): [number, number] => {
@@ -1161,6 +1166,26 @@ function skyvSammen(gruppe: Elem[], ark: { plasseringer: any[] }, geo: Geo, meld
     if (a0.kontakt) snapp(u);
     if (overlapper(ringerAv(), lagt)) settTilbake();
     lagt.push(...ringerAv());
+  }
+  /*
+   * Til slutt: ingen to stykker skal ligge oppaa hverandre, og ingen
+   * skjaerelinjer skal krysse (Eirik 18.11.2026: «thru-cut linjer kan ikke
+   * intercepte»). Proace-trekantene kunne ende med en liten bit oppaa
+   * naboen. Skjer det, settes alt tilbake slik pakkingen la det.
+   */
+  const alle = ps.map((p) => form(p).map((r) => [[...r, r[0]]]) as any);
+  let kollisjon = false;
+  for (let i = 0; i < alle.length && !kollisjon; i++) for (let j = i + 1; j < alle.length && !kollisjon; j++) {
+    try { for (const A of alle[i]) for (const B of alle[j]) if (areal(pc.intersection([A], [B])) > 0.01) kollisjon = true; } catch { /* som det er */ }
+  }
+  if (kollisjon) {
+    ps.forEach((p, i) => Object.assign(p, psFoer[i]));
+    for (const x of elFoer) {
+      x.deler.forEach((y) => { y.d.flate = y.flate; });
+      Object.assign(x.e, { omriss: x.omriss, bbox: x.bbox, breddeMm: x.breddeMm, hoydeMm: x.hoydeMm });
+    }
+    meld.splice(meldFoer);
+    return 0;
   }
   const bredde1 = Math.max(...ps.map((p) => p.x + p.w)) - Math.min(...ps.map((p) => p.x));
   return bredde0 - bredde1;
