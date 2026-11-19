@@ -21,7 +21,7 @@ import * as pcModul from "polygon-clipping";
 const pc: any = (pcModul as any).default ?? pcModul;
 import { tegnBilSkisse } from "./skisse_bil.ts";
 import { konvekstSkall } from "./ramme.ts";
-import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, settFeltLakk, erFeltLakk, feltLakkSynlig, finnDekk, sirkel, clipDiff as clipDiffKlipp, clipUnion as clipUnionKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
+import { kuttVedBildeler, enderVedKant, skjoterLangs, KLIPP_LUFT_MM, KLIPP_MIN_MM, synligBoks, kuttVedKlipp, klippFlate as klippFlateBane, opphavAv, feltLuft, settFeltLakk, erFeltLakk, feltLakkSynlig, feltTillatt, feltBil, feltInfo, clipInter as clipInterKlipp, utvid as utvidKlippBM, finnDekk, sirkel, clipDiff as clipDiffKlipp, clipUnion as clipUnionKlipp, flate as flateKlipp, ringerAv, areal as arealKlipp, utvid as utvidKlipp } from "./klippkant.ts";
 const flateAvSegs = (segs: any[]) => flateKlipp(ringerAv(segs));
 /** en stripe slutter ved en kant paa bilen naar en av bilens linjer krysser den saa naer enden */
 const KANT_ENDE_MM = 15;
@@ -797,6 +797,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
       if (finn(a) === finn(b)) continue;
       if (sammen(stk[a], stk[b])) rot[finn(a)] = finn(b);
     }
+    if (process.env.FELT_OEY) for (const x of stk) console.log("KANT", arbeid[x.i].o.vis, Math.round(Math.min(...x.skall.map((q) => q[0])) * 2.0833), kanterAv(x).map((k) => [k[0], k[1], k[2], k[3]].map((v, j) => Math.round(j % 2 ? 1658 - v * 2.0833 : v * 2.0833)).join(",")).join(" | "));
     const grupper = new Map<number, Stk[]>();
     stk.forEach((x, k) => { const r = finn(k); if (!grupper.has(r)) grupper.set(r, []); grupper.get(r)!.push(x); });
     // stripene i lakkfargen, til kutteformene
@@ -823,7 +824,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     }
     if (process.env.FELT_FORM) { const fs = await import("fs"); for (const x of stk) fs.appendFileSync(process.env.FELT_FORM, JSON.stringify({ navn: arbeid[x.i].o.vis + " " + arbeid[x.i].o.navn, baner: (x.form as any[]).flatMap((p: any) => p) }) + "\n"); }
     for (const [i, rest] of restAv) nye.push({ o: { ...arbeid[i].o, navn: arbeid[i].o.navn + " rest" }, valgte: rest });
-    const egenLakkAv = (x: Stk) => arbeid[x.i].valgte.map((b) => feltLakkSynlig.get(b)).filter((l: any) => l?.length);
+    const egenLakkAv = (x: Stk) => { const v = arbeid[x.i].valgte[0]; const l = v ? feltInfo(v.farge, v.boks)?.lakk : null; return l?.length ? [l] : []; };
     const dekkene = finnDekk(baner, MM / malestokk);
     for (const g of grupper.values()) {
       // konveks kutteform per stykke: én rett bane rundt det som synes
@@ -840,57 +841,52 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
          * lenger enn det det ser ut som»). Et stykke som naar bilens ende i
          * visningen, forlenges FELT_ENDE_MM rundt hjoernet.
          */
-        let skall = x.skall;
-        const vis = funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis);
-        // bilens ende: klippet designeren har lagt paa feltet (karosseriet), ellers visningen
-        let ende: { x0: number; x1: number } | null = vis ? { x0: vis.x0, x1: vis.x1 } : null;
+        /*
+         * Kutteformen foelger feltet slik motoren har vokst det ut (klippet,
+         * stripene, dekket, de andre feltene), med smaa hakk fylt (Eirik
+         * 19.11.2026: kanter langs klippet og stripene er designet).
+         */
+        const egne = arbeid[x.i].valgte;
+        const info = feltInfo(egne[0]?.farge, { x0: Math.min(...x.skall.map((q) => q[0])), y0: Math.min(...x.skall.map((q) => q[1])), x1: Math.max(...x.skall.map((q) => q[0])), y1: Math.max(...x.skall.map((q) => q[1])) });
+        const tillatt = info?.tillatt?.length ? info.tillatt : undefined;
+        const bil = info?.bil?.length ? info.bil : undefined;
+        const andreStk = stk.filter((y) => y !== x && arbeid[y.i].o.vis === arbeid[x.i].o.vis).map((y) => y.form);
+        const gap = tilU(1);
+        const minus = (f: any, b: any[]) => { const r = b.filter((q: any) => q?.length); if (!r.length) return f; try { return clipDiffKlipp(f, r); } catch { return f; } };
+        let form: any = x.form;
         try {
-          const ks = arbeid[x.i].valgte.map((b) => klippFlateBane(opphavAv.get(b) ?? b)).filter((k: any) => k?.length);
-          const kp = ks.flatMap((k: any) => k.flat(2)) as [number, number][];
-          if (kp.length) ende = { x0: Math.min(...kp.map((q) => q[0])), x1: Math.max(...kp.map((q) => q[0])) };
-        } catch { /* visningen */ }
-        if (ende) {
-          const vis = ende;
-          const sx0 = Math.min(...skall.map((q) => q[0])), sx1 = Math.max(...skall.map((q) => q[0]));
-          if (process.env.FELT_OEY) console.log("ENDE", arbeid[x.i].o.vis, [sx0, sx1, vis.x0, vis.x1, funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis)?.x0, funn.visninger.find((v) => v.navn === arbeid[x.i].o.vis)?.x1].map((v) => Math.round((v ?? 0) * 2.0833)).join(" "));
-          const e = tilU(FELT_ENDE_MM), naer = tilU(FELT_ENDE_NAER_MM);
-          let pk = skall.slice();
-          // forbi bilens ende i visningen, ikke bare forbi stykket (Eirik 18.11.2026: hjoernet bak «maa legges overlappende»)
-          if (sx0 - vis.x0 < naer) { const d = sx0 - (vis.x0 - e); pk = pk.concat(skall.filter(([px]) => px - sx0 < naer).map(([px, py]) => [px - d, py] as [number, number])); }
-          if (vis.x1 - sx1 < naer) { const d = vis.x1 + e - sx1; pk = pk.concat(skall.filter(([px]) => sx1 - px < naer).map(([px, py]) => [px + d, py] as [number, number])); }
-          if (pk.length > skall.length) skall = konvekstSkall(pk);
+          const lukk = tilU(FELT_LUKK_MM);
+          let f = utvidKlippBM(utvidKlippBM(x.form, lukk), -lukk);
+          if (tillatt) f = clipInterKlipp(f, clipUnionKlipp([tillatt, x.form]));
+          f = minus(f, [...andreStk.map((a: any) => utvidKlippBM(a, gap)), ...egenLakkAv(x), ...dekkene.map((d) => sirkel(d.cx, d.cy, d.r))]);
+          if (f.length) form = f;
+        } catch { /* som vokst */ }
+        /*
+         * Rundt hjoernet (front, bak) og over taket faar feltet utfallende
+         * forbi bilen, over det som ser ut som lakk eller grill i 2D (Eirik
+         * 18. og 19.11.2026: «ikke tenk saa mye paa grillen», feltet «mangler
+         * utfallende opp over tak og bakluke»).
+         */
+        if (bil && !arbeid[x.i].o.vis.startsWith("ende")) {
+          const naer = tilU(FELT_ENDE_NAER_MM);
+          let paaBil: any = form;
+          try { const pb = clipInterKlipp(form, bil); if (pb.length) paaBil = pb; } catch { /* hele */ }
+          const pts = (paaBil as any[]).flatMap((p: any) => p[0]) as [number, number][];
+          // sveipet naar ut av bilen paa en god del av bredden, ikke bare under terskelen
+          const utenfor = (f: any) => { try { const a = arealKlipp(f); const u = arealKlipp(clipDiffKlipp(f, [bil])); if (process.env.FELT_OEY) console.log("UTE", arbeid[x.i].o.vis, Math.round(Math.min(...pts.map((q) => q[0])) * 2.0833), (u / a).toFixed(2)); return a > 0 && u > FELT_SVEIP_UTE * a; } catch { return false; } };
+          const sveip = (dx: number, dy: number, l: number) => { const h = konvekstSkall([...pts, ...pts.map(([px, py]) => [px + dx * l, py + dy * l] as [number, number])]); return [[[...h, h[0]]]]; };
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, 1]]) {
+            const ut0 = utenfor(minus(sveip(dx, dy, naer), [form]));
+            if (process.env.FELT_OEY) console.log("SVEIP", arbeid[x.i].o.vis, arbeid[x.i].o.navn, dx, dy, ut0);
+            if (!ut0) continue;
+            // rundt hjoernet FELT_ENDE_MM, over taket vanlig utfallende
+            const e = tilU(dy > 0 ? FELT_LUFT_MM : FELT_ENDE_MM);
+            let ext = clipInterKlipp(sveip(dx, dy, naer + e), utvidKlippBM(bil, e));
+            ext = minus(ext, [...andreStk.map((a: any) => utvidKlippBM(a, gap)), ...dekkene.map((d) => sirkel(d.cx, d.cy, d.r))]);
+            if (ext.length) { try { const u = clipUnionKlipp([form, ext]); if (u.length) form = u; } catch { /* uten */ } }
+          }
         }
-        /*
-         * Forlengelsen rundt hjoernet legges til etter at innbuktningene og
-         * lakken er tatt ut av stykket: rundt hjoernet skal folien gaa over
-         * det som ser ut som lakk eller grill i 2D (Eirik 18.11.2026: «ikke
-         * tenk saa mye paa grillen paa sidebildet. montoeren skjaerer til det»).
-         */
-        let forlengelse: any = [];
-        if (skall !== x.skall) { try { forlengelse = clipDiffKlipp([[[...skall, skall[0]]]], [[[[...x.skall, x.skall[0]]]], ...dekkene.map((d) => sirkel(d.cx, d.cy, d.r))]); } catch { forlengelse = []; } }
-        skall = x.skall;
-        let form: any = [[[...skall, skall[0]]]];
-        try {
-          const inn = pc.difference(form, x.form) as any[];
-          /*
-           * Innbuktninger der lakk synes (en stripe i lakkfargen) skjaeres
-           * ogsaa ut, uansett stoerrelse: kutteformen foelger designets kant
-           * (Eirik 18.11.2026, hjoernet bak oeverst: «jeg savner den kurven»).
-           */
-          const egenLakk = arbeid[x.i].valgte.map((b) => feltLakkSynlig.get(b)).filter((l: any) => l?.length);
-          const lakkHer = (p: any) => [...lakkFlater, ...egenLakk].some((l) => { try { return arealKlipp(pc.intersection([p], l)) > tilU(20) * tilU(20); } catch { return false; } });
-          const store = inn.filter((p: any) => arealKlipp([p]) > tilU(FELT_BUE_MM) * tilU(FELT_BUE_MM) || lakkHer(p));
-          if (store.length) form = pc.difference(form, ...store.map((p: any) => [p]));
-        } catch { /* skallet */ }
-        /*
-         * Kutteformen gaar aldri ut over lakk som synes eller inn paa dekket
-         * (Saethre: hjoernet foran dekket forhjulet, trekanten bak dekket lakk).
-         */
-        try {
-          const bort = [...egenLakkAv(x), ...dekkene.map((d) => sirkel(d.cx, d.cy, d.r))];
-          if (bort.length) { const f2 = clipDiffKlipp(form, bort); if (f2.length) form = f2.filter((p: any) => arealKlipp([p]) > 0.02 * arealKlipp(f2)); }
-        } catch { /* som foer */ }
-        if (forlengelse.length) { try { let f3: any; try { f3 = pc.union(form, forlengelse); } catch { f3 = clipUnionKlipp([form, forlengelse]); } if (f3.length) form = f3.sort((a: any, b: any) => arealKlipp([b]) - arealKlipp([a])).slice(0, 1).map((p: any) => [p[0]]); } catch { /* uten */ } }
+        form = (form as any[]).sort((a: any, b: any) => arealKlipp([b]) - arealKlipp([a])).filter((p: any, k: number, arr: any[]) => k === 0 || arealKlipp([p]) > 0.05 * arealKlipp([arr[0]])).map((p: any) => [p[0]]);
         const segs: any[] = [];
         for (const poly of form) for (const r of poly) {
           segs.push({ t: "m", p: r[0] });
@@ -920,7 +916,7 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
     const fs = await import("fs");
     for (const x of arbeid) fs.appendFileSync(process.env.FELT_JSON, JSON.stringify({ navn: x.o.vis + " " + x.o.navn,
       hoved: hovedfelt.has(x.valgte), hex: x.valgte.find((b) => b.fyll) ? baneHex(x.valgte.find((b) => b.fyll)!.farge) : "",
-      baner: x.valgte.map((b) => (b.segs as any[]).filter((q) => q.p || q.c).map((q) => q.p ?? q.c)) }) + "\n");
+      baner: x.valgte.flatMap((b) => { const r: any[] = []; for (const q of b.segs as any[]) { if (q.t === "m") r.push([]); if (q.p || q.c) r[r.length - 1]?.push(q.p ?? q.c); } return r; }) }) + "\n");
   }
   for (const { o, valgte: raa } of arbeid) {
     let rett = rettOpp(raa);
@@ -1016,7 +1012,18 @@ export async function lesBilskisse(inn: Uint8Array, v: BilValg): Promise<BilSkis
      * Samme antall baner og samme tegnede bredde er nok til a kjenne dem
      * igjen: det er den samme kunstverket, satt inn to ganger.
      */
-    const nokkel = `${valgte.length}|${tegnetB.toFixed(2)}`;
+    /*
+     * Et felt paa den andre siden er speilvendt, ikke likt (Eirik 19.11.2026:
+     * «dette feltet er ikke speilvendt for andre siden. bare kopiert»).
+     * Tyngdepunktet i bredden skiller dem.
+     */
+    let skjev = "";
+    if (erFeltKutt) {
+      const ps = valgte.flatMap((b) => (b.segs as any[]).filter((q) => q.p).map((q) => q.p as [number, number]));
+      const bx0 = Math.min(...ps.map((q) => q[0])), bx1 = Math.max(...ps.map((q) => q[0]));
+      skjev = "|" + (ps.reduce((a, q) => a + (q[0] - bx0), 0) / ps.length / Math.max(1e-9, bx1 - bx0)).toFixed(2);
+    }
+    const nokkel = `${valgte.length}|${tegnetB.toFixed(2)}${skjev}`;
     const finnes = elementer.find((e) => e.id === nokkel);
     if (finnes) { finnes.antall++; finnes.navn += ` + ${o.vis} ${o.navn}`; continue; }
     /**
@@ -1696,13 +1703,17 @@ const FELT_LUFT_MM = 75;
 /** et feltstykke er minst saa bredt paa det smaleste (mm); mindre er tekst og smaabiter */
 const FELT_MIN_MM = 100;
 /** glipper mellom feltstykker som maales for bilens linjer (mm) */
-const FELT_REL_MM = 60;
+const FELT_REL_MM = 100;
 /** innbuktninger i feltstykket stoerre enn dette i kvadrat (mm) skjaeres ut (hjulbuen) */
 const FELT_BUE_MM = 150;
 /** et feltstykke ved bilens ende forlenges saa mye rundt hjoernet (mm) */
 const FELT_ENDE_MM = 150;
 /** ... naar det naar saa naer bilens ende i visningen (mm) */
 const FELT_ENDE_NAER_MM = 150;
+/** hakk i kutteformen smalere enn 2 x dette fylles */
+const FELT_LUKK_MM = 40;
+/** andelen av sveipet som maa ligge utenfor bilen for at feltet faar utfallende rundt hjoernet */
+const FELT_SVEIP_UTE = 0.05;
 /** felles ramme over dette ganger delenes egne rammer: for mye luft */
 const DEL_LUFT = 2;
 /** en skjoet i bilen krysser hele stripen innenfor dette (ekte mm), og ligger minst SKJOT_KANT_MM fra endene */
